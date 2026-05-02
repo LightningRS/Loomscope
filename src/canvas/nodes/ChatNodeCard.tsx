@@ -124,7 +124,7 @@ export function ChatNodeCard({ data, selected }: NodeProps<ChatNodeRFNode>) {
         <TokenBar tokens={data.contextTokens} maxTokens={data.maxContextTokens} />
       )}
 
-      {/* Bottom stats row */}
+      {/* Stats row */}
       <div className="mt-1.5 flex items-center gap-2.5 text-[10px] text-gray-500 border-t border-gray-200/60 pt-1">
         <span className="inline-flex items-center gap-0.5">
           <span className="text-blue-500">🧠</span>
@@ -141,13 +141,13 @@ export function ChatNodeCard({ data, selected }: NodeProps<ChatNodeRFNode>) {
         )}
       </div>
 
-      {/* Node id at bottom — Agentloom convention. Truncated mono, low
-          contrast so it doesn't compete with content. */}
+      {/* Full UUID centered at bottom — Agentloom convention. CSS truncate
+          if doesn't fit (full id exposed via title tooltip on hover). */}
       <div
-        className="mt-1 text-center font-mono text-[9px] text-gray-400 truncate"
+        className="mt-1 font-mono text-[9px] text-gray-400 text-center truncate"
         title={cn.id}
       >
-        {cn.id.slice(0, 8)}
+        {cn.id}
       </div>
 
       <Handle
