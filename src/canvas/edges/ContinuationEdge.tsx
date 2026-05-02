@@ -1,10 +1,21 @@
-// continuation edge — Bezier curve (matches Agentloom; smooth-step was
-// too "right-angle"). solid slate-400 stroke + filled arrow head.
+// continuation edge — Bezier curve, stroke colored by the target
+// ChatNode's model. Mid-session model switches show up as different
+// colored segments in the chain.
+//
+// Arrow marker uses a neutral slate-400 (always); minor color mismatch
+// vs the per-model stroke is acceptable and avoids generating one
+// marker per edge / per color.
 
 import { BaseEdge, getBezierPath } from "@xyflow/react";
 import type { EdgeProps } from "@xyflow/react";
 
+import { colorForModel } from "@/canvas/modelColor";
+
+const ARROW_COLOR = "#94a3b8"; // slate-400
+
 export function ContinuationEdge(props: EdgeProps) {
+  const targetModel = (props.data as { targetModel?: string } | undefined)?.targetModel;
+  const stroke = colorForModel(targetModel);
   const [d] = getBezierPath({
     sourceX: props.sourceX,
     sourceY: props.sourceY,
@@ -14,7 +25,14 @@ export function ContinuationEdge(props: EdgeProps) {
     targetPosition: props.targetPosition,
     curvature: 0.25,
   });
-  return <BaseEdge id={props.id} path={d} style={{ stroke: "#94a3b8", strokeWidth: 1.5 }} markerEnd="url(#arrow-continuation)" />;
+  return (
+    <BaseEdge
+      id={props.id}
+      path={d}
+      style={{ stroke, strokeWidth: 1.75 }}
+      markerEnd="url(#arrow-continuation)"
+    />
+  );
 }
 
 // Shared marker definition — mounted once near the canvas root.
@@ -30,7 +48,7 @@ export function ContinuationArrowDefs() {
         markerHeight="6"
         orient="auto"
       >
-        <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8" />
+        <path d="M 0 0 L 10 5 L 0 10 z" fill={ARROW_COLOR} />
       </marker>
     </defs>
   );
