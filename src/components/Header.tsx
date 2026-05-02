@@ -2,8 +2,12 @@
 // Visual identity per `design-visual-language.md` 视觉 token 章节:
 //   wordmark slate-900 semibold; meta in font-mono gray-500;
 //   status chips use saturated palette (teal=loading, rose=error).
+//   sessionId is click-to-copy mono (Agentloom convention).
 // Settings (⚙) / help (❓) icons land in v0.4.
 
+import { useState } from "react";
+
+import { copyToClipboardWithFallback } from "@/lib/clipboard";
 import { useStore } from "@/store/index";
 
 export function Header() {
@@ -24,6 +28,7 @@ export function Header() {
         </span>
         {cf ? (
           <span className="text-[11px] text-gray-500 flex items-center gap-3 font-mono min-w-0">
+            <SessionIdButton sessionId={cf.id} />
             <span title="cwd" className="inline-flex items-center gap-1 text-gray-700">
               📁 <span className="truncate max-w-[160px]">{cf.cwd ?? "—"}</span>
             </span>
@@ -65,6 +70,55 @@ export function Header() {
         )}
       </div>
     </header>
+  );
+}
+
+// Session id click-to-copy. Same state machine as ChatNodeCard NodeIdLine.
+type CopyState =
+  | { kind: "idle" }
+  | { kind: "copied" }
+  | { kind: "error"; msg: string };
+
+function SessionIdButton({ sessionId }: { sessionId: string }) {
+  const [state, setState] = useState<CopyState>({ kind: "idle" });
+
+  const onClick = async () => {
+    const r = await copyToClipboardWithFallback(sessionId);
+    if (r.ok) {
+      setState({ kind: "copied" });
+      window.setTimeout(() => setState({ kind: "idle" }), 900);
+    } else {
+      setState({ kind: "error", msg: r.reason });
+      window.setTimeout(() => setState({ kind: "idle" }), 2500);
+    }
+  };
+
+  const label =
+    state.kind === "copied"
+      ? "已复制"
+      : state.kind === "error"
+        ? `✗ ${state.msg}`
+        : sessionId;
+
+  const cls = [
+    "flex-shrink-0 font-mono text-[10px] cursor-pointer truncate transition-colors",
+    state.kind === "copied"
+      ? "text-teal-600"
+      : state.kind === "error"
+        ? "text-rose-600 max-w-[200px]"
+        : "text-gray-400 hover:text-blue-500 max-w-[200px]",
+  ].join(" ");
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={state.kind === "idle" ? sessionId : label}
+      className={cls}
+      data-testid="header-session-id"
+    >
+      {label}
+    </button>
   );
 }
 

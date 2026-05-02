@@ -21,6 +21,7 @@ import {
   formatTokensKM,
   type ChatNodeRFNode,
 } from "@/canvas/layoutDag";
+import { copyToClipboardWithFallback } from "@/lib/clipboard";
 
 export function ChatNodeCard({ data, selected }: NodeProps<ChatNodeRFNode>) {
   const cn = data.chatNode;
@@ -182,49 +183,12 @@ export function ChatNodeCard({ data, selected }: NodeProps<ChatNodeRFNode>) {
   );
 }
 
-// Click-to-copy node id line. Modern clipboard API + execCommand fallback,
-// surfaces failure reason inline if both fail.
+// Click-to-copy node id line. State machine: idle / copied / error,
+// with shared clipboard helper.
 type CopyState =
   | { kind: "idle" }
   | { kind: "copied" }
   | { kind: "error"; msg: string };
-
-async function copyToClipboardWithFallback(text: string): Promise<{ ok: true } | { ok: false; reason: string }> {
-  // Modern API — works in secure context (https / localhost / file://).
-  if (navigator.clipboard && window.isSecureContext) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return { ok: true };
-    } catch (e) {
-      // Permission denied or transient failure — fall through to fallback.
-    }
-  }
-
-  // Legacy fallback: hidden textarea + execCommand('copy'). Works in
-  // non-secure HTTP contexts and older browsers.
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.position = "fixed";
-    ta.style.top = "0";
-    ta.style.left = "0";
-    ta.style.opacity = "0";
-    ta.style.pointerEvents = "none";
-    ta.setAttribute("readonly", "");
-    document.body.appendChild(ta);
-    ta.select();
-    ta.setSelectionRange(0, text.length);
-    const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
-    if (ok) return { ok: true };
-    return { ok: false, reason: "execCommand 拒绝复制（浏览器策略）" };
-  } catch (e) {
-    return {
-      ok: false,
-      reason: e instanceof Error ? e.message : "剪贴板 API 不可用",
-    };
-  }
-}
 
 function NodeIdLine({ nodeId }: { nodeId: string }) {
   const [state, setState] = useState<CopyState>({ kind: "idle" });
