@@ -1025,6 +1025,36 @@ function ChatFlowCanvas({ sessionId }: { sessionId: string }) {
 
 文件 mtime 是主要失效信号——简单、跨平台、CC 的写盘行为天然提供。**不做内容 hash**——大文件计算 hash 比 reparse 还慢。
 
+## i18n（v0.x 单独 phase）
+
+跟 Agentloom 一致：**`react-i18next` + `src/i18n/locales/{zh-CN,en-US}.json`**。
+
+key 命名跟 Agentloom 对齐（方便日后 Agentloom 之间 share copy）：
+
+| key | zh-CN | en-US |
+|---|---|---|
+| `chatflow.user` | 用户 | User |
+| `chatflow.assistant` | 助手 | Assistant |
+| `chatflow.compact` | 压缩 | Compact |
+| `chatflow.scheduled` | 已调度 | Scheduled |
+| `chatflow.root` | 起点 | Root |
+| `chatflow.leaf` | 末端 | Leaf |
+| `chatflow.chat` | 对话 | Chat |
+| `chatflow.enter_workflow` | 进入工作流 | Enter workflow |
+| `chatflow.no_user` | (空) | (empty) |
+| `chatflow.no_reply` | (无回复) | (no reply) |
+| `common.copied` | 已复制 | Copied |
+| `common.copy_failed` | 复制失败 | Copy failed |
+| `header.pick_session` | Pick a session → | Pick a session → |
+| `sidebar.sessions` | SESSIONS | SESSIONS |
+| `sidebar.refresh` | 刷新 | Refresh |
+| `sidebar.collapse` | 折叠 | Collapse |
+| `sidebar.no_sessions` | 未找到 CC sessions | No CC sessions found |
+| `loading.parsing` | 解析中… | Parsing… |
+| `error.load_failed` | 加载失败 | Failed to load |
+
+⚠ v0.2 当前所有面向用户字符串都是 zh-CN 硬编码，待 i18n phase 一次性抽到 bundle。
+
 ## 开放问题
 
 1. ~~**State 库选不选**~~ — 已决定：**Zustand 5.0** 显式 dep + slice 模式（UI / Session / LiveEvent / Workspace 四 slice）+ `persist` middleware。决策详见下方"前端状态管理"章节。

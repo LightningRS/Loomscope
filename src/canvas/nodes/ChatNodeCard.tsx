@@ -104,17 +104,20 @@ export function ChatNodeCard({ data, selected }: NodeProps<ChatNodeRFNode>) {
         )}
       </div>
 
-      {/* User message */}
+      {/* User message — label gray-500 to match Agentloom convention.
+          Strings hardcoded zh-CN for v0.2; will move to i18n bundle when
+          react-i18next phase lands (key: chatflow.user / chatflow.assistant).
+          Future en-US: "User" / "Assistant". */}
       <div className="mb-1.5">
-        <div className="text-[10px] text-blue-600 mb-0.5 font-medium tracking-wide">用户</div>
+        <div className="text-[10px] text-gray-500 mb-0.5">用户</div>
         <div className="text-[11px] text-gray-900 break-words line-clamp-2">
           {data.userPreview || <span className="italic text-gray-300">(空)</span>}
         </div>
       </div>
 
-      {/* Agent reply */}
+      {/* Assistant reply */}
       <div className="mb-1.5">
-        <div className="text-[10px] text-purple-600 mb-0.5 font-medium tracking-wide">Agent</div>
+        <div className="text-[10px] text-gray-500 mb-0.5">助手</div>
         <div className="text-[11px] text-gray-900 break-words line-clamp-2">
           {data.assistantPreview || <span className="italic text-gray-300">(无回复)</span>}
         </div>
