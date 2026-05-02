@@ -12,6 +12,7 @@
 // Loomscope-specific: handles are non-interactive (viewer mode) and
 // invisible when no edge connects.
 
+import { useState } from "react";
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
 
@@ -142,13 +143,8 @@ export function ChatNodeCard({ data, selected }: NodeProps<ChatNodeRFNode>) {
       </div>
 
       {/* Full UUID centered at bottom — Agentloom convention. CSS truncate
-          if doesn't fit (full id exposed via title tooltip on hover). */}
-      <div
-        className="mt-1 font-mono text-[9px] text-gray-400 text-center truncate"
-        title={cn.id}
-      >
-        {cn.id}
-      </div>
+          if doesn't fit. Click to copy (Agentloom NodeIdLine pattern). */}
+      <NodeIdLine nodeId={cn.id} />
 
       <Handle
         type="source"
@@ -180,6 +176,34 @@ export function ChatNodeCard({ data, selected }: NodeProps<ChatNodeRFNode>) {
           ⤢ 进入工作流
         </button>
       )}
+    </div>
+  );
+}
+
+// Click-to-copy node id line. Ports Agentloom's NodeIdLine pattern:
+// click → write to clipboard → flash "已复制" for 900ms → revert.
+function NodeIdLine({ nodeId }: { nodeId: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const onClick = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(nodeId);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 900);
+    } catch {
+      // clipboard API unavailable (insecure context, browser perm) — ignore
+    }
+  };
+
+  return (
+    <div
+      onClick={onClick}
+      className="mt-1 cursor-pointer truncate font-mono text-[9px] text-gray-400 text-center hover:text-blue-500 transition-colors"
+      title={copied ? "已复制" : nodeId}
+      data-testid={`node-id-${nodeId}`}
+    >
+      {copied ? "已复制" : nodeId}
     </div>
   );
 }
