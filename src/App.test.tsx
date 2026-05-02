@@ -41,9 +41,12 @@ describe("App shell", () => {
     expect(screen.getByText("Loomscope")).toBeTruthy();
     expect(screen.getByTestId("sidebar")).toBeTruthy();
     expect(screen.getByTestId("canvas-host")).toBeTruthy();
+    // Empty-state text is split across nested span (highlight on "sidebar"),
+    // so match on the canvas-host textContent rather than getByText (which
+    // requires single-element matches).
     expect(
-      screen.getByText(/Select a session from the sidebar/i),
-    ).toBeTruthy();
+      screen.getByTestId("canvas-host").textContent?.replace(/\s+/g, " "),
+    ).toMatch(/Select a session from the sidebar/i);
     // Sidebar's effect should fire a refresh.
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalled();

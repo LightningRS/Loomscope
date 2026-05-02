@@ -70,9 +70,15 @@ export function ChatFlowCanvas({ chatFlow, sessionId }: ChatFlowCanvasProps) {
           maxZoom={2}
           proOptions={{ hideAttribution: true }}
         >
-          <Background gap={24} size={1} color="#e5e7eb" />
-          <Controls position="bottom-right" />
-          <MiniMap pannable zoomable className="!bg-white" />
+          <Background gap={24} size={1} color="#d1d5db" />
+          <Controls position="bottom-right" className="!shadow-md !border !border-gray-200" />
+          <MiniMap
+            pannable
+            zoomable
+            className="!bg-white !border !border-gray-200 !rounded-md !shadow-md"
+            maskColor="rgba(243, 244, 246, 0.7)"
+            nodeColor="#94a3b8"
+          />
         </ReactFlow>
       </ReactFlowProvider>
     </div>

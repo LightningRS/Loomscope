@@ -394,16 +394,112 @@ submitting         generating          tool_running        done
 
 不要做长动画（>500ms），会让用户觉得 UI 慢。
 
-## 颜色 palette
+## 视觉 token（canonical，2026-05-02 锁定）
 
-[TODO 你回答]
+Loomscope 跟 Agentloom **共用一套视觉 token**——同一作者的两个项目，视觉 DNA 必须一致。所有组件按这个 token 表写 Tailwind class，不要自创色。
 
-启发：
+### 颜色 palette（按语义分组）
 
-- Agentloom 现行：tailwind gray-50/200 中性背景；llm_call 蓝调；tool_call 灰；judge 紫；fail 红边
-- Loomscope 没有 judge 概念，可以更简洁
-- Status 颜色：default / success / fail / running / failed
-- 是否要 dark mode？（v0 一种就好；dark 后置）
+#### 默认 chrome（gray scale）
+
+| 用途 | tailwind class |
+|---|---|
+| 卡片底色 | `bg-white` |
+| 页面 / sidebar 底色 | `bg-gray-50` |
+| Canvas 视口底色 | `bg-gray-100` |
+| 分隔线 / 卡片边框 | `border-gray-200` / `border-gray-300` |
+| 主文本 | `text-gray-900` |
+| 正文 | `text-gray-700` |
+| 次要文本 | `text-gray-500` |
+| 元数据 / placeholder | `text-gray-400` |
+| 禁用 / 空态文字 | `text-gray-300` |
+
+#### 语义 accent（saturated chips + colored micro-headers）
+
+| 色 | 用途 | chip 配色 | header 配色 |
+|---|---|---|---|
+| **teal** | compact / brief / scheduled / running / 成功 | `bg-teal-200/80 text-teal-900` | `text-teal-700` |
+| **rose** | pack / 错误 / failed / 中断 | `bg-rose-200/80 text-rose-900` | `text-rose-700` |
+| **amber** | warning / cron / queued | `bg-amber-200/80 text-amber-900` | `text-amber-700` |
+| **purple** | sub-agent / brief authorship / Agent reply 节标 | `bg-purple-200/80 text-purple-900` | `text-purple-600` |
+| **blue** | 链接 / hover / 选中 / 主操作 / 用户输入节标 | `bg-blue-100 text-blue-900` | `text-blue-600` |
+
+#### 状态指示
+
+| 状态 | 视觉 |
+|---|---|
+| running 呼吸点 | `inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-teal-500` |
+| 选中 ring | `ring-2 ring-blue-400 ring-offset-1` |
+| 加载 wash | `bg-teal-100 text-teal-900` chip + 呼吸点 |
+| 错误 wash | `bg-rose-50 border border-rose-200 text-rose-900` |
+
+### 排版层级
+
+| 用途 | class |
+|---|---|
+| Header wordmark | `text-base font-semibold tracking-tight text-gray-900` |
+| 卡片正文 | `text-xs leading-snug` |
+| Chip / metadata 文字 | `text-[11px]` |
+| 节级 micro-header（colored）| `text-[10px] font-medium` |
+| 元数据 / id / token / path | `font-mono text-[10px]` |
+| 数字强调 | `font-mono` + 主文本色 |
+
+### 间距原子
+
+| 用途 | class |
+|---|---|
+| 卡片内段间距 | `mb-1.5` (6px) |
+| 卡内 padding | `px-3 py-2` |
+| Header / 工具栏 padding | `px-4 py-1.5` |
+| Flex 横向间距 | `gap-3`（大）/ `gap-1.5`（中）/ `gap-1`（小）|
+
+### 卡片 chrome 模板
+
+```ts
+// 普通节点（chat_node、llm_call、tool_call 等）
+"rounded-md border border-gray-300 bg-white shadow-sm transition-colors px-3 py-2 text-xs leading-snug"
+
+// 折叠 / 合成节点（compact / pack）
+"rounded-md border border-dashed border-teal-300 bg-teal-50 px-3 py-2 text-xs leading-snug"
+
+// 失败状态
+"rounded-md border border-rose-300 bg-rose-50 px-3 py-2 text-xs leading-snug"
+
+// 选中 — 加 ring
+"... ring-2 ring-blue-400 ring-offset-1"
+```
+
+### Hover affordance
+
+- 卡片 hover：`hover:border-gray-400`（边框色加深）
+- 行 hover：`hover:bg-blue-50`（蓝色 wash）
+- Active 行：`bg-blue-50 border-l-2 border-blue-500`（蓝色左条 + wash）
+- Group-hover 隐藏按钮：`group/card` 容器 + `hidden ... group-hover/card:flex` 子元素
+
+### 动效原子
+
+- 状态呼吸：`animate-pulse`
+- Hover 过渡：`transition-colors duration-150`
+- 不超过 200ms 的 transition——长动画让 UI 感觉慢
+
+### 字体
+
+```css
+font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+```
+
+跟 Agentloom 一致；不引入 web font（性能 + 离线鲁棒性）。
+
+### Brand 标识
+
+- Header 左上角 `⌬` 蓝色字符 + "Loomscope" wordmark（`text-base font-semibold`）—— Loomscope 视觉签名
+- Empty state 大字号 `⌬` 半透明（`opacity-40`）
+
+⚠ **Brand 是仅有的 Loomscope 跟 Agentloom 在视觉上不同的地方**——其它一切色板 / 排版 / 间距 / 动效都共用，让两个项目看起来像同一作者。
+
+### Dark mode
+
+v0 不做 dark mode。后续档（v1.0+）通过 Tailwind 的 `dark:` variant 加，token 表的每个色都已经有 dark 对应位预留（如 `dark:bg-gray-900` 等）—— 实现时按 Tailwind 标准做即可。
 
 ## 折叠 / 展开 / 选中状态
 

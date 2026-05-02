@@ -1,3 +1,30 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: #f9fafb; /* tailwind gray-50 — matches sidebar/canvas seam */
+}
+
+/* React Flow canvas surface — slightly warmer than gray-50 to give the
+   ChatNode cards visual lift. Pairs with Background dot grid color. */
+.react-flow__renderer {
+  background: #f3f4f6; /* tailwind gray-100 */
+}
+
+/* Mute React Flow default attribution */
+.react-flow__panel.react-flow__attribution {
+  display: none;
+}
