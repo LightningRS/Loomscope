@@ -76,6 +76,56 @@ describe("layoutChatFlow", () => {
     expect(nodes[0].data.chatNode).toBe(cn);
   });
 
+  it("edge data carries target ChatNode's last llm_call model (for hover tooltip)", () => {
+    const cf = makeChatFlow([
+      makeChatNode({
+        id: "p1",
+        workflow: {
+          nodes: [
+            {
+              id: "l1",
+              kind: "llm_call",
+              parentUuid: null,
+              text: "",
+              thinking: [],
+              model: "claude-opus-4-7",
+            },
+          ],
+          edges: [],
+        },
+      }),
+      makeChatNode({
+        id: "p2",
+        parentChatNodeId: "p1",
+        workflow: {
+          nodes: [
+            {
+              id: "l2",
+              kind: "llm_call",
+              parentUuid: null,
+              text: "",
+              thinking: [],
+              model: "claude-sonnet-4-6",
+            },
+          ],
+          edges: [],
+        },
+      }),
+    ]);
+    const { edges } = layoutChatFlow(cf);
+    expect(edges).toHaveLength(1);
+    expect((edges[0].data as { targetModel?: string }).targetModel).toBe("claude-sonnet-4-6");
+  });
+
+  it("edge targetModel is undefined when target has no llm_call (e.g. slash command)", () => {
+    const cf = makeChatFlow([
+      makeChatNode({ id: "p1" }),
+      makeChatNode({ id: "p2", parentChatNodeId: "p1" /* no llm_call */ }),
+    ]);
+    const { edges } = layoutChatFlow(cf);
+    expect((edges[0].data as { targetModel?: string }).targetModel).toBeUndefined();
+  });
+
   it("looks up context window per-ChatNode based on each turn's model — mid-session switch is honored", () => {
     const cf = makeChatFlow([
       makeChatNode({

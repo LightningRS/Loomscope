@@ -12,7 +12,7 @@
 // "default-fold old ChatNodes" optimization once we hit perf walls per
 // `requirements.md`).
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   Background,
@@ -20,6 +20,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  type Edge,
   type EdgeTypes,
   type NodeTypes,
 } from "@xyflow/react";
@@ -40,19 +41,80 @@ export interface ChatFlowCanvasProps {
 }
 
 export function ChatFlowCanvas({ chatFlow, sessionId }: ChatFlowCanvasProps) {
+  // Edge hover tooltip state — lives at the wrapper level so the tooltip
+  // can render outside ReactFlow as a fixed-position overlay.
+  const [hoveredEdge, setHoveredEdge] = useState<{
+    source: string;
+    target: string;
+    targetModel?: string;
+  } | null>(null);
+  const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null);
+
+  // Track cursor position only while an edge is hovered — avoids paying
+  // for global mousemove the rest of the time. (Pattern lifted from
+  // Agentloom ChatFlowCanvas.)
+  useEffect(() => {
+    if (!hoveredEdge) {
+      setCursorPos(null);
+      return;
+    }
+    const onMove = (e: MouseEvent) => setCursorPos({ x: e.clientX, y: e.clientY });
+    window.addEventListener("mousemove", onMove);
+    return () => window.removeEventListener("mousemove", onMove);
+  }, [hoveredEdge]);
+
   return (
     <div className="w-full h-full relative">
       <ReactFlowProvider>
         <svg width={0} height={0} style={{ position: "absolute" }}>
           <ContinuationArrowDefs />
         </svg>
-        <CanvasInner chatFlow={chatFlow} sessionId={sessionId} />
+        <CanvasInner
+          chatFlow={chatFlow}
+          sessionId={sessionId}
+          onEdgeHover={setHoveredEdge}
+        />
       </ReactFlowProvider>
+
+      {hoveredEdge && cursorPos && (
+        <EdgeModelTooltip
+          targetModel={hoveredEdge.targetModel}
+          x={cursorPos.x}
+          y={cursorPos.y}
+        />
+      )}
     </div>
   );
 }
 
-function CanvasInner({ chatFlow, sessionId }: ChatFlowCanvasProps) {
+function EdgeModelTooltip({
+  targetModel,
+  x,
+  y,
+}: {
+  targetModel?: string;
+  x: number;
+  y: number;
+}) {
+  return (
+    <div
+      data-testid="edge-model-tooltip"
+      className="pointer-events-none fixed z-50 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] shadow-lg whitespace-nowrap"
+      style={{ left: x + 12, top: y + 12 }}
+    >
+      <span className="text-gray-500 mr-1">model</span>
+      <span className="font-mono text-gray-900">{targetModel ?? "—"}</span>
+    </div>
+  );
+}
+
+interface CanvasInnerProps extends ChatFlowCanvasProps {
+  onEdgeHover: (
+    e: { source: string; target: string; targetModel?: string } | null,
+  ) => void;
+}
+
+function CanvasInner({ chatFlow, sessionId, onEdgeHover }: CanvasInnerProps) {
   const { nodes, edges } = useMemo(() => layoutChatFlow(chatFlow), [chatFlow]);
   const setSelected = useStore((s) => s.setSelected);
   const selectedNodeId = useStore(
@@ -100,6 +162,14 @@ function CanvasInner({ chatFlow, sessionId }: ChatFlowCanvasProps) {
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
       onNodeClick={onNodeClick}
+      onEdgeMouseEnter={(_e, edge: Edge) =>
+        onEdgeHover({
+          source: edge.source,
+          target: edge.target,
+          targetModel: (edge.data as { targetModel?: string } | undefined)?.targetModel,
+        })
+      }
+      onEdgeMouseLeave={() => onEdgeHover(null)}
       minZoom={0.05}
       maxZoom={2}
       proOptions={{ hideAttribution: true }}

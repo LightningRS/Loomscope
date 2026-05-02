@@ -66,11 +66,16 @@ export function layoutChatFlow(chatFlow: ChatFlow): {
   for (const cn of chatFlow.chatNodes) {
     if (cn.parentChatNodeId) {
       g.setEdge(cn.parentChatNodeId, cn.id);
+      // targetModel = the model that ran ON this turn (the child of the
+      // edge). Edge tooltip shows this so the user can see "Opus" vs
+      // "Sonnet" mid-session switches at a glance.
+      const targetModel = lastModelOf(cn);
       edges.push({
         id: `e-${cn.parentChatNodeId}->${cn.id}`,
         source: cn.parentChatNodeId,
         target: cn.id,
         type: "continuation",
+        data: { targetModel },
       });
     }
   }
@@ -139,6 +144,15 @@ export function maxContextForModel(model?: string): number {
     if (pattern.test(model)) return max;
   }
   return DEFAULT_MAX_CONTEXT_TOKENS;
+}
+
+// Last llm_call's model in a ChatNode, or undefined when there's no
+// llm_call (slash commands, compact-summary-only ChatNodes etc.).
+function lastModelOf(cn: ChatNode): string | undefined {
+  const llms = cn.workflow.nodes.filter((n) => n.kind === "llm_call");
+  if (llms.length === 0) return undefined;
+  const last = llms[llms.length - 1];
+  return last.kind === "llm_call" ? last.model : undefined;
 }
 
 // Compute total context tokens for a single llm_call usage record.
