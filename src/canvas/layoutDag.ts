@@ -32,6 +32,10 @@ export interface ChatNodeRFData extends Record<string, unknown> {
   // maxContextTokens 由 last llm_call 的 model 字段决定（[1m] 后缀 = 1M, 其它 = 200k）.
   contextTokens: number;
   maxContextTokens: number;
+  // Slash command info (cn.slashCommand mirrored here so the card doesn't
+  // need to drill back into chatNode object — keeps the prop interface
+  // self-contained for tests).
+  slashCommand: ChatNode["slashCommand"];
   // Edge presence — drives whether handle dots show.
   hasIncomingEdge: boolean;
   hasOutgoingEdge: boolean;
@@ -185,6 +189,7 @@ function deriveCardData(
     isCompactSummary: cn.isCompactSummary,
     contextTokens,
     maxContextTokens,
+    slashCommand: cn.slashCommand,
     hasIncomingEdge: edges.hasIncomingEdge,
     hasOutgoingEdge: edges.hasOutgoingEdge,
   };

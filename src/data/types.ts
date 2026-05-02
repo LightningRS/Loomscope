@@ -145,6 +145,19 @@ export interface ChatNodeMeta {
   errors?: WorkNodeError[];
 }
 
+// CC slash-command invocation (e.g. /model, /compact, /cost) does NOT go
+// through the LLM — CC handles it locally. Buckets as a single ChatNode
+// with no assistant turn and three user records sharing one promptId:
+//   #1 isMeta=true: <local-command-caveat>System note</local-command-caveat>
+//   #2: <command-name>/NAME</command-name><command-args>ARGS</command-args>...
+//   #3: <local-command-stdout>OUTPUT</local-command-stdout>
+// Parser extracts the structured form into this field.
+export interface SlashCommandInfo {
+  name: string; // e.g. "/model" (with leading slash)
+  args?: string; // contents of <command-args>; "" or undefined when none
+  stdout?: string; // contents of <local-command-stdout>; ANSI escapes stripped
+}
+
 export interface ChatNode {
   id: string; // = promptId
   parentChatNodeId: string | null;
@@ -155,6 +168,9 @@ export interface ChatNode {
   triggerSource?: { workNodeId: string };
   isCompactSummary: boolean;
   compactMetadata?: CompactNode;
+  /** When set: this ChatNode is a slash-command invocation, not a real
+   * conversation turn. Render specially. */
+  slashCommand?: SlashCommandInfo;
   meta: ChatNodeMeta;
 }
 

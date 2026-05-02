@@ -498,6 +498,7 @@ function buildChatNode(
   };
 
   const compactWorkNode = workflow.nodes.find((n) => n.kind === "compact");
+  const slashCommand = detectSlashCommand(bucket.records);
   return {
     id: bucket.promptId,
     parentChatNodeId: null, // filled in linkChatNodeParents
@@ -508,8 +509,44 @@ function buildChatNode(
     isCompactSummary: isCompact,
     compactMetadata:
       compactWorkNode && compactWorkNode.kind === "compact" ? compactWorkNode : undefined,
+    slashCommand,
     meta,
   };
+}
+
+// Detect a slash-command invocation by scanning the bucket's user records
+// for <command-name>...</command-name>. Extract args and stdout when
+// present; strip ANSI escape codes from stdout.
+function detectSlashCommand(records: RawRecord[]) {
+  let name: string | undefined;
+  let args: string | undefined;
+  let stdout: string | undefined;
+  for (const r of records) {
+    if (r.type !== "user") continue;
+    const c = r.message?.content;
+    if (typeof c !== "string") continue;
+    if (!name) {
+      const m = c.match(/<command-name>([^<]*)<\/command-name>/);
+      if (m) {
+        name = m[1].trim();
+        const a = c.match(/<command-args>([^<]*)<\/command-args>/);
+        if (a) args = a[1].trim();
+      }
+    }
+    if (!stdout) {
+      const so = c.match(/<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/);
+      if (so) stdout = stripAnsi(so[1]).trim();
+    }
+  }
+  if (!name) return undefined;
+  return { name, args: args || undefined, stdout: stdout || undefined };
+}
+
+// Strip CSI / SGR escape sequences (e.g. [1m, [22m, etc.).
+// CC's local-command-stdout often embeds these for terminal styling.
+function stripAnsi(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
 }
 
 function linkChatNodeParents(

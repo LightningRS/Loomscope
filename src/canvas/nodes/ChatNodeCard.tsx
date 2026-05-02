@@ -27,8 +27,25 @@ export function ChatNodeCard({ data, selected }: NodeProps<ChatNodeRFNode>) {
   const cn = data.chatNode;
   const compact = data.isCompactSummary;
   const triggerSchedule = cn.trigger === "scheduled";
+  const slash = data.slashCommand;
   const isRoot = cn.parentChatNodeId === null && !data.hasIncomingEdge;
-  const isLeaf = !data.hasOutgoingEdge && !isRoot && !compact && !triggerSchedule;
+  const isLeaf =
+    !data.hasOutgoingEdge && !isRoot && !compact && !triggerSchedule && !slash;
+
+  // Slash-command ChatNodes get their own dedicated card body — no
+  // 用户/助手 sections, no 进入工作流, no token bar, no stats. They're
+  // not LLM turns; they're CC-side actions.
+  if (slash) {
+    return (
+      <SlashCommandCard
+        cn={cn}
+        slash={slash}
+        selected={selected ?? false}
+        hasIncoming={data.hasIncomingEdge}
+        hasOutgoing={data.hasOutgoingEdge}
+      />
+    );
+  }
 
   // Background tint by primary state.
   const bgClass = compact
@@ -179,6 +196,74 @@ export function ChatNodeCard({ data, selected }: NodeProps<ChatNodeRFNode>) {
         }
       />
 
+    </div>
+  );
+}
+
+// Slash-command card — minimal chrome: violet accent, ⚡ command name,
+// stdout body (mono, multi-line), id at bottom.
+function SlashCommandCard({
+  cn,
+  slash,
+  selected,
+  hasIncoming,
+  hasOutgoing,
+}: {
+  cn: import("@/data/types").ChatNode;
+  slash: NonNullable<import("@/data/types").ChatNode["slashCommand"]>;
+  selected: boolean;
+  hasIncoming: boolean;
+  hasOutgoing: boolean;
+}) {
+  const containerClass = [
+    "group/card relative w-52 rounded-lg border shadow-sm p-2.5 text-xs",
+    "transition-colors leading-snug bg-violet-50",
+    "border-l-[3px] border-l-violet-500",
+    selected ? "border-violet-500 ring-2 ring-violet-200" : "border-violet-300",
+  ].join(" ");
+  return (
+    <div className={containerClass} data-testid={`chat-node-${cn.id}`}>
+      <Handle
+        type="target"
+        position={Position.Left}
+        isConnectable={false}
+        style={
+          hasIncoming
+            ? { background: "#94a3b8", width: 5, height: 5, border: "none" }
+            : { background: "transparent", width: 0, height: 0, border: "none" }
+        }
+      />
+
+      {/* Command header — violet chip with ⚡ + /name */}
+      <div className="flex items-center mb-1.5">
+        <span className="inline-flex items-center gap-0.5 rounded bg-violet-200/80 px-1 py-0.5 text-[10px] font-semibold text-violet-900">
+          ⚡ {slash.name}
+          {slash.args ? ` ${slash.args}` : ""}
+        </span>
+      </div>
+
+      {/* Stdout (if any) */}
+      {slash.stdout && (
+        <div className="mb-1.5">
+          <div className="text-[10px] text-gray-500 mb-0.5">输出</div>
+          <pre className="text-[11px] text-gray-900 break-words whitespace-pre-wrap font-mono line-clamp-4 m-0">
+            {slash.stdout}
+          </pre>
+        </div>
+      )}
+
+      <NodeIdLine nodeId={cn.id} />
+
+      <Handle
+        type="source"
+        position={Position.Right}
+        isConnectable={false}
+        style={
+          hasOutgoing
+            ? { background: "#94a3b8", width: 5, height: 5, border: "none" }
+            : { background: "transparent", width: 0, height: 0, border: "none" }
+        }
+      />
     </div>
   );
 }

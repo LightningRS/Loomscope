@@ -444,6 +444,64 @@ describe("isMeta / isVisibleInTranscriptOnly handling", () => {
     expect(cn!.userMessage.content).toContain("<command-name>/model</command-name>");
   });
 
+  it("extracts slashCommand info from /command + stdout user records", () => {
+    const records = [
+      {
+        type: "user",
+        uuid: "u-caveat",
+        parentUuid: null,
+        promptId: "p-cmd",
+        sessionId: "s",
+        cwd: "/",
+        timestamp: "2026-05-02T22:00:00Z",
+        isMeta: true,
+        message: { role: "user", content: "<local-command-caveat>...</local-command-caveat>" },
+      },
+      {
+        type: "user",
+        uuid: "u-cmd",
+        parentUuid: "u-caveat",
+        promptId: "p-cmd",
+        sessionId: "s",
+        cwd: "/",
+        timestamp: "2026-05-02T22:00:01Z",
+        message: {
+          role: "user",
+          content:
+            "<command-name>/model</command-name>\n            <command-message>model</command-message>\n            <command-args>opus-4-7</command-args>",
+        },
+      },
+      {
+        type: "user",
+        uuid: "u-stdout",
+        parentUuid: "u-cmd",
+        promptId: "p-cmd",
+        sessionId: "s",
+        cwd: "/",
+        timestamp: "2026-05-02T22:00:02Z",
+        message: {
+          role: "user",
+          content:
+            "<local-command-stdout>Set model to [1mOpus 4.7 (1M context)[22m (default)</local-command-stdout>",
+        },
+      },
+    ];
+    const cf = buildChatFlow(records as RawRecord[], "/tmp/x.jsonl");
+    const cn = cf.chatNodes.find((c) => c.id === "p-cmd");
+    expect(cn?.slashCommand).toBeDefined();
+    expect(cn!.slashCommand!.name).toBe("/model");
+    expect(cn!.slashCommand!.args).toBe("opus-4-7");
+    // ANSI \x1b[1m and \x1b[22m stripped.
+    expect(cn!.slashCommand!.stdout).toBe("Set model to Opus 4.7 (1M context) (default)");
+  });
+
+  it("does NOT set slashCommand on regular ChatNodes (no <command-name> tag)", () => {
+    const cf = fixtureChatFlow();
+    // Synthetic fixture's ChatNodes are plain user/assistant turns.
+    const anyHasSlash = cf.chatNodes.some((c) => c.slashCommand !== undefined);
+    expect(anyHasSlash).toBe(false);
+  });
+
   it("falls back to meta user when bucket only has meta (ScheduleWakeup sentinel still works)", () => {
     // ScheduleWakeup fire produces a single isMeta user record with the
     // <<autonomous-loop-dynamic>> sentinel. No non-meta records — meta
