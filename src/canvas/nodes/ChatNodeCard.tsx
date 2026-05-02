@@ -85,24 +85,22 @@ export function ChatNodeCard({ data, selected }: NodeProps<ChatNodeRFNode>) {
         }
       />
 
-      {/* Top row: state chip only (id moved to bottom — Agentloom convention) */}
-      <div className="flex items-center mb-1.5 min-h-[14px]">
-        {compact ? (
-          <span className="inline-flex items-center gap-0.5 rounded bg-teal-200/80 px-1 py-0.5 text-[10px] font-semibold text-teal-900">
-            ⊞ compact
-          </span>
-        ) : triggerSchedule ? (
-          <span className="inline-flex items-center gap-0.5 rounded bg-amber-200/80 px-1 py-0.5 text-[10px] font-semibold text-amber-900">
-            ⏰ scheduled
-          </span>
-        ) : isRoot ? (
-          <span className="text-[10px] text-blue-600 font-medium">root</span>
-        ) : isLeaf ? (
-          <span className="text-[10px] text-green-700 font-medium">leaf</span>
-        ) : (
-          <span className="text-[10px] text-gray-400 font-medium">chat</span>
-        )}
-      </div>
+      {/* State chip — only for functional events (compact / scheduled).
+          chat / root / leaf are visually inferable from the colored left
+          accent strip + position; no need to repeat as text. */}
+      {(compact || triggerSchedule) && (
+        <div className="flex items-center mb-1.5">
+          {compact ? (
+            <span className="inline-flex items-center gap-0.5 rounded bg-teal-200/80 px-1 py-0.5 text-[10px] font-semibold text-teal-900">
+              ⊞ compact
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-0.5 rounded bg-amber-200/80 px-1 py-0.5 text-[10px] font-semibold text-amber-900">
+              ⏰ scheduled
+            </span>
+          )}
+        </div>
+      )}
 
       {/* User message — label gray-500 to match Agentloom convention.
           Strings hardcoded zh-CN for v0.2; will move to i18n bundle when
