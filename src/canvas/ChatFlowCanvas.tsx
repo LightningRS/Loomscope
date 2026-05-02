@@ -27,6 +27,7 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import { layoutChatFlow } from "@/canvas/layoutDag";
+import { ModelRibbonLayer } from "@/canvas/ModelRibbonLayer";
 import { ChatNodeCard } from "@/canvas/nodes/ChatNodeCard";
 import { ContinuationArrowDefs, ContinuationEdge } from "@/canvas/edges/ContinuationEdge";
 import type { ChatFlow } from "@/data/types";
@@ -44,6 +45,7 @@ export function ChatFlowCanvas({ chatFlow, sessionId }: ChatFlowCanvasProps) {
   // Edge hover tooltip state — lives at the wrapper level so the tooltip
   // can render outside ReactFlow as a fixed-position overlay.
   const [hoveredEdge, setHoveredEdge] = useState<{
+    id: string;
     source: string;
     target: string;
     targetModel?: string;
@@ -73,6 +75,10 @@ export function ChatFlowCanvas({ chatFlow, sessionId }: ChatFlowCanvasProps) {
           chatFlow={chatFlow}
           sessionId={sessionId}
           onEdgeHover={setHoveredEdge}
+        />
+        <ModelRibbonLayer
+          chatFlow={chatFlow}
+          hoveredEdgeId={hoveredEdge?.id ?? null}
         />
       </ReactFlowProvider>
 
@@ -110,7 +116,7 @@ function EdgeModelTooltip({
 
 interface CanvasInnerProps extends ChatFlowCanvasProps {
   onEdgeHover: (
-    e: { source: string; target: string; targetModel?: string } | null,
+    e: { id: string; source: string; target: string; targetModel?: string } | null,
   ) => void;
 }
 
@@ -164,6 +170,7 @@ function CanvasInner({ chatFlow, sessionId, onEdgeHover }: CanvasInnerProps) {
       onNodeClick={onNodeClick}
       onEdgeMouseEnter={(_e, edge: Edge) =>
         onEdgeHover({
+          id: edge.id,
           source: edge.source,
           target: edge.target,
           targetModel: (edge.data as { targetModel?: string } | undefined)?.targetModel,

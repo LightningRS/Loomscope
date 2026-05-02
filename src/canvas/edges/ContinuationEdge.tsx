@@ -1,21 +1,12 @@
-// continuation edge — Bezier curve, stroke colored by the target
-// ChatNode's model. Mid-session model switches show up as different
-// colored segments in the chain.
-//
-// Arrow marker uses a neutral slate-400 (always); minor color mismatch
-// vs the per-model stroke is acceptable and avoids generating one
-// marker per edge / per color.
+// continuation edge — neutral slate-400 Bezier curve. Per-model colored
+// ribbon overlay (ModelRibbonLayer) is shown only on edge hover.
 
 import { BaseEdge, getBezierPath } from "@xyflow/react";
 import type { EdgeProps } from "@xyflow/react";
 
-import { colorForModel } from "@/canvas/modelColor";
-
 const ARROW_COLOR = "#94a3b8"; // slate-400
 
 export function ContinuationEdge(props: EdgeProps) {
-  const targetModel = (props.data as { targetModel?: string } | undefined)?.targetModel;
-  const stroke = colorForModel(targetModel);
   const [d] = getBezierPath({
     sourceX: props.sourceX,
     sourceY: props.sourceY,
@@ -29,13 +20,12 @@ export function ContinuationEdge(props: EdgeProps) {
     <BaseEdge
       id={props.id}
       path={d}
-      style={{ stroke, strokeWidth: 1.75 }}
+      style={{ stroke: ARROW_COLOR, strokeWidth: 1.5 }}
       markerEnd="url(#arrow-continuation)"
     />
   );
 }
 
-// Shared marker definition — mounted once near the canvas root.
 export function ContinuationArrowDefs() {
   return (
     <defs>
