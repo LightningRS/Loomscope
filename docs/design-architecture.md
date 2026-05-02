@@ -873,6 +873,20 @@ Loomscope 设置面板分 **2 个 tab**：
 | 默认聚焦的 workspace | localStorage `loomscope:ui:focusedWorkspace` |
 | 端口 | 启动 CLI flag `-p / --port` |
 | 鉴权模式（Mode A / B）| 启动 CLI flag `--bind 0.0.0.0 --auth required` |
+| **Model context window 覆盖** | localStorage `loomscope:ui:modelContextOverrides`——用户可改默认表 |
+
+**Model context window 默认表**（`src/canvas/layoutDag.ts:MODEL_CONTEXT_WINDOW`）：
+
+| 模型匹配 | 默认 cap | 理由 |
+|---|---|---|
+| `/claude-opus/i` | 1M | Opus 4.7 默认 1M（用户 /model 选择 1M context 是常见配置）|
+| `/claude-sonnet/i` | 200k | 1M context 是 beta，不算典型配置 |
+| `/claude-haiku/i` | 200k | 标准 |
+| 其它（unknown）| 200k | safe default |
+
+⚠ **为何不能从 jsonl 读真实 cap**：CC 源码 `src/utils/model/model.ts:501` 在写 jsonl 前**剥掉 `[1m]` 后缀**——所有 session 的 model 字段都是裸名。`getModelCapability()` 只对 USER_TYPE='ant' 内部用户有效（读 `~/.claude/cache/model-capabilities.json`）。所以 Loomscope 必须自带表 + 设置面板覆盖。
+
+⚠ **设置面板（v0.4）应支持**：用户给某 model 添加 / 修改 cap（覆盖默认表），写到 localStorage。e.g. 用户的 sonnet 实际是 1M beta → 改成 1M。
 
 ### 第 3 类：会话内动作（v∞.2 直接 canvas 输入框打）
 

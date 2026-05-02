@@ -83,8 +83,6 @@ export function layoutChatFlow(chatFlow: ChatFlow): {
     }
   }
 
-  const chatFlowMaxContext = inferChatFlowContextWindow(chatFlow);
-
   const nodes: ChatNodeRFNode[] = chatFlow.chatNodes.map((cn) => {
     const pos = g.node(cn.id);
     // dagre returns the *center*; React Flow expects top-left.
@@ -97,7 +95,6 @@ export function layoutChatFlow(chatFlow: ChatFlow): {
       data: deriveCardData(cn, {
         hasIncomingEdge: childIds.has(cn.id),
         hasOutgoingEdge: parentIds.has(cn.id),
-        chatFlowMaxContext,
       }),
     };
   });
@@ -105,8 +102,40 @@ export function layoutChatFlow(chatFlow: ChatFlow): {
   return { nodes, edges };
 }
 
-const DEFAULT_MAX_CONTEXT_TOKENS = 200_000; // CC source: MODEL_CONTEXT_WINDOW_DEFAULT
-const ONE_M_CONTEXT_TOKENS = 1_000_000;
+const DEFAULT_MAX_CONTEXT_TOKENS = 200_000; // fallback for unknown models
+
+// Default model → context-window table. CC's `getModelCapability()` only
+// works for internal users (USER_TYPE='ant', reads ~/.claude/cache/
+// model-capabilities.json fetched from Anthropic API). External users
+// get undefined — so we ship sensible defaults + let users override in
+// settings panel (v0.4).
+//
+// Defaults reflect Loomscope author's actual usage:
+//   Opus 4.7 (default) → 1M context (selected via /model in CC)
+//   Sonnet 4.6        → 200k
+//   Haiku 4.5         → 200k
+//
+// CC strips the [1m] suffix before writing model field to jsonl
+// (src/utils/model/model.ts:501), so we can't read the user's runtime
+// 1M opt-in directly. The defaults below assume the typical Loomscope
+// user runs Opus on 1M; if an Opus session was actually 200k (rare),
+// the bar will under-state usage — user can override in settings.
+//
+// Order matters: longest-prefix-first (specific over general).
+export const MODEL_CONTEXT_WINDOW: Array<[RegExp, number]> = [
+  [/claude-opus/i, 1_000_000],
+  [/claude-sonnet/i, 200_000],
+  [/claude-haiku/i, 200_000],
+  // Future overrides land in user settings (v0.4) and prepend to this list.
+];
+
+export function maxContextForModel(model?: string): number {
+  if (!model) return DEFAULT_MAX_CONTEXT_TOKENS;
+  for (const [pattern, max] of MODEL_CONTEXT_WINDOW) {
+    if (pattern.test(model)) return max;
+  }
+  return DEFAULT_MAX_CONTEXT_TOKENS;
+}
 
 // Compute total context tokens for a single llm_call usage record.
 function llmCallContextTokens(usage: Record<string, unknown> | undefined): number {
@@ -115,62 +144,32 @@ function llmCallContextTokens(usage: Record<string, unknown> | undefined): numbe
   return num("input_tokens") + num("cache_creation_input_tokens") + num("cache_read_input_tokens");
 }
 
-// Infer the ChatFlow's context window cap.
-//
-// CC source `src/utils/model/model.ts:501` strips the `[1m]` suffix from
-// the model name before writing assistant records to jsonl (the [1m] is
-// a CC-side opt-in annotation, not part of the API model id). So the
-// `model` field on every llm_call looks like plain `claude-opus-4-7`
-// regardless of whether 1M context was active — can't infer from there.
-//
-// The only observable evidence: if cumulative input tokens on any turn
-// exceed 200k, 1M context must have been active (otherwise the API call
-// would have rejected). Strategy: scan all llm_calls; if max observed
-// > 200k, mark 1M, else assume 200k.
-function inferChatFlowContextWindow(chatFlow: ChatFlow): number {
-  let maxObserved = 0;
-  for (const cn of chatFlow.chatNodes) {
-    for (const wn of cn.workflow.nodes) {
-      if (wn.kind !== "llm_call") continue;
-      const tokens = llmCallContextTokens(wn.usage);
-      if (tokens > maxObserved) maxObserved = tokens;
-    }
-  }
-  return maxObserved > DEFAULT_MAX_CONTEXT_TOKENS ? ONE_M_CONTEXT_TOKENS : DEFAULT_MAX_CONTEXT_TOKENS;
-}
-
 // Pull `cache_creation + cache_read + input_tokens` from the *last* llm_call's
 // usage — that snapshot represents how much context CC sent on the most
 // recent LLM invocation in this ChatNode (which is the relevant denominator
-// for "how full is the context window after this turn").
-function deriveContextTokens(
-  cn: ChatNode,
-  chatFlowMaxContext: number,
-): {
+// for "how full is the context window after this turn"). max derived from
+// the model name via MODEL_CONTEXT_WINDOW table.
+function deriveContextTokens(cn: ChatNode): {
   contextTokens: number;
   maxContextTokens: number;
 } {
   const llms = cn.workflow.nodes.filter((n) => n.kind === "llm_call");
   if (llms.length === 0)
-    return { contextTokens: 0, maxContextTokens: chatFlowMaxContext };
+    return { contextTokens: 0, maxContextTokens: DEFAULT_MAX_CONTEXT_TOKENS };
   const last = llms[llms.length - 1];
   if (last.kind !== "llm_call")
-    return { contextTokens: 0, maxContextTokens: chatFlowMaxContext };
+    return { contextTokens: 0, maxContextTokens: DEFAULT_MAX_CONTEXT_TOKENS };
   return {
     contextTokens: llmCallContextTokens(last.usage),
-    maxContextTokens: chatFlowMaxContext,
+    maxContextTokens: maxContextForModel(last.model),
   };
 }
 
 function deriveCardData(
   cn: ChatNode,
-  edges: {
-    hasIncomingEdge: boolean;
-    hasOutgoingEdge: boolean;
-    chatFlowMaxContext: number;
-  },
+  edges: { hasIncomingEdge: boolean; hasOutgoingEdge: boolean },
 ): ChatNodeRFData {
-  const { contextTokens, maxContextTokens } = deriveContextTokens(cn, edges.chatFlowMaxContext);
+  const { contextTokens, maxContextTokens } = deriveContextTokens(cn);
   return {
     chatNode: cn,
     userPreview: previewUserContent(cn.userMessage.content),
