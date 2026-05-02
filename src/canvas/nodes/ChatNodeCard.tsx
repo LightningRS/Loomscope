@@ -120,6 +120,26 @@ export function ChatNodeCard({ data, selected }: NodeProps<ChatNodeRFNode>) {
         </div>
       </div>
 
+      {/* Enter-WorkFlow drill button — always visible (Agentloom convention).
+          Compact ChatNodes don't have inner WorkFlow (already summarized),
+          so the button is hidden for them. v0.2 stub; v0.3 wires real
+          drill action. */}
+      {!compact && (
+        <button
+          type="button"
+          className="mt-1 flex w-full items-center justify-center gap-1 rounded border border-gray-200 bg-gray-50 px-2 py-1 text-[10px] text-gray-600 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 transition-colors"
+          onClick={(e) => {
+            e.stopPropagation();
+            // TODO v0.3: useStore.getState().drillIntoWorkflow(cn.id)
+            console.debug("[v0.3 stub] drill into WorkFlow:", cn.id);
+          }}
+          data-testid={`enter-workflow-${cn.id}`}
+        >
+          <span>⤢</span>
+          <span>进入工作流</span>
+        </button>
+      )}
+
       {/* Token bar */}
       {data.contextTokens > 0 && (
         <TokenBar tokens={data.contextTokens} maxTokens={data.maxContextTokens} />
@@ -157,25 +177,6 @@ export function ChatNodeCard({ data, selected }: NodeProps<ChatNodeRFNode>) {
         }
       />
 
-      {/* Enter-WorkFlow drill button — visible on hover. v0.2 占位（点了
-          仅 console.log），v0.3 inner WorkFlow 落地时接 store action 切到
-          ChatNode 内部视图。Compact node 不展开内部 WorkFlow（其内部内容
-          已被压缩进 summary）。 */}
-      {!compact && (
-        <button
-          type="button"
-          className="absolute -bottom-2.5 right-2 hidden h-5 items-center gap-0.5 rounded border border-blue-300 bg-white px-1.5 text-[10px] font-medium text-blue-600 shadow-sm transition-colors hover:bg-blue-50 group-hover/card:flex"
-          onClick={(e) => {
-            e.stopPropagation();
-            // TODO v0.3: useStore.getState().drillIntoWorkflow(cn.id)
-            console.debug("[v0.3 stub] drill into WorkFlow:", cn.id);
-          }}
-          title="进入工作流（v0.3 实现）"
-          data-testid={`enter-workflow-${cn.id}`}
-        >
-          ⤢ 进入工作流
-        </button>
-      )}
     </div>
   );
 }
