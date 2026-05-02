@@ -151,7 +151,12 @@ isCompactSummary    → true 表示这条 user 记录的 message.content 是"前
                      ⚠ 反直觉：标在 type='user' role='user' 记录上（不是 assistant！）
                      CC 把 LLM 生成的 summary 文本以 user 角色塞回新会话作为续写起点
 compactMetadata     → compact 元数据（preserve_count / source_uuid 等）
-isSidechain         → 预留位（实测当前 Claude Code 版本下永远 false，sub-agent 内部 trace 不进 jsonl）
+isSidechain         → ⚠ **by-design 不变量**：永远不在主 jsonl，永远 true 在 sidecar
+                     源码：sessionStorage.ts:1451 `recordSidechainTranscript()` 只写到
+                     `getAgentTranscriptPath()` 路径（即 `subagents/agent-<id>.jsonl`），
+                     从不写主 jsonl
+                     ⇒ "主 jsonl isSidechain 全 false" 不是用户使用方式问题，是 CC 设计的不变量
+                     ⇒ Loomscope 用它做"哪条记录属于哪个文件"的判别字段
 isMeta              → UI-only 标记，主线渲染应跳过
 isVisibleInTranscriptOnly → 只在 transcript 模式可见，canvas 跳过
 logicalParentUuid   → 实测：compact_boundary 系统记录里 parentUuid=null + logicalParentUuid=<当前段最后一个 turn_duration uuid>
@@ -272,6 +277,29 @@ type AgentMetadata = {
 ```
 
 ⇒ Loomscope 的 v0 sub-agent 体验远好于"叶子聚合卡"。打开 delegate 看到的**就是另一棵 WorkFlow DAG**——只是数据来自另一个文件。
+
+### Sidechain 实际是 4+ 种用例的统称（实测源码 + 数据）
+
+`recordSidechainTranscript()`（`sessionStorage.ts:1451`）有 3 个调用点 + 一类历史变体——所有都写到 `subagents/agent-<id>.jsonl` 同套路径，**Loomscope 无须分支处理**：
+
+| 用例 | 触发 | meta agentType | 实测频次 |
+|---|---|---|---|
+| **Sub-agent**（最常见） | LLM 调 `Agent` / `Task` tool | `general-purpose` / `Explore` / `Plan` / `claude-code-guide` 等 | ✅ 用户所有 session 共 156 个 |
+| **Forked agent** | `claude --fork-session <sid>` 或 `--resume <sid>` 启动新实例 | 反映 fork 来源 | ❌ 用户 0 次（没用过 --fork） |
+| **Backgrounded main session** | 用户在 query 中按 **Ctrl+B Ctrl+B**——主会话切后台跑、UI 出新 prompt | `'main-session'` | ❌ 用户 0 次（没用过这操作） |
+| **Auto-compact agent**（v2.1.94 时代）| context 满 harness 自动召唤压缩 agent | （文件名前缀 `acompact-` 或 `aside_question-`，不依赖 meta） | ⚠ 8 个老 session 文件，新版本 v2.1.104+ 改成 inline 处理 |
+
+实测用户所有 session 的 agentType 分布：85 Explore / 65 general-purpose / 4 claude-code-guide / 2 Plan。
+
+### Loomscope 的 sidechain 处理策略
+
+- **统一路径**：所有 4 种 sidechain 都走 `<sessionDir>/subagents/agent-<id>.jsonl`——`SidecarLoader.loadSubAgent(agentId)` 不用分支
+- **agentType 透传**：把 meta.json 的 `agentType` 字段照搬到 ChatFlow 的 delegate WorkNode 上
+- **视觉层（v0.5）按 agentType 切 chrome**：
+  - `'main-session'` → 特殊 chrome（"backgrounded main session"badge）
+  - `'general-purpose'` / `'Explore'` / `'Plan'` / `'claude-code-guide'` → 标准 sub-agent chrome + agentType badge
+  - 文件名前缀 `acompact-` / `aside_question-` → auto-compact chrome（即使 meta agentType 缺失也能识别）
+- **forked / backgrounded 在用户 own session 里基本看不到**——但 design 上要兼容，避免硬编码 `agentType ∈ {Explore, general-purpose, ...}` 白名单
 
 ## 解析算法（pseudocode）
 

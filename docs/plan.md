@@ -32,6 +32,13 @@
 - [ ] `src/parse/__fixtures__/` —— 小 jsonl 测试夹具（手写 / 截取真实 session 段）+ **配套的 sidecar 目录夹具**（subagents/agent-X.jsonl + .meta.json）
 - [ ] `src/parse/jsonl.test.ts` —— 单测：promptId 分组 / Agent 转 delegate / tool_result 反向匹配 / compact 识别 / orphan 处理 / sidecar 路径解析 / agentId join
 
+### v0.1 验收 acceptance
+
+- `npm run typecheck` + `npm test` 全绿
+- 至少 30 个 unit test
+- `agentType` 字段必须 round-trip 透传（meta.json → ChatFlow.delegate WorkNode）——后续 v0.5 视觉规范靠它切 chrome（`main-session` / `Explore` / `general-purpose` 等）；不能硬编码白名单
+- 用户 256MB session 实测：识别 ≥ 93 delegate + ≥ 139 compact，解析时间 < 30 秒（10s 是 v0.8 性能优化目标）
+
 ### 测试夹具准备
 
 不能 commit 真实 256MB session（隐私 + git 体积）。需要：
