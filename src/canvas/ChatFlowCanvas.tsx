@@ -112,7 +112,11 @@ function CanvasInner({ chatFlow, sessionId }: ChatFlowCanvasProps) {
       panOnDrag={true}
     >
       <Background gap={24} size={1} color="#d1d5db" />
-      <Controls position="bottom-right" className="!shadow-md !border !border-gray-200" />
+      <Controls
+        position="bottom-left"
+        showInteractive={false}
+        className="!shadow-md !border !border-gray-200"
+      />
     </ReactFlow>
   );
 }
