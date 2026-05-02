@@ -83,6 +83,8 @@ export function layoutChatFlow(chatFlow: ChatFlow): {
     }
   }
 
+  const chatFlowMaxContext = inferChatFlowContextWindow(chatFlow);
+
   const nodes: ChatNodeRFNode[] = chatFlow.chatNodes.map((cn) => {
     const pos = g.node(cn.id);
     // dagre returns the *center*; React Flow expects top-left.
@@ -95,6 +97,7 @@ export function layoutChatFlow(chatFlow: ChatFlow): {
       data: deriveCardData(cn, {
         hasIncomingEdge: childIds.has(cn.id),
         hasOutgoingEdge: parentIds.has(cn.id),
+        chatFlowMaxContext,
       }),
     };
   });
@@ -103,42 +106,71 @@ export function layoutChatFlow(chatFlow: ChatFlow): {
 }
 
 const DEFAULT_MAX_CONTEXT_TOKENS = 200_000; // CC source: MODEL_CONTEXT_WINDOW_DEFAULT
+const ONE_M_CONTEXT_TOKENS = 1_000_000;
 
-// CC source `src/utils/context.ts:has1mContext`: model strings ending in
-// `[1m]` (case-insensitive) opt into 1M context. All other public Claude
-// models (opus-4, sonnet-4, haiku-4 etc.) cap at 200k.
-function maxContextForModel(model?: string): number {
-  if (!model) return DEFAULT_MAX_CONTEXT_TOKENS;
-  if (/\[1m\]/i.test(model)) return 1_000_000;
-  return DEFAULT_MAX_CONTEXT_TOKENS;
+// Compute total context tokens for a single llm_call usage record.
+function llmCallContextTokens(usage: Record<string, unknown> | undefined): number {
+  if (!usage) return 0;
+  const num = (k: string) => (typeof usage[k] === "number" ? (usage[k] as number) : 0);
+  return num("input_tokens") + num("cache_creation_input_tokens") + num("cache_read_input_tokens");
+}
+
+// Infer the ChatFlow's context window cap.
+//
+// CC source `src/utils/model/model.ts:501` strips the `[1m]` suffix from
+// the model name before writing assistant records to jsonl (the [1m] is
+// a CC-side opt-in annotation, not part of the API model id). So the
+// `model` field on every llm_call looks like plain `claude-opus-4-7`
+// regardless of whether 1M context was active — can't infer from there.
+//
+// The only observable evidence: if cumulative input tokens on any turn
+// exceed 200k, 1M context must have been active (otherwise the API call
+// would have rejected). Strategy: scan all llm_calls; if max observed
+// > 200k, mark 1M, else assume 200k.
+function inferChatFlowContextWindow(chatFlow: ChatFlow): number {
+  let maxObserved = 0;
+  for (const cn of chatFlow.chatNodes) {
+    for (const wn of cn.workflow.nodes) {
+      if (wn.kind !== "llm_call") continue;
+      const tokens = llmCallContextTokens(wn.usage);
+      if (tokens > maxObserved) maxObserved = tokens;
+    }
+  }
+  return maxObserved > DEFAULT_MAX_CONTEXT_TOKENS ? ONE_M_CONTEXT_TOKENS : DEFAULT_MAX_CONTEXT_TOKENS;
 }
 
 // Pull `cache_creation + cache_read + input_tokens` from the *last* llm_call's
 // usage — that snapshot represents how much context CC sent on the most
 // recent LLM invocation in this ChatNode (which is the relevant denominator
 // for "how full is the context window after this turn").
-function deriveContextTokens(cn: ChatNode): {
+function deriveContextTokens(
+  cn: ChatNode,
+  chatFlowMaxContext: number,
+): {
   contextTokens: number;
   maxContextTokens: number;
 } {
   const llms = cn.workflow.nodes.filter((n) => n.kind === "llm_call");
   if (llms.length === 0)
-    return { contextTokens: 0, maxContextTokens: DEFAULT_MAX_CONTEXT_TOKENS };
+    return { contextTokens: 0, maxContextTokens: chatFlowMaxContext };
   const last = llms[llms.length - 1];
   if (last.kind !== "llm_call")
-    return { contextTokens: 0, maxContextTokens: DEFAULT_MAX_CONTEXT_TOKENS };
-  const u = (last.usage ?? {}) as Record<string, unknown>;
-  const num = (k: string) => (typeof u[k] === "number" ? (u[k] as number) : 0);
-  const contextTokens =
-    num("input_tokens") + num("cache_creation_input_tokens") + num("cache_read_input_tokens");
-  return { contextTokens, maxContextTokens: maxContextForModel(last.model) };
+    return { contextTokens: 0, maxContextTokens: chatFlowMaxContext };
+  return {
+    contextTokens: llmCallContextTokens(last.usage),
+    maxContextTokens: chatFlowMaxContext,
+  };
 }
 
 function deriveCardData(
   cn: ChatNode,
-  edges: { hasIncomingEdge: boolean; hasOutgoingEdge: boolean },
+  edges: {
+    hasIncomingEdge: boolean;
+    hasOutgoingEdge: boolean;
+    chatFlowMaxContext: number;
+  },
 ): ChatNodeRFData {
-  const { contextTokens, maxContextTokens } = deriveContextTokens(cn);
+  const { contextTokens, maxContextTokens } = deriveContextTokens(cn, edges.chatFlowMaxContext);
   return {
     chatNode: cn,
     userPreview: previewUserContent(cn.userMessage.content),
