@@ -399,6 +399,28 @@ v0.1 解析层 ship 时（commit `ea61a98`）实测对 256MB session 解析 2.19
 
 实测 256MB session：74 个 scheduled ChatNode + 296 个 awaySummary 通过启发式正确归属。
 
+### Slash command ChatNode（多 isMeta user 记录）
+
+CC 的 slash 命令（如 `/model`、`/compact`、`/cost` 等）不走 LLM——CC 自己处理。但仍 bucket 成一个 ChatNode（共享 promptId），含 3 条 user 记录：
+
+```
+record #1: type=user, isMeta=true, content="<local-command-caveat>System note</local-command-caveat>"
+record #2: type=user, content="<command-name>/model</command-name>..."
+record #3: type=user, content="<local-command-stdout>Set model to Opus 4.7 (1M context) (default)</local-command-stdout>"
+```
+
+**ChatNode 没有 assistant 记录**——`workflow.nodes` 空，`contextTokens=0`，TokenBar 不渲染，🧠/🔧 计数都是 0。
+
+⚠ Parser 选 root user 时**优先 non-meta**——否则 isMeta caveat 会赢，卡片显示的就是系统警告而不是命令体本身。完整优先级：
+
+```
+1. non-meta user record（首选——slash 命令体或正常用户输入）
+2. isMeta user record（ScheduleWakeup sentinel `<<autonomous-loop-dynamic>>` 等回退）
+3. compactSummary user record（compact ChatNode 仅有此种）
+```
+
+详见 `src/parse/jsonl.ts:findRoot` + 单测 `prefers non-meta user record as ChatNode root`。
+
 ### 多 root 处理（实测：单 root 是常态）
 
 之前担心的"多个 user `parentUuid:null` 怎么处理"——实测 256MB session **只有 1 条**符合（即 session 第一条 user）。

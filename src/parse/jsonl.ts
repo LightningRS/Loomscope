@@ -365,23 +365,37 @@ function buildChatNode(
   awaySummaryByUuid: Map<string, RawRecord>,
   scheduledFireByUuid: Map<string, RawRecord>,
 ): ChatNode | null {
-  // Find the root user record: type=user, role=user, NOT a tool_result, NOT
-  // (alternatively) the isCompactSummary user — but if it _is_ the
-  // isCompactSummary user, we still build the ChatNode using it as root.
-  let rootUser: RawRecord | undefined;
+  // Root user record preference (highest → lowest):
+  //   1. Non-meta user record (the actual user prompt or slash-command body)
+  //   2. isMeta user record (sentinel like <<autonomous-loop-dynamic>> for
+  //      ScheduleWakeup fires; or <local-command-caveat> for slash commands
+  //      when there's nothing better. Picked when no non-meta exists.)
+  //   3. compactSummary user record (compact ChatNodes — fallback only)
+  //
+  // Why: slash command invocations (e.g. /model) bucket as 3 user records:
+  //   #1 isMeta=true: <local-command-caveat>… (system-injected warning)
+  //   #2 isMeta=undef: <command-name>/model</command-name>…
+  //   #3 isMeta=undef: <local-command-stdout>Set model to …
+  // Without preferring non-meta, #1 wins and the card shows the caveat
+  // text instead of the actual command. Same hazard for any future CC
+  // feature that injects an isMeta prefix at the head of a turn.
+  let nonMetaUser: RawRecord | undefined;
+  let metaUser: RawRecord | undefined;
   let compactUser: RawRecord | undefined;
   for (const r of bucket.records) {
     if (r.type !== "user") continue;
     if (isToolResultRecord(r)) continue;
     if (r.isCompactSummary) {
       compactUser ??= r;
-      // A compact-summary record _is_ a valid root; we'll prefer a
-      // non-compact root if one exists in the bucket.
-      rootUser ??= r;
       continue;
     }
-    rootUser ??= r;
+    if (r.isMeta) {
+      metaUser ??= r;
+      continue;
+    }
+    nonMetaUser ??= r;
   }
+  const rootUser = nonMetaUser ?? metaUser ?? compactUser;
   if (!rootUser) {
     // No usable root — bucket is data-only (e.g. tool_result-only). Skip.
     return null;

@@ -396,6 +396,76 @@ describe("isMeta / isVisibleInTranscriptOnly handling", () => {
     const cf = fixtureChatFlow();
     expect(cf.chatNodes.find((c) => c.id === "p4")).toBeDefined();
   });
+
+  it("prefers non-meta user record as ChatNode root when bucket has both meta + non-meta (slash command pattern)", () => {
+    // Slash command (e.g. /model) buckets as 3 user records under one
+    // promptId: caveat (isMeta=true), command body (no meta), stdout
+    // (no meta). Without preference rule the caveat would win and the
+    // card would show the system warning. We must surface the command
+    // body instead.
+    const records = [
+      {
+        type: "user",
+        uuid: "u-caveat",
+        parentUuid: null,
+        promptId: "p-slash",
+        sessionId: "s",
+        cwd: "/",
+        timestamp: "2026-05-02T22:00:00Z",
+        isMeta: true,
+        message: { role: "user", content: "<local-command-caveat>System note</local-command-caveat>" },
+      },
+      {
+        type: "user",
+        uuid: "u-cmd",
+        parentUuid: "u-caveat",
+        promptId: "p-slash",
+        sessionId: "s",
+        cwd: "/",
+        timestamp: "2026-05-02T22:00:01Z",
+        message: { role: "user", content: "<command-name>/model</command-name>" },
+      },
+      {
+        type: "user",
+        uuid: "u-stdout",
+        parentUuid: "u-cmd",
+        promptId: "p-slash",
+        sessionId: "s",
+        cwd: "/",
+        timestamp: "2026-05-02T22:00:02Z",
+        message: { role: "user", content: "<local-command-stdout>Set model to Opus</local-command-stdout>" },
+      },
+    ];
+    const cf = buildChatFlow(records as RawRecord[], "/tmp/x.jsonl");
+    const cn = cf.chatNodes.find((c) => c.id === "p-slash");
+    expect(cn).toBeDefined();
+    // Non-meta command body wins as root; uuid points at the command, not the caveat
+    expect(cn!.userMessage.uuid).toBe("u-cmd");
+    expect(cn!.userMessage.content).toContain("<command-name>/model</command-name>");
+  });
+
+  it("falls back to meta user when bucket only has meta (ScheduleWakeup sentinel still works)", () => {
+    // ScheduleWakeup fire produces a single isMeta user record with the
+    // <<autonomous-loop-dynamic>> sentinel. No non-meta records — meta
+    // must still be picked.
+    const records = [
+      {
+        type: "user",
+        uuid: "u-sentinel",
+        parentUuid: null,
+        promptId: "p-sched",
+        sessionId: "s",
+        cwd: "/",
+        timestamp: "2026-05-02T22:00:00Z",
+        isMeta: true,
+        message: { role: "user", content: "<<autonomous-loop-dynamic>>" },
+      },
+    ];
+    const cf = buildChatFlow(records as RawRecord[], "/tmp/x.jsonl");
+    const cn = cf.chatNodes.find((c) => c.id === "p-sched");
+    expect(cn).toBeDefined();
+    expect(cn!.userMessage.uuid).toBe("u-sentinel");
+  });
 });
 
 describe("sidecar loader", () => {
