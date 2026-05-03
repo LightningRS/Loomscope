@@ -212,6 +212,84 @@ describe("layoutChatFlow", () => {
     expect(nodes[0].data.contextTokens).toBe(80_200);
   });
 
+  it("skips <synthetic> tail llm_call (rate-limit 429 placeholder) when picking last model + tokens", () => {
+    // CC injects a fake assistant record with model="<synthetic>" and
+    // zero usage when the API returns 429 / interruption / etc. If the
+    // last real llm_call ran on opus + 80k context, the bar must stay
+    // at 80k, not collapse to 0 from the synthetic tail.
+    const cf = makeChatFlow([
+      makeChatNode({
+        id: "p1",
+        workflow: {
+          nodes: [
+            {
+              id: "l-real",
+              kind: "llm_call",
+              parentUuid: null,
+              text: "",
+              thinking: [],
+              model: "claude-opus-4-7",
+              usage: { input_tokens: 200, cache_read_input_tokens: 80_000 },
+            },
+            {
+              id: "l-synth",
+              kind: "llm_call",
+              parentUuid: "l-real",
+              text: "You've hit your limit · resets 6am",
+              thinking: [],
+              model: "<synthetic>",
+              usage: { input_tokens: 0, cache_read_input_tokens: 0 },
+            },
+          ],
+          edges: [],
+        },
+      }),
+    ]);
+    const { nodes, edges } = layoutChatFlow(cf);
+    expect(nodes[0].data.contextTokens).toBe(80_200);
+    expect(nodes[0].data.maxContextTokens).toBe(1_000_000);
+    // Edge tooltip targetModel should also reflect the real model,
+    // not "<synthetic>" — there's only one chatNode here so no edges,
+    // but if there were a child this would matter.
+    expect(edges).toEqual([]);
+  });
+
+  it("skips errored llm_call when picking last model + tokens", () => {
+    // Same principle as <synthetic>: an errored attempt isn't the
+    // canonical "where the turn ended up" state.
+    const cf = makeChatFlow([
+      makeChatNode({
+        id: "p1",
+        workflow: {
+          nodes: [
+            {
+              id: "l-real",
+              kind: "llm_call",
+              parentUuid: null,
+              text: "",
+              thinking: [],
+              model: "claude-opus-4-7",
+              usage: { input_tokens: 100, cache_read_input_tokens: 50_000 },
+            },
+            {
+              id: "l-error",
+              kind: "llm_call",
+              parentUuid: "l-real",
+              text: "",
+              thinking: [],
+              model: "claude-opus-4-7",
+              usage: { input_tokens: 0, cache_read_input_tokens: 0 },
+              errors: [{ type: "overloaded_error", message: "" }],
+            },
+          ],
+          edges: [],
+        },
+      }),
+    ]);
+    const { nodes } = layoutChatFlow(cf);
+    expect(nodes[0].data.contextTokens).toBe(50_100);
+  });
+
   it("counts tool/llm nodes in workflow", () => {
     const cf = makeChatFlow([
       makeChatNode({

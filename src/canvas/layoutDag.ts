@@ -146,13 +146,31 @@ export function maxContextForModel(model?: string): number {
   return DEFAULT_MAX_CONTEXT_TOKENS;
 }
 
-// Last llm_call's model in a ChatNode, or undefined when there's no
-// llm_call (slash commands, compact-summary-only ChatNodes etc.).
+// Skip llm_call records that aren't real API responses:
+//   - model === "<synthetic>" — CC injects these for rate-limit (429),
+//     interruption, or other harness-side fake assistant records.
+//     Their usage fields are all 0 because no API call happened.
+//   - errors[] non-empty — error responses also can't represent real
+//     context state.
+// Without this filter, a 429 at the end of a turn pins TokenBar to 0
+// and ribbon model to "<synthetic>", losing the per-turn model
+// signal even though the turn ran multiple real LLM calls before.
+function isRealLlmCall(n: { model?: string; errors?: unknown[] }): boolean {
+  if (n.model === "<synthetic>") return false;
+  if (n.errors && n.errors.length > 0) return false;
+  return true;
+}
+
+// Last *real* llm_call's model in a ChatNode (skipping <synthetic> +
+// errored calls), or undefined when there's no real llm_call (slash
+// commands, compact-summary-only ChatNodes, fully-rate-limited turn).
 function lastModelOf(cn: ChatNode): string | undefined {
-  const llms = cn.workflow.nodes.filter((n) => n.kind === "llm_call");
+  const llms = cn.workflow.nodes.filter(
+    (n): n is Extract<typeof n, { kind: "llm_call" }> =>
+      n.kind === "llm_call" && isRealLlmCall(n),
+  );
   if (llms.length === 0) return undefined;
-  const last = llms[llms.length - 1];
-  return last.kind === "llm_call" ? last.model : undefined;
+  return llms[llms.length - 1].model;
 }
 
 // Compute total context tokens for a single llm_call usage record.
@@ -171,12 +189,15 @@ function deriveContextTokens(cn: ChatNode): {
   contextTokens: number;
   maxContextTokens: number;
 } {
-  const llms = cn.workflow.nodes.filter((n) => n.kind === "llm_call");
+  // Mirrors lastModelOf — skip <synthetic> / errored calls so a
+  // rate-limit (429) tail record doesn't pin the bar to 0.
+  const llms = cn.workflow.nodes.filter(
+    (n): n is Extract<typeof n, { kind: "llm_call" }> =>
+      n.kind === "llm_call" && isRealLlmCall(n),
+  );
   if (llms.length === 0)
     return { contextTokens: 0, maxContextTokens: DEFAULT_MAX_CONTEXT_TOKENS };
   const last = llms[llms.length - 1];
-  if (last.kind !== "llm_call")
-    return { contextTokens: 0, maxContextTokens: DEFAULT_MAX_CONTEXT_TOKENS };
   return {
     contextTokens: llmCallContextTokens(last.usage),
     maxContextTokens: maxContextForModel(last.model),
