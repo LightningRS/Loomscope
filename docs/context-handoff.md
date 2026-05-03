@@ -25,15 +25,15 @@
 - **v0.2 minimal canvas**（commit `342357f`）：Hono backend (`src/server/`) + Zustand 4-slice (`src/store/`) + Canvas (`src/canvas/` React Flow + dagre LR) + UI (`src/components/` Sidebar + Header) + dev wiring（vite 5175 proxy → hono 5174）。99/99 tests，256MB 端到端 3.37s。
 - **v0.3 inner WorkFlow**（commit `cba8518` + `4d48232`）：drill-down 替换主视图（选项 C），5 类 WorkNode chrome + SpawnEdge 空心三角 + drillStack store 切面。150/150 tests，256MB drill 进 413-WorkNode 的 ChatNode 实测 60.9 FPS。
 - **v0.4 drill panel**（commit `36f02b7`）：右侧 resizable sidebar + 5 类 WorkNode detail + chunked tool-result lazy-load (`?start=` byte offset + 滚动加载) + MarkdownView (Agentloom 同款) + JsonView + DiffView (零 lib，自动检测 structuredPatch)。195/195 tests。
-- **v0.4 + selection perf fix**（commit `df65051`）：从 v0.4 暴露的 selection round-trip 458ms → 提前从 v0.9 拉出。每卡用 Zustand selector 自己订阅 `selectedNodeId === ownId`，wrapper 不再重 decorate `nodes` prop。1522-ChatNode session 实测 78.9ms avg / 86ms max（5.8×）。202/202 tests。
+- **v0.4 + selection perf fix**（commit `df65051`）：从 v0.4 暴露的 selection round-trip 458ms → 提前从 v0.10 拉出。每卡用 Zustand selector 自己订阅 `selectedNodeId === ownId`，wrapper 不再重 decorate `nodes` prop。1522-ChatNode session 实测 78.9ms avg / 86ms max（5.8×）。202/202 tests。
 - **v0.5 sub-agent 真嵌套**（commit `74d49d9`）：双击 delegate → drill 替换主视图（选项 A，复用 v0.3 drillStack）+ lazy load sidecar jsonl + Map cache + auto-compact badge（agentId 前缀判别）+ DrillBreadcrumb 多级回退。227/227 tests；cache hit 22ms / cold 1830ms / 实测全 session 嵌套深度 max 2 层。**实测发现**：27% sub-agent sidecar 是多 ChatNode（v0.5 渲染 [0] + banner，完整渲染 → v0.5.1）。
 
-## 还没做的部分（v0.5.1 起）
-- v0.5.1 sub-agent 多 ChatNode 渲染（27% 的 sidecar 是多 ChatNode；UX 待定 —— 横向列 / 纵向时间线 / 合并大 flow）
-- v0.6 compact ChatNode 视觉 + file-history-snapshot 时间窗绑定 + logical 弱边 —— CompactDetail 已留提示文案
-- v0.7 fork 浏览（`forkedFrom` + `custom-title` parser / server merge / ConversationView + branchMemory / canvas fork badge）
-- v0.8 file-tail 实时增量
-- v0.9 性能优化 / WorkFlow viewport 持久化 / 跨 session 搜索 (SQLite FTS5)
+## 还没做的部分（v0.6 起）
+- **v0.6 数据模型统一（Node 树重构）** —— 取消 ChatFlow/WorkFlow 二分，统一为递归 Node 树 + 默认折叠 + 按 kind 切 chrome。吸收原 v0.5.1（sub-agent 多 ChatNode）+ 原 v0.5.2（WorkNode token bar + id）+ 原 v2.0。优先级最高，下一步就做
+- v0.7 compact handling（基于 v0.6 统一 Node）+ file-history-snapshot 时间窗绑定 + logical 弱边 —— CompactDetail 已留提示文案
+- v0.8 fork 浏览（`forkedFrom` + `custom-title` parser / server merge / ConversationView + branchMemory / canvas fork badge）
+- v0.9 file-tail 实时增量
+- v0.10 性能优化 / WorkFlow viewport 持久化 / 跨 session 搜索 (SQLite FTS5)
 - v∞.0 read-only 远程观察 / v∞.1 启动新 session / v∞.2 leaf-continuation 续接 prompt / **v∞.3 任意节点 fork composer（"120% of CC"）**
 
 详见 `plan.md`。
@@ -88,7 +88,7 @@ npm run build
 | **安全 Mode B**（opt-in collab）| 0.0.0.0:5174 + bearer token auth required |
 | **公网暴露** | **v0/v∞ 不做**，推荐 Tailscale / Cloudflare Tunnel；未来可考虑 Tier 1+2（不做 Tier 3 SaaS） |
 | **Session 管理面板** | 左侧 VS Code 风格 collapsible tree；从 jsonl `cwd` 字段反向解码；session 行参考 CC `getLogDisplayTitle` fallback 链 |
-| **跨 session 搜索** | v0.8+ 才做（用 SQLite FTS5），现阶段不投入 |
+| **跨 session 搜索** | v0.10+ 才做（用 SQLite FTS5），现阶段不投入 |
 
 ## 实测确认的关键 fact（避免重新发现）
 
@@ -108,7 +108,7 @@ npm run build
 - **折叠/展开/选中状态**：除已定的状态视觉外，多 ChatNode 同时展开的 layout 策略
 - **CLI flag 解析库**：commander / yargs / mri 三选一（实现时挑）
 - **JSONL 格式保留**：用 jsonc-parser 写 settings.json 时的具体实现选型
-- **跨 session 搜索**（v0.8+ 才做）：FTS5 的索引粒度 / 增量更新策略
+- **跨 session 搜索**（v0.10+ 才做）：FTS5 的索引粒度 / 增量更新策略
 
 ## 这个文档的维护
 
@@ -128,7 +128,7 @@ npm run build
   - 性能：cache hit **22ms** / cold drill 1830ms / sub-agent jsonl 总 34MB / 嵌套深度 max 2 层
   - **重要发现**：sub-agent sidecar 不是单 WorkFlow，是多 ChatNode 的 ChatFlow（27% 是多 ChatNode，最大 47 个 —— auto-compact agent 多次自压）。v0.5 渲染 [0] + banner，完整渲染 → v0.5.1。`design-data-model.md` 已同步
   - **小坑**：Playwright dispatchEvent('dblclick') 不被 React Flow 12 视为 dblclick（合成事件缺 click-counting 序列）；e2e 走 DrillPanel 按钮路径，canvas dblclick 路径靠 store 单元测试覆盖
-  - 留给后续：v0.5.1 多 ChatNode 渲染 / v0.6 compact / v0.9 cache LRU + audit fix
+  - 留给后续：**v0.6 数据模型统一**（吸收 v0.5.1 + v0.5.2 + v2.0）/ v0.7 compact / v0.10 cache LRU + audit fix
   - 交付参考 `handoff-v0.5-subagent-nesting.md`
 - **2026-05-02 v0.4 ship（commit `36f02b7`）** —— drill panel 落地：
   - 设计抉择拍板：1A 右侧 resizable sidebar / 2 跟随 viewMode + 面包屑 / 3 chunked GET + `?start=` byte offset + 滚动加载（不是初版 handoff 写的"截断 + Load full 按钮"）

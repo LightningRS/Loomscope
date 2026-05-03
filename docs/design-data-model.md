@@ -1,6 +1,8 @@
 # Data Model — Claude Code JSONL → ChatFlow / WorkFlow
 
 > 本文是 Loomscope 解析层的事实依据。开发 `src/parse/` / `src/data/` 时必读。所有"我们采纳什么 / 跳过什么"的决定都在这里。
+>
+> ⚠ **v0.6 即将重写**：v0.5 sub-agent 真嵌套实测暴露架构缺陷——Loomscope 沿用 Agentloom 的 ChatFlow / WorkFlow 二分硬套到 CC 的扁平 record tree 上（CC 自己的 jsonl 就是 unified parentUuid 树，二分是 Loomscope 解析时硬塞的）。v0.6 取消二分、统一为递归 Node 树 + 默认折叠规则。本文当前内容**保留作为 v0.5 时代的事实依据**，v0.6 ship 时会重写本文。计划详 `plan.md` v0.6 节。
 
 ## 数据源
 
