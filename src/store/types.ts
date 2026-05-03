@@ -2,7 +2,7 @@
 // "前端状态管理" so future v∞ work can drop SSE / hook handlers into
 // `LiveEventSlice` without rippling across the rest of the store.
 
-import type { ChatFlow } from "@/data/types";
+import type { ChatFlow, NodeTree } from "@/data/types";
 import type { AgentMetadata } from "@/parse/sidecar";
 
 // ─── UI slice ────────────────────────────────────────────────────────────────
@@ -73,9 +73,15 @@ export type DrillFrame =
 // ``(sessionId, agentId)`` and dropped on session unload — sub-agents
 // from a different session would have stale parentChatNodeId / uuid
 // references anyway, so cross-session sharing isn't valuable.
+//
+// v0.6 M2 transitional shape: ``chatFlow`` (legacy) + ``nodeTree``
+// (unified) coexist. The store fills both in ``loadSubAgent`` so the
+// canvas / DrillPanel can read whichever shape they currently consume
+// without separate fetches. M5+M6 swap consumers; M7 drops chatFlow.
 export interface SubAgentCacheEntry {
   status: "loading" | "ready" | "error";
   chatFlow: ChatFlow | null;
+  nodeTree: NodeTree | null;
   meta: AgentMetadata | null;
   error: string | null;
   // Last access timestamp (ms). Reserved for future LRU eviction —
@@ -84,24 +90,48 @@ export interface SubAgentCacheEntry {
 }
 
 export interface SessionState {
+  // ── legacy v0.5 shape (consumed by canvas / DrillPanel until M5/M6) ──
   chatFlow: ChatFlow | null;
+  // Folded node ids in the OLD model — legacy code uses this for the
+  // drill-down ChatFlow→WorkFlow toggle. v0.6 reuses the same name
+  // for unified-tree fold state too; the legacy meaning quietly
+  // coexists because v0.5 paths only check membership for a
+  // ChatNode-id key while v0.6 paths check arbitrary Node ids.
   foldedNodeIds: Set<string>;
   viewport: { x: number; y: number; zoom: number };
   selectedNodeId: string | null;
   // WorkFlow-layer selection — kept independent from ChatFlow's
   // ``selectedNodeId`` so drilling out and back in doesn't lose the
   // node the user clicked inside the WorkFlow (matches Agentloom).
+  // M2 keeps this for legacy compatibility; M5 collapses selection
+  // into ``selectedNodeId`` per抉择 3 once the canvas reads from the
+  // unified tree.
   workflowSelectedNodeId: string | null;
   // Empty stack = ChatFlow view; non-empty = WorkFlow view, with the
   // first frame's ``chatNodeId`` identifying which ChatNode is opened.
-  // Not persisted across reloads (v0.3 deliberate; v0.7 / v∞ may move
-  // to URL routing instead).
+  // M5 retires drillStack in favour of ``focusedSubtreeRootId`` per
+  // 抉择 2 (right-click context menu → focus subtree).
   drillStack: DrillFrame[];
+
+  // ── v0.6 unified tree state (populated by M2 loaders, consumed by M5+) ──
+  nodeTree: NodeTree | null;
+  // User overrides on top of ``Node.defaultFolded``. Membership in
+  // ``expandedNodeIds`` forces the node visible even when its default
+  // says folded; membership in ``foldedNodeIds`` collapses a default-
+  // unfolded node. v0.6 fold rules per抉择 1 选项 A: turn roots
+  // (user_message + compact) default unfolded, everything else folded.
+  expandedNodeIds: Set<string>;
+  // null = full canvas (rooted at ``rootNodeIds``); non-null = focus
+  // mode rooted at ``focusedSubtreeRootId``'s subtree. Per抉择 2,
+  // entered via right-click context menu, exited via ESC / breadcrumb /
+  // exitFocus button. Not persisted across reloads.
+  focusedSubtreeRootId: string | null;
+
   // ``agentId → entry`` cache for sub-agent ChatFlows loaded via the
   // ``/api/sessions/:id/subagents/:agentId`` endpoint. v0.5 keeps
-  // everything in memory; eviction policy (LRU / max-size) is v0.9
-  // backlog — real measurement in v0.5 says total per-session payload
-  // is ~5 MB so the obvious risk is low.
+  // everything in memory; eviction policy (LRU / max-size) is v0.10
+  // backlog. M2 fills both ``chatFlow`` and ``nodeTree`` shapes per
+  // entry (see SubAgentCacheEntry).
   subAgentCache: Map<string, SubAgentCacheEntry>;
   isLoading: boolean;
   error: string | null;
@@ -113,7 +143,6 @@ export interface SessionSlice {
   activeSessionId: string | null;
   loadSession: (id: string) => Promise<void>;
   setActiveSession: (id: string | null) => void;
-  toggleFold: (sessionId: string, nodeId: string) => void;
   setSelected: (sessionId: string, nodeId: string | null) => void;
   setViewport: (sessionId: string, vp: { x: number; y: number; zoom: number }) => void;
   // ── Drill-down navigation (v0.3 inner WorkFlow) ──
@@ -137,6 +166,21 @@ export interface SessionSlice {
   // WorkNode in that frame's WorkFlow. Triggers loadSubAgent if the
   // cache is cold. Idempotent on the same parentWorkNodeId.
   enterSubWorkflow: (sessionId: string, parentWorkNodeId: string) => void;
+
+  // ── v0.6 unified-tree actions ──
+  // Toggle a node's fold state. Adds to ``expandedNodeIds`` /
+  // ``foldedNodeIds`` according to the node's ``defaultFolded``
+  // (override the default). Symmetrical: toggling a node that's
+  // currently overridden in either set removes the override (back to
+  // default). Idempotent on the same id within a single tick.
+  toggleFold: (sessionId: string, nodeId: string) => void;
+  // Enter focus mode with this node as the visible subtree root. Per
+  // 抉择 2, triggered by right-click → "Focus on this subtree" in the
+  // canvas context menu. Selection is preserved (so the focused
+  // subtree opens with the user's last click highlighted).
+  enterFocus: (sessionId: string, nodeId: string) => void;
+  // Exit focus mode. Equivalent to truncating to the full canvas.
+  exitFocus: (sessionId: string) => void;
 }
 
 // ─── Live event slice (stub for v∞.0) ────────────────────────────────────────

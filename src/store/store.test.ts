@@ -155,12 +155,20 @@ describe("Session slice", () => {
     expect(useStore.getState().activeSessionId).toBe("abc");
   });
 
-  it("toggleFold toggles a node id in foldedNodeIds", () => {
+  it("toggleFold (no nodeTree loaded) flips expandedNodeIds membership symmetrically", () => {
+    // v0.6 transitional: with no nodeTree the action falls back to
+    // ``defaultFolded=true`` (same as a fresh tool_call would use),
+    // so the first toggle EXPANDS the node and the second toggle
+    // returns it to default. Pre-v0.6 callers that wrote into
+    // foldedNodeIds with no tree should switch to expandedNodeIds —
+    // membership semantics are equivalent for the no-tree path.
     useStore.getState().toggleFold("sid", "node-1");
     let s = useStore.getState().sessions.get("sid");
-    expect(s?.foldedNodeIds.has("node-1")).toBe(true);
+    expect(s?.expandedNodeIds.has("node-1")).toBe(true);
+    expect(s?.foldedNodeIds.has("node-1")).toBe(false);
     useStore.getState().toggleFold("sid", "node-1");
     s = useStore.getState().sessions.get("sid");
+    expect(s?.expandedNodeIds.has("node-1")).toBe(false);
     expect(s?.foldedNodeIds.has("node-1")).toBe(false);
   });
 
