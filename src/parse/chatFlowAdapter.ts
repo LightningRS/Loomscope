@@ -144,7 +144,7 @@ function emitTurnNodes(cn: ChatNode, nodes: Map<string, Node>): void {
     triggerSource: cn.triggerSource,
     fileHistorySnapshotUuids: cn.meta.fileHistorySnapshotUuids,
     permissionModeChanges: cn.meta.permissionModeChanges,
-    defaultFolded: false,
+    defaultFolded: true,
     isTurnRoot: true,
   };
   if (cn.isCompactSummary && cn.compactMetadata) {
@@ -316,7 +316,7 @@ function mapCompact(n: LegacyCompactNode, cn: ChatNode): Node {
     preTokens: n.preTokens,
     preCompactDiscoveredTools: n.preCompactDiscoveredTools,
     summaryText: n.summaryText,
-    defaultFolded: false,
+    defaultFolded: true,
   };
 }
 

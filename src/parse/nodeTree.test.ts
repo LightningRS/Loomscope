@@ -161,28 +161,15 @@ describe("kind classification (mirrors v0.5 WorkNode kinds)", () => {
 });
 
 describe("default-fold rules (抉择 1 选项 A)", () => {
-  it("user_message + compact turn roots default unfolded", () => {
+  it("EVERY Node defaults to ``children hidden`` (defaultFolded=true)", () => {
+    // Per抉择 1 选项 A: each turn renders as one aggregate card by
+    // default; double-click on the turn root reveals its immediate
+    // children. ``defaultFolded`` here means "this node's children are
+    // hidden", not "this card is hidden". Turn-root cards still
+    // render because layoutNodes treats ``isTurnRoot`` as an
+    // always-visible carve-out (independent of fold state).
     const tree = fixtureTree();
-    const turnRoots = [...tree.nodes.values()].filter(
-      (n) => n.kind === "user_message" || n.kind === "compact",
-    );
-    expect(turnRoots.length).toBeGreaterThan(0);
-    for (const r of turnRoots) {
-      expect(r.defaultFolded).toBe(false);
-    }
-  });
-
-  it("assistant_call / tool_call / delegate / attachment default folded", () => {
-    const tree = fixtureTree();
-    const interior = [...tree.nodes.values()].filter(
-      (n) =>
-        n.kind === "assistant_call" ||
-        n.kind === "tool_call" ||
-        n.kind === "delegate" ||
-        n.kind === "attachment",
-    );
-    expect(interior.length).toBeGreaterThan(0);
-    for (const n of interior) {
+    for (const n of tree.nodes.values()) {
       expect(n.defaultFolded).toBe(true);
     }
   });
