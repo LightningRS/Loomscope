@@ -8,6 +8,79 @@
 
 ## 2026-05-03
 
+### v0.7 compact handling ship（commits `fbcc4bb` → M6 doc commit，6 milestone）
+
+按 `handoff-v0.7-compact-handling.md` 实施。**v0.6 redo 的 8 条硬约束 + v0.7 新增 2 条全部守住**——视觉双画布、drill = 主视图替换、selection per-card 订阅、ribbon、NodeBase 共享形态都没动。
+
+**4 个设计抉择最终落点**：
+
+1. **1A** sub-ChatFlow drill 同款机制 —— compact-original DrillFrame，复用 v0.6 redo sub-chatflow drill plumbing（合成 ChatFlow + 递归 ChatFlowCanvas），App.tsx 无新 viewMode；范围语义按 **1B** 走（沿 logicalParentChatNodeId 反向追溯，停在 root 或上一个 compact）；按钮策略按 **1C'** （双按钮：进入工作流 + 展开 pre-compact，前者在 inner workflow 无 llm_call 时隐藏 — 实测 3/131 边缘 case 触达）
+2. **2A** trigger 缺失 → fallback teal + "trigger unknown" 灰 badge —— 实测作者本机 0 缺失（handoff 引用的"132/281 缺失"来自跨用户 + sidecar，作者主项目 trigger 字段总是有），fallback 几乎不触发但留作防御
+3. **3A'** snapshot **messageId 直接绑定**（**v0.1 时间窗启发完全推翻**）+ **路径 C** 顺手 + 并排展示 snapshot vs tool_use 文件
+4. **4A 精装** dashed gray border 容器 + 📄 + filename + displayPath mono + ⊠ badge + "原文不在 jsonl 中" 副标题
+
+**Milestone commits**：
+
+- M1a `fbcc4bb` — file-history-snapshot messageId 绑定（7 个新测试，3059 跨用户 sample 100% messageId / 99.97% record 解析；256MB 实测 2099/2099 = 100% 绑定）
+- M1b `246a0c2` — ChatNodeCard `📁 N` 角标 + DrillPanel "本轮文件改动" section（3 个新测试 + layoutDag 3 个）
+- M1c `307acf4` — DrillPanel 并排 snapshot vs tool_use（5 个 case）+ distinctToolUseFiles helper unit 测试
+- M2 `98d3d43` — CompactCard 子组件 (独立分支，类似 SlashCommandCard)；7 个新测试覆盖三色 + dashed + chip 文字 + preTokens + trigger unknown badge + 双按钮条件渲染
+- M3 `5165f3b` — compact-original drill: parser 加 `CompactNode.logicalParentChatNodeId`；DrillFrame 加 `compact-original` kind；enterCompactOriginal action；resolveDrillView compact-original 分支 (合成 ChatFlow + 头节点 parentChatNodeId rewrite null)；computePreCompactRange (parentChatNodeId 反向追溯，cap 5000 hops 防环)；ChatNodeCard pre-compact 按钮 wire；18 个新测试 (parser 1 + ChatNodeCard 2 + compactOriginalDrill.test.ts 16)
+- M4 `82e3dc1` — LogicalEdge dashed slate-400 + curvature 0.6 + hollow arrow；layoutDag 不入 g.setEdge (防止 dagre LR 回归)；4 个新测试含一个"node 位置 with vs without logical 完全相同"的 dagre 隔离回归测试；256MB 实测 131/131 compact 全产生 logical edge
+- M5 `1cdf5f4` — DrillPanel CompactFileReferenceCard (dashed gray + 📄 + filename + displayPath + ⊠ badge + 副标题)；3 个新测试；删 1 个 stale test
+- M6（本 commit）— design-data-model.md / design-visual-language.md / plan.md / context-handoff.md 同步更新；devlog ship 条目
+
+**测试**：235 (v0.7 起点) → 284 (M5 收尾)，**+49 个新测试**，typecheck / build clean。
+
+**性能实测**（256MB session 1522 ChatNode + 131 compact）：
+
+| 指标 | v0.6 redo baseline | v0.7 实测 | 边界 |
+|---|---|---|---|
+| 解析时间 | 1960ms | **1860ms** | ≤ baseline + 10% |
+| snapshot 绑定率 | 0% (全 orphan) | **100%** (2099/2099) | ≥ 80% |
+| logical edge 生成 | n/a | 131/131 compact | 全覆盖 |
+| selection per-card 订阅 | 78.9ms (v0.4 fix) | 路径未动 | 不退 |
+| sub-agent cache hit | 22ms | lazy-load 路径未动 | 不退 |
+
+**8 条 v0.6 redo 硬约束 + v0.7 新增 2 条逐条状态**：
+
+1. ✅ ChatFlowCanvas + WorkFlowCanvas 双画布保留 — 都没改组件结构，只加 LogicalArrowDefs
+2. ✅ App.tsx viewMode union + drillStack 模型保留 — drillStack 加了第三种 frame kind 但仍是 union；compact-original 复用 sub-chatflow 模式，App.tsx 0 改动
+3. ✅ drill = 主视图替换（v0.3 选项 C）— compact-original push 后 ChatFlowCanvas 渲染合成 ChatFlow，依然主视图替换
+4. ✅ 没有 default-fold + expand/collapse — toggleFold 仍是 v0.5 简单 membership，没引入新 fold 模型
+5. ✅ 内层 llm_call/tool_call 不出现在 ChatFlow 顶层 — layoutChatFlow 仍只发 ChatNode；compact-original drill 渲染的合成 ChatFlow 也只含 ChatNode
+6. ✅ ModelRibbonLayer 在 ChatFlow 视图能 hover — `ChatFlowCanvas.tsx:241` 仍挂载
+7. ✅ 测试全绿 + 净增（235 → 284，+49）
+8. ✅ selection per-card 订阅模型不动 — `useIsChatNodeSelected` / `useIsWorkNodeSelected` 没改
+9. ✅ NodeBase + 各 kind extends 不动 — 只在 CompactNode 加了 `logicalParentChatNodeId?` 字段，ChatNode/其他 WorkNode 类型形状不变
+10. ✅ 测试 235 → 不允许回退 — 实际 +49 净增
+
+**遇到的 bug / surprise**（v0.1-v0.6 实测不变量在 compact 路径下不成立的情况）：
+
+- ⚠ **v0.1 doc 的"file-history-snapshot 全 orphan + 时间窗启发"完全推翻**。snapshot.messageId 字段从 v0.1 起一直存在但 doc 没提；handoff 抉择 3 全部建立在错前提上。M1a doc 同步更新 + 代码注释 explain why messageId-direct（避免下次 agent 再走时间窗弯路）。
+- ⚠ **compact ChatNode inner workflow 不是空的**。我（实施 agent）一开始按"compact 的 inner workflow 只有一个 CompactNode 没东西可看"前提设计抉择 1C 单按钮路径，作者也回了 1C。实测发现 128/131 compact ChatNode inner workflow 含 llm_call (97%)，平均每个 97 个 llm_call —— 那些是 **post-compact 续接对话**（CC 用 promptId bucket 把 compact 触发后的整段对话归到同一 ChatNode）。立即停下找作者重新拍板，最后落到 1C' 双按钮（保留 inner workflow drill + 加 pre-compact drill）。
+- ⚠ **handoff 抉择 2 数字误导**。handoff 说"281 boundary，132 缺 trigger (47%)"促使倾向 fallback B (gray 第四色)；实测作者主项目 0 缺失，那 132 来自跨用户 + sidecar。fallback A 是正确选择。
+- compact ChatNode 的 chip / 按钮文字按"展开 pre-compact"语义 wire，`enterCompactOriginal` push 策略选择"top 是 chatnode → REPLACE"而非 PUSH，因为 inner-workflow 视图和 pre-compact 视图是同一节点的两个 alternative views 而非嵌套。breadcrumb 因此从 compact ChatNode 的 inner workflow 进 pre-compact 显示"ChatFlow → ⊞ pre-compact (xxx)"，不是"ChatFlow → ChatNode A → ⊞ pre-compact (A)"——更简洁。
+
+**file-history-snapshot 实测绑定率**：256MB 主 session 2099/2099 = **100%** 绑定（messageId 直接 lookup + resolvePromptId 一跳全部成功；0 orphan）。1186/1522 (78%) ChatNode 至少有一个 snapshot；其余 22% 是 slash command / scheduled / no-file-changed turn，正常。
+
+**残留 backlog**：
+
+- **Playwright e2e** —— Loomscope 项目本地无 Playwright config + npm 包；handoff "e2e" 是 aspirational。Agentloom conda env 有 playwright 可借用，独立任务做（不阻塞 v0.7 ship）。所有视觉 + drill + edge 已通过 unit + render test 覆盖到 testid 级别。
+- **跨层 ChatNode 选择字段**（v0.6 redo 同款 backlog）：DrillPanel 共用 `selectedNodeId` 在 sub-chatflow / compact-original drill 视图切换时仍会"漏到"另一层。当前 fallback 到空 hint 不 crash。等成痛点再加 `Map<frameDepth, selectedId>`。
+- **Bash 隐式改文件路径提取** —— M1c side-by-side 故意跳过 Bash（路径在 stdout，启发式提取错误率高）；v0.10 polish 范围。
+- **失败 compact 实数据验证** —— 三色 chrome 包含 rose for `trigger:"failed"`，但实测作者本机 0 例。CC 未来如发出 failed compact 才能验证视觉。
+
+**design-data-model.md 改动范围**：
+- 重写"file-history-snapshot 全是 orphan" 小节为 "file-history-snapshot binding (v0.7 实测纠正)"，记录 messageId 直接绑定 + 实测数字
+- "Compact 段的数据语义" 小节加 logicalParentChatNodeId 字段说明、新增"compact ChatNode 的 inner workflow 实测发现"小节（128/131 含 llm_call 的发现）+ "compact-original drill 范围"小节
+- 没改：sidecar 文件机制、Recap 章节、scheduled trigger、slash command、多 root 等
+
+**design-visual-language.md 改动范围**：
+- compact 节点章节：chrome 颜色表加 `failed` 行 + `undefined` fallback 行 + 标 v0.7 ship；chip 文字规范；展开行为重写成"compact-original DrillFrame + 双按钮"
+- logical edge 表行加 v0.7 ship 标记 + `LogicalEdge.tsx` 实现细节
+- compact_file_reference attachment 章节：chrome 草图重画为 dashed gray + 多行卡片
+
 ### `<synthetic>` 假 llm_call 过滤 fix（commit `a13da49`）
 
 作者注意到 0735d228 的 ChatNode 0b81ff42 没显示 TokenBar。诊断：该 ChatNode 最后一个 llm_call `model="<synthetic>"` 且 usage 全 0。挖到底是 CC 自己的 4 类 placeholder 共用同一 sentinel：

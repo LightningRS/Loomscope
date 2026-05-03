@@ -132,6 +132,7 @@ npm run build
 
 > 简版（一行一条 milestone）。每条详情 + 决策 + 实测发现见 `devlog.md`。
 
+- **2026-05-03 v0.7 compact handling ship**（`fbcc4bb` → M6，6 milestone）—— file-history-snapshot 通过 messageId 直接绑定（v0.1 时间窗假设被推翻，100% 命中）+ ChatNodeCard 📁 N 角标 + DrillPanel snapshot vs tool_use 并排副作用揭示 + compact ChatNode 三色 dashed chrome + compact-original drill (沿 logicalParentUuid 链反向追溯) + logical 弱边 (dashed 反向弧，131/131 ship) + compact_file_reference 精装 card；235 → 284 (+49)；解析 1860ms (v0.6 baseline 1960ms 内)。8+2 硬约束全过
 - **2026-05-03 `<synthetic>` 假 llm_call 过滤 fix**（`a13da49`）—— 429 rate-limit 注入的 `model: "<synthetic>"` 假记录污染 last-llm_call 派生（TokenBar 归 0 / ribbon 染色错），跳过后 last real call 重新生效；282/282
 - **2026-05-03 v0.6 redo ship**（`a48f990` → `121aa4b`，5 milestone）—— NodeBase + ChatNode/WorkNode `extends`；递归 ChatFlowCanvas 走 sub-ChatFlow drill（amber banner 消失）；TokenBar/NodeIdLine 抽 shared atoms 给 5 类 WorkNode；235/235；解析 2500 → 1960ms。8 条硬约束全过
 - **2026-05-03 v0.6 redo 排定 + Conversation tab 排进 v0.8/v∞.2/v∞.3**（`b2940b0`）—— 右侧 panel 改 2-tab；Conversation tab 跟 v0.8 ConversationView 合并；composer 在 v∞.2/v∞.3 演进
