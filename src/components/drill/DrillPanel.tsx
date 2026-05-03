@@ -1,68 +1,38 @@
-// Right-side resizable drill panel — surfaces the full content of the
-// currently selected node. Position chosen per design抉择 1 (matches
-// Agentloom ConversationView layout). Mode-following per design抉择 2:
-// in ChatFlow view shows ChatNode detail; in WorkFlow view shows
-// WorkNode detail.
+// v0.6 M6 — drill panel reads from the unified Node tree.
+//
+// Selection lookup walks the same path as the Canvas: the active tree
+// is either the session's main nodeTree or (when drilled into a
+// sub-agent) the cached sub-agent's tree. The unified
+// ``useIsNodeSelected`` hook (M2) returns true for either
+// selectedNodeId or workflowSelectedNodeId, so the panel reflects the
+// user's last click whichever layer they were in.
 //
 // Toggle button on the panel header lets users collapse to a 12px
 // strip when they need full canvas width — preferred over hard-hide
 // so the strip stays as a re-entry affordance.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { ChatNodeDetail } from "@/components/drill/ChatNodeDetail";
-import { WorkNodeDetail } from "@/components/drill/WorkNodeDetail";
+import { NodeDetail } from "@/components/drill/NodeDetail";
 import { useStore } from "@/store/index";
-import type { ChatFlow, ChatNode, WorkNode } from "@/data/types";
+import type { Node, NodeTree } from "@/data/types";
 
 interface Props {
   sessionId: string;
-  chatFlow: ChatFlow;
-  // ``chatnode`` when the main viewport is the ChatFlow canvas;
-  // ``workflow`` when drilled into a WorkFlow. Drives which detail
-  // component renders.
-  viewMode: "chatflow" | "workflow";
-  // Only meaningful when viewMode === "workflow" — the ChatNode whose
-  // WorkFlow is being viewed (panel header shows it as a breadcrumb).
-  drilledChatNode: ChatNode | null;
 }
 
 const COLLAPSED_WIDTH = 12;
 
-export function DrillPanel({ sessionId, chatFlow, viewMode, drilledChatNode }: Props) {
+export function DrillPanel({ sessionId }: Props) {
   const width = useStore((s) => s.drillPanelWidth);
   const collapsed = useStore((s) => s.drillPanelCollapsed);
   const setWidth = useStore((s) => s.setDrillPanelWidth);
   const toggle = useStore((s) => s.toggleDrillPanel);
-  const selectedChatId = useStore(
-    (s) => s.sessions.get(sessionId)?.selectedNodeId ?? null,
-  );
-  const selectedWorkId = useStore(
-    (s) => s.sessions.get(sessionId)?.workflowSelectedNodeId ?? null,
-  );
 
-  // Resolve the currently focused node based on viewMode + selection.
-  const focused = useMemo(() => {
-    if (viewMode === "chatflow") {
-      const cn = selectedChatId
-        ? chatFlow.chatNodes.find((c) => c.id === selectedChatId) ?? null
-        : null;
-      return { kind: "chatnode" as const, chatNode: cn };
-    }
-    if (!drilledChatNode) return { kind: "empty" as const };
-    const wn = selectedWorkId
-      ? drilledChatNode.workflow.nodes.find((n) => n.id === selectedWorkId) ?? null
-      : null;
-    return { kind: "worknode" as const, workNode: wn };
-  }, [viewMode, selectedChatId, selectedWorkId, chatFlow, drilledChatNode]);
+  const focusedNode = useFocusedNode(sessionId);
 
   if (collapsed) {
-    return (
-      <CollapsedStrip
-        width={COLLAPSED_WIDTH}
-        onExpand={toggle}
-      />
-    );
+    return <CollapsedStrip width={COLLAPSED_WIDTH} onExpand={toggle} />;
   }
 
   return (
@@ -72,37 +42,23 @@ export function DrillPanel({ sessionId, chatFlow, viewMode, drilledChatNode }: P
       style={{ width, minWidth: width, maxWidth: width }}
     >
       <ResizeHandle width={width} setWidth={setWidth} />
-      <Header
-        viewMode={viewMode}
-        drilledChatNode={drilledChatNode}
-        onCollapse={toggle}
-      />
+      <Header focusedNode={focusedNode} onCollapse={toggle} />
       <div className="flex-1 min-h-0 overflow-y-auto p-3">
-        {focused.kind === "chatnode" && focused.chatNode && (
-          <ChatNodeDetail chatNode={focused.chatNode} />
+        {focusedNode ? (
+          <NodeDetail node={focusedNode} sessionId={sessionId} />
+        ) : (
+          <EmptyHint label="点击节点查看详情；右键节点可 Focus subtree" />
         )}
-        {focused.kind === "chatnode" && !focused.chatNode && (
-          <EmptyHint label="点 ChatNode 查看详情" />
-        )}
-        {focused.kind === "worknode" && focused.workNode && (
-          <WorkNodeDetail workNode={focused.workNode} sessionId={sessionId} />
-        )}
-        {focused.kind === "worknode" && !focused.workNode && (
-          <EmptyHint label="点 WorkNode 查看详情" />
-        )}
-        {focused.kind === "empty" && <EmptyHint label="进入工作流后选 WorkNode 查看" />}
       </div>
     </aside>
   );
 }
 
 function Header({
-  viewMode,
-  drilledChatNode,
+  focusedNode,
   onCollapse,
 }: {
-  viewMode: "chatflow" | "workflow";
-  drilledChatNode: ChatNode | null;
+  focusedNode: Node | null;
   onCollapse: () => void;
 }) {
   return (
@@ -110,17 +66,16 @@ function Header({
       <span className="text-[10px] font-semibold tracking-widest text-gray-500">
         DETAIL
       </span>
-      {viewMode === "workflow" && drilledChatNode && (
-        // Mode-following + breadcrumb: keep parent ChatNode visible
-        // even when the panel is rendering WorkNode detail (per
-        // design抉择 2).
+      {focusedNode && (
         <span
           className="ml-1 inline-flex items-center gap-1 truncate text-[10px] text-gray-400 font-mono"
-          title={drilledChatNode.id}
+          title={focusedNode.id}
           data-testid="drill-panel-breadcrumb"
         >
           <span>↳</span>
-          <span className="truncate">CN {drilledChatNode.id.slice(0, 8)}</span>
+          <span className="truncate">
+            {focusedNode.kind} {focusedNode.id.slice(0, 8)}
+          </span>
         </span>
       )}
       <button
@@ -134,6 +89,44 @@ function Header({
       </button>
     </div>
   );
+}
+
+// Resolve the focused node by walking the active tree (main session
+// nodeTree, or — when drilled into a sub-agent — the cached
+// sub-agent's tree). Selection comes from EITHER selectedNodeId or
+// workflowSelectedNodeId since both are dual-written during the v0.6
+// transition (M5 still calls setWorkflowSelected when a sub-agent is
+// active to keep legacy hooks happy).
+function useFocusedNode(sessionId: string): Node | null {
+  return useStore((s) => {
+    const sess = s.sessions.get(sessionId);
+    if (!sess) return null;
+    const tree = resolveActiveTree(sess);
+    if (!tree) return null;
+    const id =
+      sess.workflowSelectedNodeId ?? sess.selectedNodeId ?? null;
+    if (!id) return null;
+    return tree.nodes.get(id) ?? null;
+  });
+}
+
+function resolveActiveTree(sess: {
+  nodeTree: NodeTree | null;
+  drillStack?: Array<{ kind: string; parentWorkNodeId?: string; chatNodeId?: string }>;
+  subAgentCache: Map<string, { status: string; nodeTree: NodeTree | null }>;
+}): NodeTree | null {
+  if (!sess.drillStack || sess.drillStack.length === 0) return sess.nodeTree;
+  let tree = sess.nodeTree;
+  for (const frame of sess.drillStack) {
+    if (frame.kind === "chatnode") continue;
+    if (!tree || !frame.parentWorkNodeId) return null;
+    const delegate = tree.nodes.get(frame.parentWorkNodeId);
+    if (!delegate?.agentId) return null;
+    const cached = sess.subAgentCache.get(delegate.agentId);
+    if (cached?.status !== "ready" || !cached.nodeTree) return null;
+    tree = cached.nodeTree;
+  }
+  return tree;
 }
 
 function CollapsedStrip({
@@ -217,5 +210,4 @@ function EmptyHint({ label }: { label: string }) {
   );
 }
 
-// Keep the WorkNode union exported for tests / consumers needing it.
-export type { WorkNode };
+// (Legacy WorkNode export dropped — M7 deletes the legacy types.)

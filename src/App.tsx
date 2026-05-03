@@ -62,14 +62,7 @@ export default function App() {
             </>
           )}
         </main>
-        {activeId && session?.chatFlow && (
-          <DrillPanel
-            sessionId={activeId}
-            chatFlow={session.chatFlow}
-            viewMode={drillView ? "workflow" : "chatflow"}
-            drilledChatNode={drillView?.chatNode ?? null}
-          />
-        )}
+        {activeId && session?.nodeTree && <DrillPanel sessionId={activeId} />}
       </div>
     </div>
   );
