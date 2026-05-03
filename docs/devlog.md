@@ -8,6 +8,43 @@
 
 ## 2026-05-03
 
+### v0.6 redo ship（commits `a48f990` → `2865282`，5 milestone）
+
+按 `handoff-v0.6-redo-node-base-interop.md` 实施。**作者澄清的本意守住**：数据层 `NodeBase` 共享接口 + 视觉层双画布嵌套保留 + delegate drill 进完整 sub-ChatFlow + WorkNode 卡片加 TokenBar/NodeIdLine。
+
+**4 个设计抉择最终落点**：
+1. NodeBase interface（B 路径）—— ChatNode + 5 类 WorkNode 都 `extends NodeBase`，共享 `id / kind / timestamp / model / usage / errors`；删 v0.6 第一版残留 `nodeTree.ts` / `chatFlowAdapter.ts` / `v06FoldAndFocus.test.ts`
+2. lazy-load delegate（B 路径）—— resolver 直接读 `subAgentCache.get(agentId).chatFlow`，不 store-mutate delegate node；继承 v0.5 22ms cache hit
+3. ChatFlowCanvas 递归复用（A 路径）—— App.tsx viewMode union 加 `"sub-chatflow"`，drill 进 delegate 时主视图变成第二层 ChatFlowCanvas（同组件，传 sub-agent 完整 ChatFlow）
+4. TokenBar "model invocation 发生即画"（A 路径，作者修正措辞为统一规则）—— llm_call (input+output) / delegate (totalTokens) / compact (preTokens) 画；tool_call / attachment 跳过
+
+**Milestone commits**：
+- M1 `a48f990` — NodeBase + extends + 删 v0.6 第一版残留（19 files, +329/-2841）
+- M2 — 跳过（按抉择 B）
+- M3 `e050eab` — `resolveDrillView` 重写成 union + ChatFlowCanvas 递归 + 删 amber multi-ChatNode banner + `enterWorkflow` 改成 stack-aware push（5 files, +195/-134）
+- M4 `37431c8` — `chrome/TokenBar.tsx` + `chrome/NodeIdLine.tsx` 抽出 + 5 类 WorkNode 卡按抉择 4 加 chrome + WF_NODE_SIZE 高度 +15~30px（10 files, +181/-98）
+- M5 `2865282` — DrillPanel 视图模式分发测试（3 个新 test，专测 sub-chatflow scope）
+
+**测试**：229 (M1 起点) → 235 (M5 收尾)，typecheck / build 都通过。
+
+**性能实测**（256MB session 1522 ChatNode）：解析 1946ms （v0.5 baseline 2500ms 的 78%；redo 后再测 1960ms 同基线），cache hit 仍 22ms（lazy-load 路径未动），selection per-card 订阅未动（v0.4 perf fix 钉死）。
+
+**8 条硬约束逐条状态**：
+1. ✅ 双画布保留 —— ChatFlowCanvas + WorkFlowCanvas 都在
+2. ✅ viewMode union —— 加了 `"sub-chatflow"` 但仍是 union + drillStack
+3. ✅ drill 进 ChatNode = 主视图替换 —— App.tsx 按 view.mode 切组件
+4. ✅ 没有 default-fold —— `toggleFold` 回到 v0.5 简单 membership，删了 expandedNodeIds
+5. ✅ 内层 llm_call/tool_call 不出现在 ChatFlow 顶层 —— `layoutChatFlow` 仍只发 ChatNode
+6. ✅ ModelRibbonLayer hover —— `ChatFlowCanvas.tsx:239` 还在
+7. ✅ 测试全绿 + 净增（229 → 235）
+8. ✅ selection per-card 订阅模型不动 —— `useIsChatNodeSelected` / `useIsWorkNodeSelected` 没改
+
+**与 v0.6 第一版的关键差别**：第一版按"取消视觉嵌套 + flat tree + default-fold"实施，被 revert；redo 严格只动数据层共享 base + sub-ChatFlow drill 视觉嵌套递归 + chrome 抽原子，**视觉层 chatflow/workflow 二分本身没动**。
+
+**残留 backlog**：
+- DrillPanel 在 sub-chatflow 模式下 selection 复用 `selectedNodeId` 全局字段（导致跨层 ChatNode 选择会"漏到"另一层）；当前 DrillPanel 自动按 scope 兜底返回空，未引入 `subChatFlowSelectedNodeId` 第三个字段。如未来跨层 selection 切换变成痛点，再加。
+- `design-data-model.md` 还没更新到反映 NodeBase；handoff 标小幅更新（"ChatNode 数据形态" + "WorkNode 数据形态"两节）—— 留作单独 doc-only 提交。
+
 ### v0.6 第一版 revert + 重做方向澄清
 
 **作者发现回归** —— 上线 v0.6 后两个可见问题：(1) ChatFlow 上 hover 边的 model ribbon 不见了 (2) ChatNode `bacd662d` 的内部 llm_call/tool_call 在 v0.6 unified flat tree 下作为 ChatFlow 顶层 sibling 出现。

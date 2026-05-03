@@ -210,20 +210,28 @@ durationMs          → 该步耗时
 - 0~N 条 user 记录（在该 promptId 下的所有 tool_result —— 因为 tool_result 是 type=user）
 - 可能跨多个 requestId（一次用户提问可能引发多次 LLM 调用 + tool 循环）
 
-ChatNode 字段（拟）：
+ChatNode `extends NodeBase`（v0.6 redo 起 ChatNode + 5 类 WorkNode 都共享 base，让 chrome 原子能跨层读 `id / kind / model / usage / errors`，不用 per-shape 分支）：
 
 ```ts
 {
+  // NodeBase 字段
   id: string;            // = promptId
+  kind: 'chat';          // ChatNode 的 discriminator literal
+  timestamp?: string;    // 来自 rootUserUuid 的 user 记录
+  model?: string;        // 一般 ChatNode 自身没有；模型属性出现在内部 llm_call WorkNode 上
+  usage?: UsageRecord;   // 同上
+  errors?: NodeError[];
+
+  // ChatNode 特有
   parentChatNodeId: string | null;  // 通过 parentUuid 反向找到前一个 promptId
   userMessage: { uuid, content, timestamp, attachments? };
   workflow: WorkFlow;    // 内部所有 assistant + tool_result 在这里
   trigger: 'user' | 'scheduled';   // 'cron-fired' 标在 ChatFlow 上，不在这里
-  triggerSource?: { workNodeId: string };  // scheduled 时指向 ScheduleWakeup tool_use 节点
+  triggerSource?: { workNodeId: string };
   isCompactSummary: boolean;
   compactMetadata?: {...};
-  fileHistorySnapshots?: [...];  // 本轮内的文件改动
-  permissionModeChanges?: [...];
+  slashCommand?: { name, args?, stdout? };
+  meta: ChatNodeMeta;
 }
 ```
 
@@ -237,15 +245,15 @@ ChatNode 字段（拟）：
 
 ### 第 4 层：WorkNode
 
-每个 WorkNode 对应一个有意义的工作单元：
+每个 WorkNode 对应一个有意义的工作单元。**5 个 kind 都 `extends NodeBase`**（v0.6 redo），共享 `id / kind / timestamp / model / usage / errors`；其余字段按 kind 各自拓展。
 
 | WorkNode `kind` | 来源 | 备注 |
 |---|---|---|
-| `llm_call` | 1 条 assistant 记录（reqId 内的 1 次 LLM 调用，或它的 follow-up）| 把 `text` blocks 合并、`thinking` blocks 单独存 |
-| `tool_call` | 1 个 `tool_use` block + 它对应的 tool_result | result 通过 sourceToolUseID 反向匹配 |
-| `delegate` | tool_use 中 `name=='Agent'` 或 `'Task'` | **v0 默认折叠（聚合卡），展开时加载 sidecar `subagents/agent-<agentId>.jsonl` 显示真嵌套子 WorkFlow**（见下）|
-| `compact` | **`user` 记录中** `isCompactSummary=true`（⚠ 不是 assistant！）+ 配对的 `system/compact_boundary` | 折叠态默认；视觉规范见 `design-visual-language.md` |
-| `attachment` | type=attachment 记录 | 关联到对应 user 消息 |
+| `llm_call` | 1 条 assistant 记录（reqId 内的 1 次 LLM 调用，或它的 follow-up）| 把 `text` blocks 合并、`thinking` blocks 单独存。卡片底部 TokenBar = `usage.input + output` |
+| `tool_call` | 1 个 `tool_use` block + 它对应的 tool_result | result 通过 sourceToolUseID 反向匹配。无 TokenBar（无原生 token 概念） |
+| `delegate` | tool_use 中 `name=='Agent'` 或 `'Task'` | v0.6 redo 起 drill 进 = 渲染**完整 sub-agent ChatFlow**（递归 ChatFlowCanvas，sidecar `subagents/agent-<agentId>.jsonl`），不再 chatNodes[0] 折叠。卡片 TokenBar = `totalTokens` |
+| `compact` | **`user` 记录中** `isCompactSummary=true`（⚠ 不是 assistant！）+ 配对的 `system/compact_boundary` | 折叠态默认；卡片 TokenBar = `preTokens`；视觉规范见 `design-visual-language.md` |
+| `attachment` | type=attachment 记录 | 关联到对应 user 消息。无 TokenBar |
 
 ### Sub-agent：在 WorkFlow 内可双态展开（修正版 2026-05-02）
 
