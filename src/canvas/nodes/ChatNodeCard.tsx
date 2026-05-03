@@ -173,6 +173,16 @@ export function ChatNodeCard({ id, data }: NodeProps<ChatNodeRFNode>) {
             ▸{Math.round(data.totalThinkingChars / 100) / 10}k
           </span>
         )}
+        {data.fileTouchCount > 0 && (
+          <span
+            className="inline-flex items-center gap-0.5"
+            title={`本轮文件改动 (${data.fileTouchCount} 个)`}
+            data-testid={`chat-node-${cn.id}-file-touch`}
+          >
+            <span className="text-gray-400">📁</span>
+            <span className="font-mono">{data.fileTouchCount}</span>
+          </span>
+        )}
       </div>
 
       {/* Full UUID centered at bottom — Agentloom convention. CSS truncate

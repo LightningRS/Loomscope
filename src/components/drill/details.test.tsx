@@ -100,6 +100,69 @@ describe("ChatNodeDetail", () => {
     expect(container.textContent).toMatch(/\/model/);
     expect(container.textContent).toMatch(/Set model to Opus/);
   });
+
+  it("renders 本轮文件改动 section when fileHistorySnapshots are bound", () => {
+    const cn = makeChatNode({
+      meta: {
+        fileHistorySnapshots: [
+          {
+            uuid: "snap-A",
+            timestamp: "2026-04-10T03:10:00Z",
+            trackedFiles: ["src/A.ts", "docs/devlog.md"],
+            isUpdate: false,
+          },
+          {
+            uuid: "snap-B",
+            timestamp: "2026-04-10T03:10:30Z",
+            trackedFiles: ["src/A.ts", "src/B.ts"],
+            isUpdate: false,
+          },
+        ],
+      },
+    });
+    render(<ChatNodeDetail chatNode={cn} />);
+    const list = screen.getByTestId("file-history-snapshot-list");
+    // De-duped, sorted: A.ts, B.ts, devlog.md (3 distinct).
+    const items = list.querySelectorAll("li");
+    expect(items.length).toBe(3);
+    const texts = Array.from(items).map((el) => el.textContent ?? "");
+    expect(texts).toEqual(["docs/devlog.md", "src/A.ts", "src/B.ts"]);
+  });
+
+  it("de-emphasises paths only seen on isUpdate=true snapshots", () => {
+    const cn = makeChatNode({
+      meta: {
+        fileHistorySnapshots: [
+          {
+            uuid: "snap-fresh",
+            trackedFiles: ["src/A.ts"],
+            isUpdate: false,
+          },
+          {
+            uuid: "snap-upd",
+            trackedFiles: ["src/A.ts", "stale-only.ts"],
+            isUpdate: true,
+          },
+        ],
+      },
+    });
+    render(<ChatNodeDetail chatNode={cn} />);
+    const list = screen.getByTestId("file-history-snapshot-list");
+    const fresh = Array.from(list.querySelectorAll("li")).find(
+      (el) => el.textContent === "src/A.ts",
+    );
+    const updateOnly = Array.from(list.querySelectorAll("li")).find(
+      (el) => el.textContent === "stale-only.ts",
+    );
+    expect(fresh?.className).not.toMatch(/text-gray-400/);
+    expect(updateOnly?.className).toMatch(/text-gray-400/);
+  });
+
+  it("hides the section when no snapshots are bound", () => {
+    const cn = makeChatNode({});
+    render(<ChatNodeDetail chatNode={cn} />);
+    expect(screen.queryByTestId("file-history-snapshot-list")).toBeNull();
+  });
 });
 
 describe("WorkNodeDetail — llm_call", () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  distinctTouchedFiles,
   layoutChatFlow,
   lastAssistantPreview,
   maxContextForModel,
@@ -397,5 +398,45 @@ describe("lastAssistantPreview", () => {
   it("returns empty string when no llm_call has text", () => {
     const cn = makeChatNode({ id: "p1" });
     expect(lastAssistantPreview(cn)).toBe("");
+  });
+});
+
+describe("distinctTouchedFiles + fileTouchCount RFData (v0.7)", () => {
+  it("unions trackedFiles across snapshots, dedupes, returns Set", () => {
+    const cn = makeChatNode({
+      id: "p1",
+      meta: {
+        fileHistorySnapshots: [
+          { uuid: "a", trackedFiles: ["A.ts", "B.ts"], isUpdate: false },
+          { uuid: "b", trackedFiles: ["B.ts", "C.ts"], isUpdate: true },
+        ],
+      },
+    });
+    const got = distinctTouchedFiles(cn);
+    expect(Array.from(got).sort()).toEqual(["A.ts", "B.ts", "C.ts"]);
+  });
+
+  it("returns empty Set when no snapshots are bound", () => {
+    const cn = makeChatNode({ id: "p1" });
+    expect(distinctTouchedFiles(cn).size).toBe(0);
+  });
+
+  it("layoutChatFlow exposes fileTouchCount on RF node data", () => {
+    const cf = makeChatFlow([
+      makeChatNode({
+        id: "p1",
+        meta: {
+          fileHistorySnapshots: [
+            { uuid: "s1", trackedFiles: ["x.ts", "y.ts"], isUpdate: false },
+          ],
+        },
+      }),
+      makeChatNode({ id: "p2", parentChatNodeId: "p1" }),
+    ]);
+    const { nodes } = layoutChatFlow(cf);
+    const p1 = nodes.find((n) => n.id === "p1")!;
+    const p2 = nodes.find((n) => n.id === "p2")!;
+    expect(p1.data.fileTouchCount).toBe(2);
+    expect(p2.data.fileTouchCount).toBe(0);
   });
 });

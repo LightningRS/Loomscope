@@ -85,6 +85,8 @@ function ChatNodeDetailImpl({ chatNode }: Props) {
         </Section>
       )}
 
+      <FileHistorySnapshotsSection chatNode={chatNode} />
+
       {chatNode.slashCommand && (
         <Section title="Slash command">
           <div className="font-mono text-[11px] text-violet-700">
@@ -163,4 +165,51 @@ function extractText(content: unknown): string | null {
 function findLastLlmCall(cn: ChatNode): LlmCallNode | null {
   const llms = cn.workflow.nodes.filter((n): n is LlmCallNode => n.kind === "llm_call");
   return llms.length > 0 ? llms[llms.length - 1] : null;
+}
+
+// "本轮文件改动" — surfaces the file-history-snapshot binding that
+// landed in v0.7 M1a. v0.7 M1b shows the snapshot side as a single
+// bulleted list; M1c upgrades this to a side-by-side comparison
+// against tool_use file paths so users can spot side-effect changes.
+function FileHistorySnapshotsSection({ chatNode }: { chatNode: ChatNode }) {
+  const snapshots = chatNode.meta.fileHistorySnapshots ?? [];
+  if (snapshots.length === 0) return null;
+  // Collapse every snapshot's trackedFiles into a deduped path list +
+  // remember whether each path was seen on a non-update or update-only
+  // snapshot. Update-only paths get de-emphasised (CC re-emits a
+  // snapshot when the assistant follow-up lands; same path set).
+  const seenOnFresh = new Set<string>();
+  const seenOnUpdate = new Set<string>();
+  for (const s of snapshots) {
+    for (const f of s.trackedFiles) {
+      if (s.isUpdate) seenOnUpdate.add(f);
+      else seenOnFresh.add(f);
+    }
+  }
+  const all = Array.from(new Set([...seenOnFresh, ...seenOnUpdate])).sort();
+  if (all.length === 0) return null;
+  return (
+    <Section title={`本轮文件改动 (${all.length})`}>
+      <ul
+        data-testid="file-history-snapshot-list"
+        className="space-y-0.5 text-[11px] font-mono text-gray-800"
+      >
+        {all.map((path) => {
+          const onlyUpdate = !seenOnFresh.has(path) && seenOnUpdate.has(path);
+          return (
+            <li
+              key={path}
+              className={onlyUpdate ? "text-gray-400" : ""}
+              title={onlyUpdate ? "只出现在 isUpdate=true 的 snapshot" : path}
+            >
+              {path}
+            </li>
+          );
+        })}
+      </ul>
+      <div className="mt-1 text-[10px] text-gray-400">
+        来自 file-history-snapshot；通过 messageId 直接绑定（不是时间窗启发）
+      </div>
+    </Section>
+  );
 }

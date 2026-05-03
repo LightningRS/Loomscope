@@ -28,6 +28,11 @@ export interface ChatNodeRFData extends Record<string, unknown> {
   llmCount: number;
   totalThinkingChars: number;
   isCompactSummary: boolean;
+  // Distinct file paths touched in the turn, derived from
+  // ChatNode.meta.fileHistorySnapshots[*].trackedFiles. Used for the
+  // 📁 N stats chip on ChatNodeCard. 0 = no snapshots bound (badge
+  // hidden).
+  fileTouchCount: number;
   // Token bar inputs — last llm_call's input + cache 表示该轮 context window 占用.
   // maxContextTokens 由 last llm_call 的 model 字段决定（[1m] 后缀 = 1M, 其它 = 200k）.
   contextTokens: number;
@@ -222,12 +227,27 @@ function deriveCardData(
       return acc + n.thinking.reduce((a, t) => a + (t.text?.length ?? 0), 0);
     }, 0),
     isCompactSummary: cn.isCompactSummary,
+    fileTouchCount: distinctTouchedFiles(cn).size,
     contextTokens,
     maxContextTokens,
     slashCommand: cn.slashCommand,
     hasIncomingEdge: edges.hasIncomingEdge,
     hasOutgoingEdge: edges.hasOutgoingEdge,
   };
+}
+
+// Union of every file path tracked across this ChatNode's bound
+// file-history-snapshots. v0.7 keeps both `isUpdate=true` and false
+// snapshots in the union — `isUpdate` snapshots tend to repeat the
+// same path set as the prior non-update for the same turn (CC re-emits
+// snapshots when assistant follow-ups land), so unioning is faithful
+// to "what files did this turn touch" without double-counting.
+export function distinctTouchedFiles(cn: ChatNode): Set<string> {
+  const out = new Set<string>();
+  for (const s of cn.meta.fileHistorySnapshots ?? []) {
+    for (const f of s.trackedFiles) out.add(f);
+  }
+  return out;
 }
 
 export const TOKEN_BAR_DEFAULT_MAX = DEFAULT_MAX_CONTEXT_TOKENS;
