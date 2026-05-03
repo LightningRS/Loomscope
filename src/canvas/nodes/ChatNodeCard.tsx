@@ -52,38 +52,50 @@ export function ChatNodeCard({ id, data }: NodeProps<ChatNodeRFNode>) {
     );
   }
 
+  // v0.7 M2: compact ChatNodes get a dedicated fold-marker chrome
+  // (dashed border + tri-color by trigger + drill affordance for the
+  // pre-compact original sequence). Compact ChatNodes are visually
+  // anchor points in long sessions — keeping them indistinguishable
+  // from regular turns made the 139 compact points in a 256MB session
+  // invisible.
+  if (compact) {
+    return (
+      <CompactCard
+        cn={cn}
+        selected={selected}
+        hasIncoming={data.hasIncomingEdge}
+        hasOutgoing={data.hasOutgoingEdge}
+        userPreview={data.userPreview}
+      />
+    );
+  }
+
   // Background tint by primary state.
-  const bgClass = compact
-    ? "bg-teal-50"
-    : triggerSchedule
-      ? "bg-amber-50"
-      : isRoot
-        ? "bg-blue-50/60"
-        : isLeaf
-          ? "bg-green-50"
-          : "bg-white";
+  const bgClass = triggerSchedule
+    ? "bg-amber-50"
+    : isRoot
+      ? "bg-blue-50/60"
+      : isLeaf
+        ? "bg-green-50"
+        : "bg-white";
 
   // 3px left accent strip — Agentloom signature.
-  const accentClass = compact
-    ? "border-l-[3px] border-l-teal-500"
-    : triggerSchedule
-      ? "border-l-[3px] border-l-amber-500"
-      : isRoot
-        ? "border-l-[3px] border-l-blue-400"
-        : isLeaf
-          ? "border-l-[3px] border-l-green-400"
-          : "";
+  const accentClass = triggerSchedule
+    ? "border-l-[3px] border-l-amber-500"
+    : isRoot
+      ? "border-l-[3px] border-l-blue-400"
+      : isLeaf
+        ? "border-l-[3px] border-l-green-400"
+        : "";
 
   // Border color around the rest of the card.
   const borderClass = selected
     ? "border-blue-500 ring-2 ring-blue-200"
-    : compact
-      ? "border-teal-300"
-      : triggerSchedule
-        ? "border-amber-300"
-        : isLeaf
-          ? "border-green-300"
-          : "border-gray-300 hover:border-gray-400";
+    : triggerSchedule
+      ? "border-amber-300"
+      : isLeaf
+        ? "border-green-300"
+        : "border-gray-300 hover:border-gray-400";
 
   return (
     <div
@@ -201,6 +213,215 @@ export function ChatNodeCard({ id, data }: NodeProps<ChatNodeRFNode>) {
       />
 
     </div>
+  );
+}
+
+// Compact ChatNode card — dashed-border fold-marker chrome with
+// tri-color tinting by `compactMetadata.trigger`. design-visual-
+// language.md treats compact as a visual anchor point in long
+// sessions: dashed border = "this is a fold", tri-color = "how was
+// the fold made". v0.6 redo + earlier shipped only ⊞ chip + teal
+// accent; v0.7 M2 brings the full规范 online.
+//
+// Trigger palette (per design choice 2A):
+//   auto      → teal (96% of real-data compacts)
+//   manual    → purple (user typed /compact)
+//   failed    → rose (defensive — author's本机 0 examples; CC may
+//                     emit trigger:"failed" in future versions)
+//   unknown   → teal fallback + small "trigger unknown" badge
+//                     (实测作者本机 0 examples; cross-user 132/281
+//                     boundary missing the field, mostly old CC)
+function CompactCard({
+  cn,
+  selected,
+  hasIncoming,
+  hasOutgoing,
+  userPreview,
+}: {
+  cn: import("@/data/types").ChatNode;
+  selected: boolean;
+  hasIncoming: boolean;
+  hasOutgoing: boolean;
+  userPreview: string;
+}) {
+  const trigger = cn.compactMetadata?.trigger;
+  const preTokens = cn.compactMetadata?.preTokens;
+  const palette = compactPalette(trigger);
+  const containerClass = [
+    "group/card relative w-52 rounded-lg border border-dashed shadow-sm p-2.5 text-xs",
+    "transition-colors leading-snug",
+    palette.bg,
+    palette.accent,
+    selected ? `${palette.selectedBorder} ring-2 ${palette.ring}` : palette.border,
+  ].join(" ");
+  return (
+    <div
+      className={containerClass}
+      data-testid={`chat-node-${cn.id}`}
+      data-compact-trigger={palette.kind}
+    >
+      <Handle
+        type="target"
+        position={Position.Left}
+        isConnectable={false}
+        style={
+          hasIncoming
+            ? { background: "#94a3b8", width: 5, height: 5, border: "none" }
+            : { background: "transparent", width: 0, height: 0, border: "none" }
+        }
+      />
+
+      {/* Trigger chip + preTokens + (optional) "trigger unknown" badge.
+          Single-line dense info row by design choice 2A. */}
+      <div className="flex items-center gap-1 mb-1.5 flex-wrap">
+        <span
+          className={`inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-semibold ${palette.chip}`}
+        >
+          ⊞ compact ({palette.label})
+        </span>
+        {typeof preTokens === "number" && preTokens > 0 && (
+          <span
+            className="font-mono text-[10px] text-gray-500"
+            title={`pre-compact context: ${preTokens.toLocaleString()} tokens`}
+          >
+            · {formatTokensCompact(preTokens)}
+          </span>
+        )}
+        {palette.fallbackBadge && (
+          <span
+            className="inline-flex items-center rounded bg-gray-200/80 px-1 py-0.5 text-[9px] text-gray-700"
+            title="compactMetadata.trigger 字段缺失 — 视觉 fallback 到 auto 色"
+            data-testid="compact-trigger-unknown"
+          >
+            trigger unknown
+          </span>
+        )}
+      </div>
+
+      {/* Summary preview — same line-clamp size as a normal turn so the
+          card height stays comparable. The full summary text lives in
+          DrillPanel CompactDetail. */}
+      <div className="mb-1.5">
+        <div className="text-[10px] text-gray-500 mb-0.5">summary</div>
+        <div className="text-[11px] text-gray-900 break-words line-clamp-3 italic">
+          {userPreview || <span className="not-italic text-gray-300">(空)</span>}
+        </div>
+      </div>
+
+      {/* Two drill entries (design choice 1C', revised after实测 found
+          that compact ChatNodes' inner workflow is NOT empty — 128/131
+          carry post-compact assistant continuation with llm_call/tool_call
+          chains; "进入工作流" still has plenty to show):
+            1. "进入工作流" (= existing enterWorkflow flow) — drills
+               into the post-compact continuation. Hidden when this
+               ChatNode's inner workflow has no llm_call (3/131 edge
+               case where there's nothing to look at).
+            2. "⤢ 展开 pre-compact" — drills into the pre-compact
+               original turn sequence. Disabled in M2 (placeholder
+               only); v0.7 M3 wires the real action via
+               enterCompactOriginal + the new compact-original drill
+               frame. */}
+      {cn.workflow.nodes.some((n) => n.kind === "llm_call") && (
+        <DrillButton chatNodeId={cn.id} />
+      )}
+      <CompactPreCompactButton chatNodeId={cn.id} accent={palette.kind} />
+
+      <NodeIdLine nodeId={cn.id} />
+
+      <Handle
+        type="source"
+        position={Position.Right}
+        isConnectable={false}
+        style={
+          hasOutgoing
+            ? { background: "#94a3b8", width: 5, height: 5, border: "none" }
+            : { background: "transparent", width: 0, height: 0, border: "none" }
+        }
+      />
+    </div>
+  );
+}
+
+// Palette resolver. Returns the Tailwind classes + the textual trigger
+// label + a "fallbackBadge" flag used by CompactCard.
+function compactPalette(trigger: string | undefined) {
+  if (trigger === "manual") {
+    return {
+      kind: "manual" as const,
+      label: "manual",
+      bg: "bg-purple-50",
+      accent: "border-l-[3px] border-l-purple-500",
+      border: "border-purple-300 hover:border-purple-400",
+      selectedBorder: "border-purple-500",
+      ring: "ring-purple-200",
+      chip: "bg-purple-200/80 text-purple-900",
+      fallbackBadge: false,
+    };
+  }
+  if (trigger === "failed") {
+    return {
+      kind: "failed" as const,
+      label: "failed",
+      bg: "bg-rose-50",
+      accent: "border-l-[3px] border-l-rose-500",
+      border: "border-rose-300 hover:border-rose-400",
+      selectedBorder: "border-rose-500",
+      ring: "ring-rose-200",
+      chip: "bg-rose-200/80 text-rose-900",
+      fallbackBadge: false,
+    };
+  }
+  // auto OR unknown both fall to teal; unknown adds an explanatory badge.
+  return {
+    kind: "auto" as const,
+    label: "auto",
+    bg: "bg-teal-50",
+    accent: "border-l-[3px] border-l-teal-500",
+    border: "border-teal-300 hover:border-teal-400",
+    selectedBorder: "border-teal-500",
+    ring: "ring-teal-200",
+    chip: "bg-teal-200/80 text-teal-900",
+    fallbackBadge: trigger === undefined,
+  };
+}
+
+function formatTokensCompact(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
+  return String(n);
+}
+
+// Pre-compact drill button — placeholder in v0.7 M2 (shipped disabled
+// with a "M3" hint title), wired to enterCompactOriginal in M3. We
+// ship the visual + button位置 in M2 so the chrome regression doesn't
+// land in two passes; the user can already see what affordance is
+// coming. Tone matches the compact card's trigger palette so the
+// disabled state still reads as part of the card chrome.
+function CompactPreCompactButton({
+  chatNodeId,
+  accent,
+}: {
+  chatNodeId: string;
+  accent: "auto" | "manual" | "failed";
+}) {
+  const tone =
+    accent === "manual"
+      ? "border-purple-200 bg-purple-50/40 text-purple-500"
+      : accent === "failed"
+        ? "border-rose-200 bg-rose-50/40 text-rose-500"
+        : "border-teal-200 bg-teal-50/40 text-teal-500";
+  return (
+    <button
+      type="button"
+      disabled
+      className={`mt-1 flex w-full items-center justify-center gap-1 rounded border px-2 py-1 text-[10px] cursor-not-allowed opacity-60 ${tone}`}
+      onClick={(e) => e.stopPropagation()}
+      data-testid={`compact-pre-${chatNodeId}`}
+      title="v0.7 M3 wires this — drill into the pre-compact original turn sequence"
+    >
+      <span>⤢</span>
+      <span>展开 pre-compact (M3)</span>
+    </button>
   );
 }
 
