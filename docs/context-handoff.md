@@ -24,7 +24,8 @@
 - **v0.1 数据解析层**（commit `ea61a98`）：`src/data/` + `src/parse/` 共 ~1900 行（含 454 行测试）；39/39 unit tests；256MB session 实测 2.19s 解析 / 0 失败。
 - **v0.2 minimal canvas**（commit `342357f`）：Hono backend (`src/server/`) + Zustand 4-slice (`src/store/`) + Canvas (`src/canvas/` React Flow + dagre LR) + UI (`src/components/` Sidebar + Header) + dev wiring（vite 5175 proxy → hono 5174）。99/99 tests，256MB 端到端 3.37s。
 - **v0.3 inner WorkFlow**（commit `cba8518` + `4d48232`）：drill-down 替换主视图（选项 C），5 类 WorkNode chrome + SpawnEdge 空心三角 + drillStack store 切面。150/150 tests，256MB drill 进 413-WorkNode 的 ChatNode 实测 60.9 FPS。
-- **v0.4 drill panel**（commit `36f02b7`）：右侧 resizable sidebar + 5 类 WorkNode detail + chunked tool-result lazy-load (`?start=` byte offset + 滚动加载) + MarkdownView (Agentloom 同款) + JsonView + DiffView (零 lib，自动检测 structuredPatch)。195/195 tests；256MB selection round-trip 458ms avg（瓶颈在 1500-ChatNode 全图 reconcile，留 v0.9 polish）。
+- **v0.4 drill panel**（commit `36f02b7`）：右侧 resizable sidebar + 5 类 WorkNode detail + chunked tool-result lazy-load (`?start=` byte offset + 滚动加载) + MarkdownView (Agentloom 同款) + JsonView + DiffView (零 lib，自动检测 structuredPatch)。195/195 tests。
+- **v0.4 + selection perf fix**（commit `df65051`）：从 v0.4 暴露的 selection round-trip 458ms → 提前从 v0.9 拉出。每卡用 Zustand selector 自己订阅 `selectedNodeId === ownId`，wrapper 不再重 decorate `nodes` prop。1522-ChatNode session 实测 78.9ms avg / 86ms max（5.8×）。202/202 tests。
 
 ## 还没做的部分（v0.5 起）
 - v0.5 sub-agent 双态（折叠 rich card + 展开真嵌套子 ChatFlow）—— drillStack 已支持 subworkflow 帧；DelegateDetail 已留提示文案
