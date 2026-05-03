@@ -11,7 +11,9 @@
 | **v0.2** | minimal canvas | Hono backend + Zustand 4-slice + ChatFlow 横向 canvas + Sidebar | ✅ commit `342357f`（99/99 tests，256MB 解析+序列化 3.37s） |
 | **v0.3** | inner WorkFlow | drill-down 替换主视图 + 5 类 WorkNode chrome + drillStack store 切面 + SpawnEdge 空心三角 | ✅ commit `cba8518` + `4d48232`（150/150 tests，256MB drill 60.9 FPS） |
 | **v0.4** | drill panel | 右侧 resizable sidebar + 5 类 WorkNode detail + chunked tool-result lazy-load + MarkdownView/JsonView/DiffView | ✅ commit `36f02b7`（195/195 tests；256MB selection round-trip 458ms avg → 留作 v0.9 perf） |
-| **v0.5** | sub-agent 双态 | delegate WorkNode 折叠态 rich card + 展开态嵌套子 WorkFlow（lazy 读 sidecar） | |
+| **v0.4 +** | selection perf fix | per-card Zustand 订阅，去掉 wrapper 重 prop 注入 | ✅ commit `df65051`（202/202；1522-ChatNode 458→78.9ms / 5.8×） |
+| **v0.5** | sub-agent 双态 | drill 替换主视图（选项 A）+ 双击 delegate → push subworkflow 帧 + lazy load + cache + auto-compact badge + breadcrumb 多级 | ✅ commit `74d49d9`（227/227；cache hit 22ms / cold drill 1830ms / 实测嵌套深度 max 2）|
+| **v0.5.1** | sub-agent 多 ChatNode 渲染 | 27% 的 sub-agent sidecar 是多 ChatNode（v0.5 只渲 [0]），完整渲染 UX 待定 | |
 | **v0.6** | compact handling | 处理 isCompactSummary 节点 + logicalParentUuid 边 | |
 | **v0.7** | fork 浏览 | parser 读 `forkedFrom` + `custom-title` / server merge fork 树 / ConversationView + branchMemory / canvas fork badge | |
 | **v0.8** | file-tail mode | 监听 jsonl mtime 增量更新 canvas | |
@@ -141,24 +143,62 @@ CC v2.1.104+ 主流走的是 `<persisted-output>` 字符串 marker（不是 `des
 - v0.9 selection 切换性能（见上）+ syntax highlight + bundle code-split + audit fix（vite/happy-dom 预存漏洞）
 - JSON-LD schema 高亮深化（当前只对 Bash 做 code-block 化）
 
-## v0.5 — sub-agent 双态（折叠 rich card + 展开真嵌套）
+## v0.5 — sub-agent 真嵌套（已 ship 2026-05-03 commit `74d49d9`）
 
-**修正 2026-05-02**：原计划把 delegate 做成"v0 唯一密度最高的叶子节点"——错。实测 sub-agent 完整内部 trace 存在 sidecar `subagents/agent-<agentId>.jsonl`，**v0 就能展开成真嵌套子 WorkFlow**（详 `design-data-model.md`）。
+delegate WorkNode 不再是 dead-end 折叠卡，双击展开 lazy 加载 sidecar `subagents/agent-<agentId>.jsonl`，渲染完整子 WorkFlow，递归套娃。
 
-新方案：
+四个开放问题均已拍板：
 
-- **折叠态（默认）**：rich card 形态——agentType badge + description + toolStats 条形图 + token usage breakdown + duration + content 头。从主 jsonl 的 tool_result 字段直接渲染。
-- **展开态（drill / 双击）**：lazy 加载 sidecar jsonl + meta.json，渲染**完整子 WorkFlow** —— 跟外层一样的 llm_call / tool_call / delegate / compact 节点，递归套娃支持
-- 视觉：折叠态边框圆角实心；展开态变成包含框，子节点画在内部
-- 性能：sub-agent jsonl 也可能 1+ MB / 几百行，必须 lazy 加载（不要打开主 session 时 eager 拉所有 sub-agent）
+- **1 展开模式**：选 **A drill 替换主视图**（同 v0.3 chatnode→workflow drill）。drillStack subworkflow 帧 + breadcrumb + per-card selection 都是 v0.3/v0.4 已铺好的基础设施，选 A 是零边际成本继承；Agentloom 在更复杂场景下也选 A
+- **2 lazy load + cache**：双击触发 / sessionSlice Map 缓存（session 切换清）/ in-flight Promise dedupe / 失败保留折叠态 + 错误信息
+- **3 auto-compact 视觉**：badge 方案（不另起组件）。判别走 `agentId.startsWith("acompact-")` 而非 agentType（老 meta 有时误标 agentType 为 general-purpose，agentId 前缀是 canonical 信号）
+- **4 递归 + 深度**：breadcrumb 显示完整链 / 不设硬上限。实测最深 2 层、breadcrumb ≤ 4 项，1600 视口够用
 
-子任务清单：
+落地：
 
-- [ ] `src/parse/sidecar.ts` 的 sub-agent loader（v0.1 已落，v0.5 用上）
-- [ ] `src/canvas/DelegateNode.tsx` 折叠态 chrome（rich card）
-- [ ] `src/canvas/SubWorkFlowExpand.tsx` 展开态嵌套渲染
-- [ ] auto-compact agent (`agent-acompact-*`) 的特殊 chrome
-- [ ] 递归层数指示器（如果 sub-agent 内还有 sub-agent）
+- 新增 `GET /api/sessions/:id/subagents/:agentId?subdir=X` endpoint（双重路径穿越防护）
+- `sessionSlice` 加 `subAgentCache: Map<agentId, SubAgentCacheEntry>` + `loadSubAgent` action + `enterSubWorkflow` 真实现 + `resolveDrilledChatNode` helper
+- `WorkFlowCanvas.onNodeDoubleClick` 路由 delegate 触发 enterSubWorkflow
+- `DelegateCard` 双击 hint + `acompact-` 前缀 → ⊞ auto-compact badge
+- `DelegateDetail` 把 v0.5 占位换实际行为（drill 按钮 + 加载状态 + 错误显示 + 多 ChatNode banner）
+- `DrillBreadcrumb` 多帧 + 任意级回退（`Top → ChatNode → 🤖 Agent (Explore) → 🤖 Agent (...)`）
+
+实测：
+
+| 指标 | 数字 |
+|---|---|
+| 跨用户全 session 嵌套深度分布 | depth-1: 131 / depth-2: 35（仅 auto-compact）/ max 2 层 |
+| sub-agent jsonl 大小 | min 18KB / p50 150KB / p90 290KB / p99 1.7MB / 总 34MB |
+| auto-compact 占比 | 5/165 (3%)，全在 v2.1.94 老 session |
+| Cold drill round-trip | 1830ms（fetch + parse + 子 WorkFlow 渲染 27 llm_call + 18 tool_call）|
+| **Cache 命中** | **22ms**（目标 < 50ms ✓）|
+| 子 WorkFlow selection 切换 | 复用 v0.4 selectionHooks，节点更少所以更快 |
+
+### v0.5 实测发现 —— 已回写 `design-data-model.md`
+
+**Sub-agent jsonl 不是单 WorkFlow，是多 ChatNode 的 ChatFlow**。跨用户全 session 165 个 sidecar 实测：121 个 (73%) 单 ChatNode，44 个 (27%) 多 ChatNode（最大 47 个，全是 auto-compact agent 多次自压的产物）。文档原假设"sub-agent = 一棵 WorkFlow"是简化模型，准确说是"sub-agent = 一个 ChatFlow"。v0.5 妥协：渲染 `chatNodes[0]` + canvas 顶部右上角 amber banner 提示总数。完整渲染 → v0.5.1。
+
+### Bug / Surprise
+
+- **Playwright dispatchEvent('dblclick') 不触发 React Flow 12 的 onNodeDoubleClick**（合成事件缺真实 click-counting 序列）。e2e 走 DrillPanel "Drill into sub-agent" 按钮路径替代；canvas dblclick 路径 1 行逻辑被 store 单元测试 100% 覆盖。手动验证浏览器真用户 dblclick 工作
+
+### v0.5 不做的事（按 handoff 边界，留 backlog）
+
+- v0.5.1 sub-agent 多 ChatNode 完整渲染（横向列？纵向时间线？UX 待定）
+- v0.6 compact 完整交互
+- v0.9 sub-agent cache LRU eviction（目前 session 切换全清，单 session 内不淘汰；对当前 session 大小 OK，未来跨 session 持久化时再做）
+
+## v0.5.1 — sub-agent 多 ChatNode 渲染
+
+v0.5 实测发现 27% 的 sub-agent sidecar 是多 ChatNode 形态（最大 47 个，auto-compact 多次自压）。当前 v0.5 只渲染 `chatNodes[0]`，UI 顶部 amber banner 提示总数。
+
+待决策的 UX：
+
+- 选项 A：横向 ChatNode 列 + 每个 ChatNode 各自 WorkFlow（drill 进 sub-agent 看到的就是个普通 ChatFlow）—— 跟外层 ChatFlow canvas 视觉一致，但需要嵌套 ChatFlow → WorkFlow 两层 drill
+- 选项 B：纵向时间线 collapse，默认只展开 latest，点旧的 expand
+- 选项 C：把所有 ChatNode 的 WorkFlow 节点合并到一个大 flow，在节点上加 ChatNode 归属 badge
+
+实施时再写 handoff。优先级在 v0.6 之后。
 
 ## v0.6 — compact
 

@@ -26,9 +26,10 @@
 - **v0.3 inner WorkFlow**（commit `cba8518` + `4d48232`）：drill-down 替换主视图（选项 C），5 类 WorkNode chrome + SpawnEdge 空心三角 + drillStack store 切面。150/150 tests，256MB drill 进 413-WorkNode 的 ChatNode 实测 60.9 FPS。
 - **v0.4 drill panel**（commit `36f02b7`）：右侧 resizable sidebar + 5 类 WorkNode detail + chunked tool-result lazy-load (`?start=` byte offset + 滚动加载) + MarkdownView (Agentloom 同款) + JsonView + DiffView (零 lib，自动检测 structuredPatch)。195/195 tests。
 - **v0.4 + selection perf fix**（commit `df65051`）：从 v0.4 暴露的 selection round-trip 458ms → 提前从 v0.9 拉出。每卡用 Zustand selector 自己订阅 `selectedNodeId === ownId`，wrapper 不再重 decorate `nodes` prop。1522-ChatNode session 实测 78.9ms avg / 86ms max（5.8×）。202/202 tests。
+- **v0.5 sub-agent 真嵌套**（commit `74d49d9`）：双击 delegate → drill 替换主视图（选项 A，复用 v0.3 drillStack）+ lazy load sidecar jsonl + Map cache + auto-compact badge（agentId 前缀判别）+ DrillBreadcrumb 多级回退。227/227 tests；cache hit 22ms / cold 1830ms / 实测全 session 嵌套深度 max 2 层。**实测发现**：27% sub-agent sidecar 是多 ChatNode（v0.5 渲染 [0] + banner，完整渲染 → v0.5.1）。
 
-## 还没做的部分（v0.5 起）
-- v0.5 sub-agent 双态（折叠 rich card + 展开真嵌套子 ChatFlow）—— drillStack 已支持 subworkflow 帧；DelegateDetail 已留提示文案
+## 还没做的部分（v0.5.1 起）
+- v0.5.1 sub-agent 多 ChatNode 渲染（27% 的 sidecar 是多 ChatNode；UX 待定 —— 横向列 / 纵向时间线 / 合并大 flow）
 - v0.6 compact ChatNode 视觉 + file-history-snapshot 时间窗绑定 + logical 弱边 —— CompactDetail 已留提示文案
 - v0.7 fork 浏览（`forkedFrom` + `custom-title` parser / server merge / ConversationView + branchMemory / canvas fork badge）
 - v0.8 file-tail 实时增量
@@ -116,6 +117,19 @@ npm run build
 ## 历史更新
 
 - **2026-05-01** 项目立项 + v0.0 scaffold 完成 + 5 篇文档初版（`4884d0e`）
+- **2026-05-03 v0.5 ship（commit `74d49d9`）** —— sub-agent 真嵌套落地：
+  - 4 个设计抉择拍板：1A drill 替换主视图 / 2 双击 + Map cache + in-flight dedupe + 失败保留折叠 / 3 auto-compact badge by `agentId.startsWith("acompact-")`（不是 agentType，老 meta 误标）/ 4 breadcrumb 完整链 + 不设上限
+  - 新 endpoint `GET /api/sessions/:id/subagents/:agentId?subdir=X` + 双重路径穿越防护
+  - sessionSlice 加 `subAgentCache` + `loadSubAgent` + `enterSubWorkflow` 真实现 + `resolveDrilledChatNode`
+  - WorkFlowCanvas dblclick 路由 + DelegateCard 双击 hint + auto-compact ⊞ badge
+  - DelegateDetail 真行为（drill 按钮 + load 状态 + 错误 + 多 ChatNode banner + worktreePath）
+  - DrillBreadcrumb 多级 + 任意级回退
+  - 227/227 tests 全绿（+18 单元 + endpoint + e2e）；typecheck / build 通过
+  - 性能：cache hit **22ms** / cold drill 1830ms / sub-agent jsonl 总 34MB / 嵌套深度 max 2 层
+  - **重要发现**：sub-agent sidecar 不是单 WorkFlow，是多 ChatNode 的 ChatFlow（27% 是多 ChatNode，最大 47 个 —— auto-compact agent 多次自压）。v0.5 渲染 [0] + banner，完整渲染 → v0.5.1。`design-data-model.md` 已同步
+  - **小坑**：Playwright dispatchEvent('dblclick') 不被 React Flow 12 视为 dblclick（合成事件缺 click-counting 序列）；e2e 走 DrillPanel 按钮路径，canvas dblclick 路径靠 store 单元测试覆盖
+  - 留给后续：v0.5.1 多 ChatNode 渲染 / v0.6 compact / v0.9 cache LRU + audit fix
+  - 交付参考 `handoff-v0.5-subagent-nesting.md`
 - **2026-05-02 v0.4 ship（commit `36f02b7`）** —— drill panel 落地：
   - 设计抉择拍板：1A 右侧 resizable sidebar / 2 跟随 viewMode + 面包屑 / 3 chunked GET + `?start=` byte offset + 滚动加载（不是初版 handoff 写的"截断 + Load full 按钮"）
   - 新组件：`MarkdownView`（抄 Agentloom，remark-gfm + rehype-raw + rehype-sanitize）/ `JsonView`（collapsible + 长串 fold）/ `DiffView`（自动检测 `toolUseResult.structuredPatch`，零 diff lib）/ `DrillPanel` + `ChatNodeDetail` + `WorkNodeDetail`（5 类 kind 分支）/ `useToolResultChunks` 滚动钩子

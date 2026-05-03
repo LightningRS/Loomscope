@@ -255,6 +255,12 @@ ChatNode 字段（拟）：
 - **折叠态（默认）**：聚合卡——agentType + description + duration + token 数 + toolStats 类别条形 + content 头。从主 jsonl 里 Agent tool_result 的字段直接渲染，不需要读 sidecar。
 - **展开态（drill / 双击）**：lazy 加载 `subagents/agent-<agentId>.jsonl` 后渲染**真嵌套子 WorkFlow**——和外层一样的 ChatFlow / ChatNode / WorkFlow / WorkNode 结构（递归套娃）。
 
+> ⚠ **v0.5 实测纠正**：sub-agent jsonl **不是单 WorkFlow，而是多 ChatNode 的 ChatFlow**。跨用户全 session 165 个 sidecar 实测：
+> - 121 个 (73%) 单 ChatNode
+> - **44 个 (27%) 多 ChatNode**（最大 47 个，auto-compact agent 多次自压）
+>
+> v0.5 落地策略：渲染 `chatNodes[0]` 的 WorkFlow + canvas 顶部 banner 提示总数。**多 ChatNode 完整渲染留 v0.5.1 backlog**——具体 UX 待定（横向 ChatNode 列 + 各自 WorkFlow？纵向时间线？）。文档原以为"sub-agent = 一棵 WorkFlow"是简化模型，准确说是"sub-agent = 一个 ChatFlow"。
+
 **主 jsonl 里的 tool_result 字段**（折叠态用）：
 
 ```
@@ -275,7 +281,7 @@ toolStats:        {readCount, searchCount, bashCount, editFileCount, linesAdded/
 - 该 sidecar jsonl 第一条 user 记录的 `promptId` 跟主 jsonl 里 Agent tool_use 记录的 `promptId` **相同**（双向都能 join）
 - 该 sidecar jsonl 每条记录 `isSidechain: true`（vs 主 jsonl 全 false）——**这是判别"哪条记录在哪个文件"的字段，不是"是否存在"**
 
-**递归层数**：sub-agent 内部可以再调 Agent。本仓库 256MB 样本里 93 个 sub-agent 全部 1 层（0 嵌套），但 design 上**必须支持递归展开**。
+**递归层数**：sub-agent 内部可以再调 Agent。**v0.5 跨用户全 session 实测**：165 个 sub-agent jsonl 中 depth-1 链 131 条 / depth-2 链 35 条 / 最深 2 层（仅 auto-compact 触达）；256MB 主样本 93 个全部 depth-1。design / 实现上**支持递归展开**（drillStack subworkflow 帧无层级限制），breadcrumb 链长 ≤ 4 项的实测分布让 1600 视口完全够用。
 
 **sub-agent 元数据**（`agent-<agentId>.meta.json`，源码定义见 `sessionStorage.ts:264 AgentMetadata`）：
 
