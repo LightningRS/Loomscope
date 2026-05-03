@@ -250,6 +250,35 @@ export function distinctTouchedFiles(cn: ChatNode): Set<string> {
   return out;
 }
 
+// File paths that the ChatNode's WorkFlow explicitly mutated through a
+// tool_use. Used by the M1c side-by-side comparison in DrillPanel to
+// surface side-effect changes — paths in `distinctTouchedFiles(cn)`
+// but missing from `distinctToolUseFiles(cn)` were touched by Bash /
+// sub-agents / hooks rather than a direct Edit/Write call.
+//
+// Coverage rationale (v0.7):
+//   Edit / Write / MultiEdit / NotebookEdit carry the path in the
+//   tool_use input. Bash is omitted because the path lives in
+//   stdout/stderr, where extracting it is a stylistic-pattern guess
+//   that 1) is wrong often and 2) belongs in the v0.10 polish bucket
+//   alongside automatic side-effect classification.
+export function distinctToolUseFiles(cn: ChatNode): Set<string> {
+  const out = new Set<string>();
+  for (const n of cn.workflow.nodes) {
+    if (n.kind !== "tool_call") continue;
+    const input = n.input as Record<string, unknown> | undefined;
+    if (!input) continue;
+    if (n.toolName === "Edit" || n.toolName === "Write" || n.toolName === "MultiEdit") {
+      const p = input["file_path"];
+      if (typeof p === "string" && p.length > 0) out.add(p);
+    } else if (n.toolName === "NotebookEdit") {
+      const p = input["notebook_path"];
+      if (typeof p === "string" && p.length > 0) out.add(p);
+    }
+  }
+  return out;
+}
+
 export const TOKEN_BAR_DEFAULT_MAX = DEFAULT_MAX_CONTEXT_TOKENS;
 
 export function formatTokensKM(n: number | null | undefined): string {

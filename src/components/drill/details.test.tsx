@@ -101,7 +101,7 @@ describe("ChatNodeDetail", () => {
     expect(container.textContent).toMatch(/Set model to Opus/);
   });
 
-  it("renders 本轮文件改动 section when fileHistorySnapshots are bound", () => {
+  it("renders 本轮文件改动 section when fileHistorySnapshots are bound (sorted union)", () => {
     const cn = makeChatNode({
       meta: {
         fileHistorySnapshots: [
@@ -121,25 +121,18 @@ describe("ChatNodeDetail", () => {
       },
     });
     render(<ChatNodeDetail chatNode={cn} />);
-    const list = screen.getByTestId("file-history-snapshot-list");
-    // De-duped, sorted: A.ts, B.ts, devlog.md (3 distinct).
-    const items = list.querySelectorAll("li");
-    expect(items.length).toBe(3);
-    const texts = Array.from(items).map((el) => el.textContent ?? "");
-    expect(texts).toEqual(["docs/devlog.md", "src/A.ts", "src/B.ts"]);
+    expect(screen.getByTestId("fh-row-docs/devlog.md")).toBeTruthy();
+    expect(screen.getByTestId("fh-row-src/A.ts")).toBeTruthy();
+    expect(screen.getByTestId("fh-row-src/B.ts")).toBeTruthy();
   });
 
-  it("de-emphasises paths only seen on isUpdate=true snapshots", () => {
+  it("paths only seen on isUpdate=true snapshots get gray-400 path text", () => {
     const cn = makeChatNode({
       meta: {
         fileHistorySnapshots: [
+          { uuid: "fresh", trackedFiles: ["src/A.ts"], isUpdate: false },
           {
-            uuid: "snap-fresh",
-            trackedFiles: ["src/A.ts"],
-            isUpdate: false,
-          },
-          {
-            uuid: "snap-upd",
+            uuid: "upd",
             trackedFiles: ["src/A.ts", "stale-only.ts"],
             isUpdate: true,
           },
@@ -147,21 +140,141 @@ describe("ChatNodeDetail", () => {
       },
     });
     render(<ChatNodeDetail chatNode={cn} />);
-    const list = screen.getByTestId("file-history-snapshot-list");
-    const fresh = Array.from(list.querySelectorAll("li")).find(
-      (el) => el.textContent === "src/A.ts",
-    );
-    const updateOnly = Array.from(list.querySelectorAll("li")).find(
-      (el) => el.textContent === "stale-only.ts",
-    );
-    expect(fresh?.className).not.toMatch(/text-gray-400/);
-    expect(updateOnly?.className).toMatch(/text-gray-400/);
+    const fresh = screen.getByTestId("fh-row-src/A.ts");
+    const stale = screen.getByTestId("fh-row-stale-only.ts");
+    // Path text cell = first child div in the grid row
+    expect(fresh.children[0].className).not.toMatch(/text-gray-400/);
+    expect(stale.children[0].className).toMatch(/text-gray-400/);
   });
 
-  it("hides the section when no snapshots are bound", () => {
+  it("hides the section when neither snapshots nor tool_use file paths exist", () => {
     const cn = makeChatNode({});
     render(<ChatNodeDetail chatNode={cn} />);
     expect(screen.queryByTestId("file-history-snapshot-list")).toBeNull();
+  });
+
+  // ── M1c side-by-side comparison ──────────────────────────────────────
+
+  it("paths in BOTH snapshot and tool_use render normal color with ✓ marks", () => {
+    const cn = makeChatNode({
+      workflow: {
+        nodes: [
+          {
+            id: "t1",
+            kind: "tool_call",
+            parentUuid: null,
+            toolName: "Edit",
+            input: { file_path: "src/A.ts", old_string: "a", new_string: "b" },
+          },
+        ],
+        edges: [],
+      },
+      meta: {
+        fileHistorySnapshots: [
+          { uuid: "s1", trackedFiles: ["src/A.ts"], isUpdate: false },
+        ],
+      },
+    });
+    render(<ChatNodeDetail chatNode={cn} />);
+    const row = screen.getByTestId("fh-row-src/A.ts");
+    expect(row.className).not.toMatch(/text-amber-700/);
+    expect(screen.getByTestId("fh-src/A.ts-snap").textContent).toBe("✓");
+    expect(screen.getByTestId("fh-src/A.ts-tool").textContent).toBe("✓");
+  });
+
+  it("snapshot-only paths get amber + 📸/⚠ markers (side-effect)", () => {
+    const cn = makeChatNode({
+      workflow: { nodes: [], edges: [] },
+      meta: {
+        fileHistorySnapshots: [
+          {
+            uuid: "s1",
+            trackedFiles: ["docs/devlog.md"],
+            isUpdate: false,
+          },
+        ],
+      },
+    });
+    render(<ChatNodeDetail chatNode={cn} />);
+    const row = screen.getByTestId("fh-row-docs/devlog.md");
+    expect(row.className).toMatch(/text-amber-700/);
+    expect(screen.getByTestId("fh-docs/devlog.md-snap").textContent).toBe("📸");
+    expect(screen.getByTestId("fh-docs/devlog.md-tool").textContent).toBe("⚠");
+  });
+
+  it("tool_use-only paths (.gitignore'd ghost write) get amber + 🔧 marker", () => {
+    const cn = makeChatNode({
+      workflow: {
+        nodes: [
+          {
+            id: "t1",
+            kind: "tool_call",
+            parentUuid: null,
+            toolName: "Write",
+            input: { file_path: ".env.local", content: "SECRET=" },
+          },
+        ],
+        edges: [],
+      },
+    });
+    render(<ChatNodeDetail chatNode={cn} />);
+    const row = screen.getByTestId("fh-row-.env.local");
+    expect(row.className).toMatch(/text-amber-700/);
+    expect(screen.getByTestId("fh-.env.local-snap").textContent).toBe("—");
+    expect(screen.getByTestId("fh-.env.local-tool").textContent).toBe("🔧");
+  });
+
+  it("recognizes Edit/Write/MultiEdit/NotebookEdit tool_use file paths", () => {
+    const cn = makeChatNode({
+      workflow: {
+        nodes: [
+          {
+            id: "t1",
+            kind: "tool_call",
+            parentUuid: null,
+            toolName: "Edit",
+            input: { file_path: "edit.ts" },
+          },
+          {
+            id: "t2",
+            kind: "tool_call",
+            parentUuid: null,
+            toolName: "Write",
+            input: { file_path: "write.ts" },
+          },
+          {
+            id: "t3",
+            kind: "tool_call",
+            parentUuid: null,
+            toolName: "MultiEdit",
+            input: { file_path: "multi.ts" },
+          },
+          {
+            id: "t4",
+            kind: "tool_call",
+            parentUuid: null,
+            toolName: "NotebookEdit",
+            input: { notebook_path: "nb.ipynb" },
+          },
+          {
+            id: "t5",
+            kind: "tool_call",
+            parentUuid: null,
+            toolName: "Bash",
+            input: { command: "echo hi" },
+          },
+        ],
+        edges: [],
+      },
+    });
+    render(<ChatNodeDetail chatNode={cn} />);
+    expect(screen.getByTestId("fh-row-edit.ts")).toBeTruthy();
+    expect(screen.getByTestId("fh-row-write.ts")).toBeTruthy();
+    expect(screen.getByTestId("fh-row-multi.ts")).toBeTruthy();
+    expect(screen.getByTestId("fh-row-nb.ipynb")).toBeTruthy();
+    // Bash deliberately NOT extracted (path lives in stdout, v0.10
+    // polish range).
+    expect(screen.queryByTestId("fh-row-echo hi")).toBeNull();
   });
 });
 

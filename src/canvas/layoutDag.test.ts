@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  distinctToolUseFiles,
   distinctTouchedFiles,
   layoutChatFlow,
   lastAssistantPreview,
@@ -419,6 +420,66 @@ describe("distinctTouchedFiles + fileTouchCount RFData (v0.7)", () => {
   it("returns empty Set when no snapshots are bound", () => {
     const cn = makeChatNode({ id: "p1" });
     expect(distinctTouchedFiles(cn).size).toBe(0);
+  });
+
+  it("distinctToolUseFiles picks Edit/Write/MultiEdit/NotebookEdit paths, ignores Bash", () => {
+    const cn = makeChatNode({
+      id: "p1",
+      workflow: {
+        nodes: [
+          {
+            id: "t1",
+            kind: "tool_call",
+            parentUuid: null,
+            toolName: "Edit",
+            input: { file_path: "edit.ts" },
+          },
+          {
+            id: "t2",
+            kind: "tool_call",
+            parentUuid: null,
+            toolName: "Write",
+            input: { file_path: "write.ts" },
+          },
+          {
+            id: "t3",
+            kind: "tool_call",
+            parentUuid: null,
+            toolName: "MultiEdit",
+            input: { file_path: "multi.ts" },
+          },
+          {
+            id: "t4",
+            kind: "tool_call",
+            parentUuid: null,
+            toolName: "NotebookEdit",
+            input: { notebook_path: "nb.ipynb" },
+          },
+          {
+            id: "t5",
+            kind: "tool_call",
+            parentUuid: null,
+            toolName: "Bash",
+            input: { command: "echo hi" },
+          },
+          // missing input — should not crash
+          {
+            id: "t6",
+            kind: "tool_call",
+            parentUuid: null,
+            toolName: "Edit",
+            input: {},
+          },
+        ],
+        edges: [],
+      },
+    });
+    expect(Array.from(distinctToolUseFiles(cn)).sort()).toEqual([
+      "edit.ts",
+      "multi.ts",
+      "nb.ipynb",
+      "write.ts",
+    ]);
   });
 
   it("layoutChatFlow exposes fileTouchCount on RF node data", () => {

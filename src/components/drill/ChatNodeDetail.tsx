@@ -9,6 +9,7 @@ import { memo, useMemo } from "react";
 
 import { MarkdownView } from "@/components/MarkdownView";
 import { JsonView } from "@/components/JsonView";
+import { distinctToolUseFiles } from "@/canvas/layoutDag";
 import type { ChatNode, LlmCallNode } from "@/data/types";
 
 interface Props {
@@ -167,17 +168,26 @@ function findLastLlmCall(cn: ChatNode): LlmCallNode | null {
   return llms.length > 0 ? llms[llms.length - 1] : null;
 }
 
-// "本轮文件改动" — surfaces the file-history-snapshot binding that
-// landed in v0.7 M1a. v0.7 M1b shows the snapshot side as a single
-// bulleted list; M1c upgrades this to a side-by-side comparison
-// against tool_use file paths so users can spot side-effect changes.
+// "本轮文件改动" — side-by-side comparison of file-history-snapshot
+// (CC's git-status of the turn, bound via messageId in M1a) against
+// the ChatNode's WorkFlow tool_use file paths (Edit/Write/MultiEdit/
+// NotebookEdit). Lets the reader spot side-effect changes — a path
+// that the snapshot tracked but no Edit/Write touched typically came
+// from a Bash command, sub-agent, or hook.
+//
+// Path-level row format:
+//   <path>    [📸 snapshot]    [🔧 tool_use]
+// Both columns present  → normal black                — declared change
+// Only snapshot         → amber + ⚠ in tool_use cell  — likely side-effect
+// Only tool_use         → amber                       — write didn't make it
+//                                                       to git tracking yet
+//                                                       (rare; e.g. file is
+//                                                       in .gitignore)
+//
+// Update-only snapshot paths (CC re-emits the same set when assistant
+// follow-ups land) get de-emphasised on the snapshot side.
 function FileHistorySnapshotsSection({ chatNode }: { chatNode: ChatNode }) {
   const snapshots = chatNode.meta.fileHistorySnapshots ?? [];
-  if (snapshots.length === 0) return null;
-  // Collapse every snapshot's trackedFiles into a deduped path list +
-  // remember whether each path was seen on a non-update or update-only
-  // snapshot. Update-only paths get de-emphasised (CC re-emits a
-  // snapshot when the assistant follow-up lands; same path set).
   const seenOnFresh = new Set<string>();
   const seenOnUpdate = new Set<string>();
   for (const s of snapshots) {
@@ -186,29 +196,64 @@ function FileHistorySnapshotsSection({ chatNode }: { chatNode: ChatNode }) {
       else seenOnFresh.add(f);
     }
   }
-  const all = Array.from(new Set([...seenOnFresh, ...seenOnUpdate])).sort();
-  if (all.length === 0) return null;
+  const snapshotPaths = new Set([...seenOnFresh, ...seenOnUpdate]);
+  const toolUsePaths = distinctToolUseFiles(chatNode);
+  const union = Array.from(new Set([...snapshotPaths, ...toolUsePaths])).sort();
+  if (union.length === 0) return null;
   return (
-    <Section title={`本轮文件改动 (${all.length})`}>
-      <ul
+    <Section title={`本轮文件改动 (${union.length})`}>
+      <div
         data-testid="file-history-snapshot-list"
-        className="space-y-0.5 text-[11px] font-mono text-gray-800"
+        className="text-[11px] font-mono"
       >
-        {all.map((path) => {
-          const onlyUpdate = !seenOnFresh.has(path) && seenOnUpdate.has(path);
+        <div className="mb-1 grid grid-cols-[1fr_auto_auto] gap-x-2 text-[9px] uppercase tracking-wide text-gray-400">
+          <div>path</div>
+          <div className="text-center" title="出现在 file-history-snapshot 中">
+            📸 snapshot
+          </div>
+          <div className="text-center" title="出现在 ChatNode 的 tool_use input.file_path 中">
+            🔧 tool_use
+          </div>
+        </div>
+        {union.map((path) => {
+          const inSnap = snapshotPaths.has(path);
+          const inTool = toolUsePaths.has(path);
+          const onlyUpdate =
+            inSnap && !seenOnFresh.has(path) && seenOnUpdate.has(path);
+          // Side-effect: snapshot saw it, no explicit Edit/Write/etc.
+          const sideEffect = inSnap && !inTool;
+          // Reverse mismatch: tool_use claims write but git didn't
+          // pick it up (rare — usually .gitignore'd file).
+          const ghostWrite = inTool && !inSnap;
+          const rowClass = sideEffect || ghostWrite ? "text-amber-700" : "text-gray-800";
           return (
-            <li
+            <div
               key={path}
-              className={onlyUpdate ? "text-gray-400" : ""}
-              title={onlyUpdate ? "只出现在 isUpdate=true 的 snapshot" : path}
+              data-testid={`fh-row-${path}`}
+              className={`grid grid-cols-[1fr_auto_auto] gap-x-2 py-0.5 ${rowClass}`}
+              title={
+                sideEffect
+                  ? "snapshot 标记改动但 tool_use 未显式改 — 可能是 Bash / sub-agent / hook 副作用"
+                  : ghostWrite
+                    ? "tool_use 改了但 snapshot 没追到 — 可能是 .gitignore'd"
+                    : path
+              }
             >
-              {path}
-            </li>
+              <div className={onlyUpdate ? "text-gray-400" : ""}>{path}</div>
+              <div className="text-center" data-testid={`fh-${path}-snap`}>
+                {inSnap ? (sideEffect ? "📸" : "✓") : "—"}
+              </div>
+              <div className="text-center" data-testid={`fh-${path}-tool`}>
+                {inTool ? (ghostWrite ? "🔧" : "✓") : sideEffect ? "⚠" : "—"}
+              </div>
+            </div>
           );
         })}
-      </ul>
+      </div>
       <div className="mt-1 text-[10px] text-gray-400">
-        来自 file-history-snapshot；通过 messageId 直接绑定（不是时间窗启发）
+        snapshot：CC 自己跑 git status 拿到的文件路径；
+        tool_use：本轮 Edit/Write/MultiEdit/NotebookEdit 显式改的路径。
+        amber 行 = 两边对不上（副作用 / 写入未入 git）。
       </div>
     </Section>
   );
