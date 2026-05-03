@@ -12,16 +12,12 @@
 // Loomscope-specific: handles are non-interactive (viewer mode) and
 // invisible when no edge connects.
 
-import { useState } from "react";
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
 
-import {
-  TOKEN_BAR_DEFAULT_MAX,
-  formatTokensKM,
-  type ChatNodeRFNode,
-} from "@/canvas/layoutDag";
-import { copyToClipboardWithFallback } from "@/lib/clipboard";
+import { type ChatNodeRFNode } from "@/canvas/layoutDag";
+import { NodeIdLine } from "@/canvas/nodes/chrome/NodeIdLine";
+import { TokenBar } from "@/canvas/nodes/chrome/TokenBar";
 import { useStore } from "@/store/index";
 import { useIsChatNodeSelected } from "@/store/selectionHooks";
 
@@ -266,59 +262,6 @@ function SlashCommandCard({
   );
 }
 
-// Click-to-copy node id line. State machine: idle / copied / error,
-// with shared clipboard helper.
-type CopyState =
-  | { kind: "idle" }
-  | { kind: "copied" }
-  | { kind: "error"; msg: string };
-
-function NodeIdLine({ nodeId }: { nodeId: string }) {
-  const [state, setState] = useState<CopyState>({ kind: "idle" });
-
-  const onClick = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const result = await copyToClipboardWithFallback(nodeId);
-    if (result.ok) {
-      setState({ kind: "copied" });
-      window.setTimeout(() => setState({ kind: "idle" }), 900);
-    } else {
-      setState({ kind: "error", msg: result.reason });
-      // Keep error visible longer so user can read.
-      window.setTimeout(() => setState({ kind: "idle" }), 2500);
-    }
-  };
-
-  const className = [
-    "mt-1 cursor-pointer truncate font-mono text-[9px] text-center transition-colors",
-    state.kind === "copied"
-      ? "text-teal-600"
-      : state.kind === "error"
-        ? "text-rose-600"
-        : "text-gray-400 hover:text-blue-500",
-  ].join(" ");
-
-  const display =
-    state.kind === "copied"
-      ? "已复制"
-      : state.kind === "error"
-        ? `✗ 复制失败：${state.msg}`
-        : nodeId;
-
-  const title =
-    state.kind === "copied"
-      ? "已复制"
-      : state.kind === "error"
-        ? `复制失败：${state.msg}`
-        : nodeId;
-
-  return (
-    <div onClick={onClick} className={className} title={title} data-testid={`node-id-${nodeId}`}>
-      {display}
-    </div>
-  );
-}
-
 // Drill-down button — pushes a ``chatnode`` frame onto the session's
 // drillStack, switching the main viewport to WorkFlowCanvas. Pulled out
 // as its own component so the store subscription is tied to the button
@@ -344,31 +287,3 @@ function DrillButton({ chatNodeId }: { chatNodeId: string }) {
   );
 }
 
-// TokenBar — straight port of Agentloom's chrome. Blue → amber → rose as
-// the context fills.
-function TokenBar({
-  tokens,
-  maxTokens,
-}: {
-  tokens: number;
-  maxTokens?: number | null;
-}) {
-  const denom = maxTokens && maxTokens > 0 ? maxTokens : TOKEN_BAR_DEFAULT_MAX;
-  const pct = Math.min(100, (tokens / denom) * 100);
-  const color =
-    pct >= 90 ? "bg-rose-500" : pct >= 70 ? "bg-amber-400" : "bg-blue-400";
-  return (
-    <div className="mt-1" title={`${tokens} / ${formatTokensKM(denom)} tokens`}>
-      <div className="flex items-center justify-between text-[9px] text-gray-500 mb-0.5">
-        <span>{formatTokensKM(tokens)}</span>
-        <span>{pct.toFixed(0)}%</span>
-      </div>
-      <div className="h-1 w-full rounded-full bg-gray-200 overflow-hidden">
-        <div
-          className={`h-1 rounded-full transition-all ${color}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-    </div>
-  );
-}

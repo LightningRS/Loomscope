@@ -14,6 +14,7 @@ import {
   previewToolResult,
   type ToolCallRFNode,
 } from "@/canvas/layoutWorkflow";
+import { NodeIdLine } from "@/canvas/nodes/chrome/NodeIdLine";
 import { useIsWorkNodeSelected } from "@/store/selectionHooks";
 import { handleStyle, workNodeChromeClass } from "./cardChrome";
 
@@ -66,6 +67,7 @@ export function ToolCallCard({ id, data }: NodeProps<ToolCallRFNode>) {
           <span className="break-words line-clamp-2">{resultPreview}</span>
         </div>
       )}
+      <NodeIdLine nodeId={n.id} />
       <Handle
         type="source"
         position={Position.Right}

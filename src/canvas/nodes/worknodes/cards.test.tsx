@@ -75,6 +75,7 @@ describe("LlmCallCard", () => {
               text: "the answer is 42",
               thinking: [{ text: "let me think\nabout this" }],
               model: "claude-opus-4-7",
+              usage: { input_tokens: 1200, output_tokens: 350 },
             },
           })}
         />,
@@ -84,6 +85,9 @@ describe("LlmCallCard", () => {
     expect(screen.getByText("the answer is 42")).toBeTruthy();
     expect(screen.getByText(/2 lines/)).toBeTruthy();
     expect(screen.getByText("claude-opus-4-7")).toBeTruthy();
+    // v0.6 redo M4: TokenBar (1.6k = 1200+350) + NodeIdLine present.
+    expect(screen.getByTestId("node-id-l1")).toBeTruthy();
+    expect(screen.getByText(/1\.6k/i)).toBeTruthy();
   });
 
   it("renders empty-text placeholder when text is empty", () => {
@@ -104,10 +108,31 @@ describe("LlmCallCard", () => {
     );
     expect(screen.getByText(/无文本输出/)).toBeTruthy();
   });
+
+  it("v0.6 redo M4: omits TokenBar when usage is missing", () => {
+    render(
+      withRF(
+        <LlmCallCard
+          {...nodeProps("llm_call", "l3", {
+            workNode: {
+              id: "l3",
+              kind: "llm_call",
+              parentUuid: null,
+              text: "no usage",
+              thinking: [],
+            },
+          })}
+        />,
+      ),
+    );
+    expect(screen.getByTestId("node-id-l3")).toBeTruthy();
+    // No percent tick = no TokenBar drawn.
+    expect(screen.queryByText(/^\d+%$/)).toBeNull();
+  });
 });
 
 describe("ToolCallCard", () => {
-  it("renders tool name + input lines + result preview", () => {
+  it("renders tool name + input lines + result preview + NodeIdLine (no TokenBar)", () => {
     render(
       withRF(
         <ToolCallCard
@@ -128,6 +153,10 @@ describe("ToolCallCard", () => {
     expect(screen.getByText("Glob")).toBeTruthy();
     expect(screen.getByText(/pattern: \*\*\/\*\.tsx/)).toBeTruthy();
     expect(screen.getByText(/5 paths returned/)).toBeTruthy();
+    // v0.6 redo M4: NodeIdLine present, TokenBar deliberately omitted
+    // (tool_call doesn't carry model attribution).
+    expect(screen.getByTestId("node-id-t1")).toBeTruthy();
+    expect(screen.queryByText(/^\d+%$/)).toBeNull();
   });
 
   it("shows ✗ marker and rose chrome when isError is true", () => {
@@ -183,10 +212,14 @@ describe("DelegateCard", () => {
     expect(screen.getByText(/Found 3 services/)).toBeTruthy();
     // Stats include duration / tokens / tool count as adjacent chips.
     expect(screen.getByText(/50\.0s/)).toBeTruthy();
-    expect(screen.getByText(/49\.6k/)).toBeTruthy();
+    // 49.6k appears in the stats chip; the TokenBar formatter (formatTokensKM)
+    // emits 49.6k too, so getAllByText keeps the assertion non-ambiguous.
+    expect(screen.getAllByText(/49\.6k/).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/🔧 21/)).toBeTruthy();
     // v0.5: drill affordance hint visible when agentId present.
     expect(screen.getByText(/double-click to drill/)).toBeTruthy();
+    // v0.6 redo M4: TokenBar (totalTokens=49560) + NodeIdLine present.
+    expect(screen.getByTestId("node-id-d1")).toBeTruthy();
   });
 
   it("v0.5: shows the auto-compact badge when agentId starts with acompact-", () => {
@@ -238,7 +271,7 @@ describe("DelegateCard", () => {
 });
 
 describe("CompactCard", () => {
-  it("auto trigger uses teal chrome + 🤖 auto badge", () => {
+  it("auto trigger uses teal chrome + 🤖 auto badge + TokenBar", () => {
     render(
       withRF(
         <CompactCard
@@ -260,8 +293,10 @@ describe("CompactCard", () => {
     expect(card.className).toMatch(/teal/);
     expect(card.className).toMatch(/dashed/);
     expect(screen.getByText(/auto/i)).toBeTruthy();
-    // Token formatting: 92300 → "92K"
+    // Token formatting in stats chip: 92300 → "92K"
     expect(screen.getByText(/92K/)).toBeTruthy();
+    // v0.6 redo M4: TokenBar (preTokens) + NodeIdLine present.
+    expect(screen.getByTestId("node-id-c1")).toBeTruthy();
   });
 
   it("manual trigger uses purple chrome + ✎ manual badge", () => {
@@ -287,7 +322,7 @@ describe("CompactCard", () => {
 });
 
 describe("AttachmentCard", () => {
-  it("file attachment shows 📄 + filename", () => {
+  it("file attachment shows 📄 + filename + NodeIdLine (no TokenBar)", () => {
     render(
       withRF(
         <AttachmentCard
@@ -306,6 +341,9 @@ describe("AttachmentCard", () => {
     expect(screen.getByTestId("worknode-attachment-a1")).toBeTruthy();
     expect(screen.getByText("src/App.tsx")).toBeTruthy();
     expect(screen.getByText("file")).toBeTruthy();
+    // v0.6 redo M4: NodeIdLine present, TokenBar deliberately omitted.
+    expect(screen.getByTestId("node-id-a1")).toBeTruthy();
+    expect(screen.queryByText(/^\d+%$/)).toBeNull();
   });
 
   it("compact_file_reference adds ⊠ marker indicating original content is gone", () => {

@@ -17,6 +17,8 @@ import {
   compactSummaryPreview,
   type CompactRFNode,
 } from "@/canvas/layoutWorkflow";
+import { NodeIdLine } from "@/canvas/nodes/chrome/NodeIdLine";
+import { TokenBar } from "@/canvas/nodes/chrome/TokenBar";
 import { useIsWorkNodeSelected } from "@/store/selectionHooks";
 import { handleStyle, workNodeChromeClass } from "./cardChrome";
 
@@ -79,6 +81,8 @@ export function CompactCard({ id, data }: NodeProps<CompactRFNode>) {
           {summary}
         </div>
       )}
+      {n.preTokens != null && n.preTokens > 0 && <TokenBar tokens={n.preTokens} />}
+      <NodeIdLine nodeId={n.id} />
       <Handle
         type="source"
         position={Position.Right}

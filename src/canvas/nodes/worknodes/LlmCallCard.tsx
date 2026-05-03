@@ -12,6 +12,8 @@ import {
   previewLlmCallText,
   type LlmCallRFNode,
 } from "@/canvas/layoutWorkflow";
+import { NodeIdLine } from "@/canvas/nodes/chrome/NodeIdLine";
+import { TokenBar } from "@/canvas/nodes/chrome/TokenBar";
 import { useIsWorkNodeSelected } from "@/store/selectionHooks";
 import { handleStyle, workNodeChromeClass } from "./cardChrome";
 
@@ -22,6 +24,11 @@ export function LlmCallCard({ id, data }: NodeProps<LlmCallRFNode>) {
   const isError = (n.errors?.length ?? 0) > 0;
   const accent = isError ? "rose" : "blue";
   const selected = useIsWorkNodeSelected(id);
+  // Sum input + output (excluding cache lookups). v0.6 redo M4: model
+  // invocation occurred → draw TokenBar.
+  const inputTokens = numOrZero(n.usage?.input_tokens);
+  const outputTokens = numOrZero(n.usage?.output_tokens);
+  const totalTokens = inputTokens + outputTokens;
 
   return (
     <div
@@ -62,6 +69,8 @@ export function LlmCallCard({ id, data }: NodeProps<LlmCallRFNode>) {
           ✗ {n.errors?.[0]?.type ?? "error"}
         </div>
       )}
+      {totalTokens > 0 && <TokenBar tokens={totalTokens} />}
+      <NodeIdLine nodeId={n.id} />
       <Handle
         type="source"
         position={Position.Right}
@@ -70,4 +79,8 @@ export function LlmCallCard({ id, data }: NodeProps<LlmCallRFNode>) {
       />
     </div>
   );
+}
+
+function numOrZero(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }

@@ -16,6 +16,7 @@ import {
   attachmentLabel,
   type AttachmentRFNode,
 } from "@/canvas/layoutWorkflow";
+import { NodeIdLine } from "@/canvas/nodes/chrome/NodeIdLine";
 import { useIsWorkNodeSelected } from "@/store/selectionHooks";
 import { handleStyle, workNodeChromeClass } from "./cardChrome";
 
@@ -64,6 +65,7 @@ export function AttachmentCard({ id, data }: NodeProps<AttachmentRFNode>) {
           ⊠ content compacted
         </div>
       )}
+      <NodeIdLine nodeId={n.id} />
       <Handle
         type="source"
         position={Position.Right}

@@ -31,12 +31,16 @@ import type {
 
 // Per-kind sizing — width drives the card's max-w; height is a dagre
 // hint only (React Flow auto-resizes the rendered card).
+//
+// v0.6 redo M4: heights bumped ~30px on TokenBar-bearing kinds and
+// ~12-15px on NodeIdLine-only kinds to keep dagre's spacing honest now
+// that every card carries a NodeIdLine + 3 of them carry a TokenBar.
 export const WF_NODE_SIZE: Record<WorkNode["kind"], { width: number; height: number }> = {
-  llm_call: { width: 240, height: 110 },
-  tool_call: { width: 240, height: 110 },
-  delegate: { width: 280, height: 170 },
-  compact: { width: 240, height: 100 },
-  attachment: { width: 200, height: 80 },
+  llm_call: { width: 240, height: 140 },
+  tool_call: { width: 240, height: 125 },
+  delegate: { width: 280, height: 200 },
+  compact: { width: 240, height: 130 },
+  attachment: { width: 200, height: 95 },
 };
 
 export const WF_RANKSEP = 64;

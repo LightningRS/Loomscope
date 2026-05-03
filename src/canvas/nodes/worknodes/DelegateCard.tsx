@@ -12,6 +12,8 @@ import {
   delegateContentPreview,
   type DelegateRFNode,
 } from "@/canvas/layoutWorkflow";
+import { NodeIdLine } from "@/canvas/nodes/chrome/NodeIdLine";
+import { TokenBar } from "@/canvas/nodes/chrome/TokenBar";
 import type { DelegateNode } from "@/data/types";
 import { useIsWorkNodeSelected } from "@/store/selectionHooks";
 import { handleStyle, workNodeChromeClass } from "./cardChrome";
@@ -89,6 +91,10 @@ export function DelegateCard({ id, data }: NodeProps<DelegateRFNode>) {
           ⤢ double-click to drill
         </div>
       )}
+      {numOrNull(n.totalTokens) != null && (
+        <TokenBar tokens={numOrNull(n.totalTokens) as number} />
+      )}
+      <NodeIdLine nodeId={n.id} />
       <Handle
         type="source"
         position={Position.Right}
