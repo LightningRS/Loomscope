@@ -28,7 +28,12 @@ import { ribbonFamilies, type RibbonFamily } from "@/canvas/modelFamilies";
 const CARD_FALLBACK_W = 208; // matches w-52 ChatNodeCard
 const CARD_FALLBACK_H = 140;
 
-const rfNodesSelector = (s: ReactFlowState) => s.nodes;
+// `nodeLookup` (InternalNode map) is the only store entry where
+// `measured.{width,height}` is reliably populated after layout. The
+// user-facing `s.nodes` array doesn't pick up measurements on its own,
+// so reading sizes from there falls back to CARD_FALLBACK and shifts
+// the ribbon's center y away from the rendered card center.
+const rfNodeLookupSelector = (s: ReactFlowState) => s.nodeLookup;
 const rfTransformSelector = (s: ReactFlowState) => s.transform;
 
 interface NodeBox {
@@ -50,21 +55,25 @@ export function ModelRibbonLayer({
   chatFlow: ChatFlow;
   hoveredEdge: HoveredEdge | null;
 }) {
-  const rfNodes = useStore(rfNodesSelector);
+  const rfNodeLookup = useStore(rfNodeLookupSelector);
   const transform = useStore(rfTransformSelector);
 
-  const boxes = useMemo(() => {
-    const m = new Map<string, NodeBox>();
-    for (const n of rfNodes) {
-      m.set(n.id, {
-        x: n.position.x,
-        y: n.position.y,
-        w: n.width ?? n.measured?.width ?? CARD_FALLBACK_W,
-        h: n.height ?? n.measured?.height ?? CARD_FALLBACK_H,
-      });
-    }
-    return m;
-  }, [rfNodes]);
+  // Build the box map fresh every render rather than `useMemo`-ing on
+  // `rfNodeLookup` identity. React Flow mutates the InternalNode Map
+  // in place when measurements settle (so the reference stays the
+  // same), which would let useMemo cache the pre-measurement state
+  // forever and pin every center y to (CARD_FALLBACK_H / 2). Re-
+  // building per render is cheap (≤ a few thousand entries) and the
+  // component only renders on hover / pan / zoom anyway.
+  const boxes = new Map<string, NodeBox>();
+  for (const n of rfNodeLookup.values()) {
+    boxes.set(n.id, {
+      x: n.position.x,
+      y: n.position.y,
+      w: n.measured.width ?? CARD_FALLBACK_W,
+      h: n.measured.height ?? CARD_FALLBACK_H,
+    });
+  }
 
   const families = useMemo<RibbonFamily[]>(() => {
     if (!hoveredEdge) return [];
