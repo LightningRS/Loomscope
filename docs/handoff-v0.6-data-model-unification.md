@@ -1,5 +1,13 @@
 # v0.6 交付 — Data Model Unification（递归 Node 树重构）
 
+> ⚠ **这篇 handoff 已 SUPERSEDED**。按本文指示实施的 7 milestone（commits `01c3bcf` → `cfe9026`）后被作者 revert（`f9f6f03`），原因是协调 agent 误读了作者意图：作者要的是**数据层 Node 类型互通 + 视觉层 ChatFlow/WorkFlow 嵌套保留**，本文却写成了"取消视觉层嵌套 + flat Node tree + default-fold"。
+>
+> M1 (Node 类型) + M2 (store dual-write nodeTree) 仍在 git 树里作为 v0.6 redo 的数据层基础。**v0.6 redo 待新 handoff**。详 `devlog.md` 2026-05-03 条目 + `plan.md` v0.6 节。
+>
+> 本文保留作为历史参考（5 个有效实测发现 + Playwright dblclick 限制等），但**不要再按本文实施**。
+>
+> ---
+>
 > 这篇是 v0.6 数据模型统一任务的种子上下文。配 `context-handoff.md` 一起读：context-handoff 是项目整体入门，本文是本次任务专属。**这是一个数据模型层的重构，不是渐进式的功能添加**——你接手的是 Loomscope v0.x 阶段最深的一次手术，请按 milestone 走、每步独立 commit + 验证、绝不一次性大刀阔斧。
 
 ## 任务一句话

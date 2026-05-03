@@ -113,93 +113,33 @@ npm run build
 
 ## 这个文档的维护
 
-每个开发阶段结束后追加一条到下面 `## 历史更新`，让以后新 session 进来还能拿到时间序列。
+每个开发阶段结束后追加一条到下面 `## 历史更新`（精简，一行一条；详细写到 `devlog.md`）。`devlog.md` 是项目的流水账（按时间倒序、详细），新人想理解"项目怎么演化到这里"读那篇。
+
+## 路径与文档分工
+
+| 文档 | 是什么 | 啥时候读 |
+|---|---|---|
+| `context-handoff.md`（本篇）| 项目整体入门 + 现状速览 + 已锁定决策表 + 历史 milestone 一行 | 新 session 进来必读 |
+| `requirements.md` | 项目为什么存在 / 受众 / 不做什么 | 想问"这功能要不要做"先看 |
+| `plan.md` | 分阶段路线图（未来要做什么） | 想问"下一步开发什么"看这 |
+| `devlog.md` | 流水账（按时间倒序的开发记录，含每个 milestone 的"为什么这么决定 + 实测发现"）| 想理解"项目怎么演化到这里"看这 |
+| `design-architecture.md` | Stack / API / 持久化 / 安全 / Event Flow / UI Update Timing | 写代码碰到架构问题时查 |
+| `design-data-model.md` | JSONL 数据格式 + 映射规则 + sidecar 文件机制 | 写解析或新 kind 时必读 |
+| `design-visual-language.md` | 节点视觉规范 + 锚点约定 + 边语义 + 状态视觉 | 改 chrome / 加新视觉时查 |
+| `handoff-vX.Y-*.md` | 单个版本的任务交付文档（给新 agent 接手用） | 接 handoff 时读对应版本那篇 |
 
 ## 历史更新
 
-- **2026-05-01** 项目立项 + v0.0 scaffold 完成 + 5 篇文档初版（`4884d0e`）
-- **2026-05-03 v0.6 第一次尝试 revert（commit `f9f6f03`）** —— 7-milestone 实施完后作者审视架构方向，指出本意被误读：
-  - 作者原话："之前我说的打通 ChatFlow 和 WorkFlow，不是说取消嵌套。表层 ChatFlow 仍然要保持原样，只是内部 WorkFlow 可以支持 ChatFlow 的特性，WorkNode 也能和 ChatNode 互通。"
-  - 误读路径：协调 agent 把"取消 WorkNode 和 ChatNode 的划分、统一为 Node"理解为 type + visual 双层都压平，提了 default-fold 模型作为视觉密度补偿。新 agent 实施了 single Canvas + flat Node tree。两个可见回归暴露错误：(1) Hover ribbon overlay 在新 Canvas 里没搬过来 (2) ChatNode 的 inner llm_call/tool_call 在 unified flat tree 下作为 ChatFlow 顶层 sibling 暴露（用户看到 bacd662d 后面"连接的 3 个节点"——本应在它的 WorkFlow drill 里）
-  - revert 范围：M3 (layoutNodes) / M4 (NodeCard) / M5 (single Canvas + App.tsx 改) / M6 (DrillPanel 改读 nodeTree) / M7 (doc banner) 全部 revert；保留 M1 (Node 类型) + M2 (store dual-write nodeTree) 作 latent 数据层基础
-  - 测试 324 → 280（删掉 44 个针对 reverted 路径的测试）；typecheck / build 全绿
-  - **v0.6 redo 方向（下一版）**：用 M1-M2 的 Node 类型作为 ChatNode/WorkNode **共享 base**；视觉层维持 ChatFlowCanvas/WorkFlowCanvas dual-canvas drill 不变；delegate WorkNode 可 drill 进 **sub-ChatFlow**（解决 sub-agent multi-ChatNode 27% 信息丢失，不再塌缩 chatNodes[0]）；WorkNode 加 TokenBar + NodeIdLine（跟 ChatNode 互通）
-  - **保留作为参考**：v0.6 第一版的 5 个实测发现（默认折叠语义混淆 / cross-bucket linking 让 focus 拖全图 / parser linkTurnRoots O(N²) → terminalAssistantByPromptId Map 修复 / legacy 4233 dup ID Map.set dedup 自动修复 / Playwright dispatchEvent dblclick 不触发 RF 12）—— 这些 finding 仍然有效，redo 时受益。Selection 4× 加速是 flat tree 默认 fold 让可见节点变少的副产物，redo 后回到原 dual-canvas 视觉密度，加速消失（但 v0.4 fix 的 78.9ms 仍在）
-  - 第一版 commit 链作历史保留：`01c3bcf` M1 / `e28b28f` M2 / `6c198d1` M3 / `4b7c364` M4 / `ff259f3` M5 / `4558fff` M6 / `cfe9026` M7
-- **2026-05-03 v0.6 第一次 ship（commits `01c3bcf` → `cfe9026`，7 个 milestone）** —— 后被 revert 见上条。Data Model Unification 落地（误读版）：
-  - 4 个设计抉择拍板：1A 保留 v0.5 视觉密度（每 turn 一聚合卡内部 fold）/ 2B 保留 focus 模式 + 右键菜单触发（作者修订 alt+click → 右键）/ 3A 单一 selectedNodeId + useIsNodeSelected / 4C 按 milestone 串行 migration
-  - 取消 ChatFlow/WorkFlow 二分，统一递归 Node 树（NodeKind: user_message / assistant_call / tool_call / delegate / compact / attachment）+ `defaultFolded` 字段（语义："my children hidden by default"，不是"我自己 hidden"）
-  - 7 个 milestone：M1 数据类型 + 解析器 / M2 store / M3 layoutNodes 合并 / M4 单一 NodeCard / M5 单 Canvas + focus mode / M6 DrillPanel 适配 / M7 ship + doc banner。每个独立 commit 可单独 revert
-  - 324/324 tests（+97）；typecheck / build 通过
-  - **性能**：selection round-trip 78.9 → **21.2ms（4×）**；cache hit 22ms 不变；解析 2479 → 2816ms（+14% Map alloc 成本，可接受）
-  - **多 ChatNode amber banner 消失**：v0.5 27% sub-agent 信息塌缩问题在 unified tree 下天然解决
-  - **顺手修复 legacy bug**：ChatNode/WorkNode 二分下同 uuid record 被多 bucket 引用导致 dup（llm_call 3915 重复 + attachment 318 重复，共 4233 个）。v0.5 没爆是因为 drill 一次只渲一个 ChatNode 的 WorkFlow；v0.6 Map.set dedup 自动修
-  - **5 个实测 bug / surprise**：(1) defaultFolded 语义混淆 (2) cross-bucket linking 让 focus 拖全图 (3) parser linkTurnRoots O(N²) → 加 terminalAssistantByPromptId Map (4) legacy dup ID 4233 个一并修 (5) Playwright dblclick 不触发 RF 12（v0.5 已知再确认，e2e 走 ExpandHint 按钮）
-  - **留两个 follow-up backlog**：
-    - **v0.6.1 legacy cleanup**：删 ChatFlowCanvas / WorkFlowCanvas / 5 类 WorkNode card / ChatNodeCard / SlashCommandCard / ChatNodeDetail / WorkNodeDetail / layoutDag / layoutWorkflow / parse/jsonl.ts / parse/workflow-builder.ts / chatFlowAdapter / data/types.ts 中 legacy 部分。**同步重写 design-data-model.md 全文**（10 章节清单：标题 + summary / "数据模型映射" / "解析算法" 4-pass pseudo / "Sub-agent 双态" / "v0.1 实测确认" / "Compact 段语义" / "Recap (away_summary) 拓扑" / "Trigger sources & schedule mechanics" / "开放问题" 归档 / 新增 "v0.6 unified Node tree 模型"）
-    - **v0.6.2 ExpandHint 全 kind**：当前只 user_message 有"展开工作流"按钮，其他 kind 只能 dblclick 触发（受 RF + Playwright dblclick 限制）。所有 hasFoldedChildren=true 的卡片都应该有 ExpandHint
-  - 交付参考 `handoff-v0.6-data-model-unification.md`
-- **2026-05-03 v0.5 ship（commit `74d49d9`）** —— sub-agent 真嵌套落地：
-  - 4 个设计抉择拍板：1A drill 替换主视图 / 2 双击 + Map cache + in-flight dedupe + 失败保留折叠 / 3 auto-compact badge by `agentId.startsWith("acompact-")`（不是 agentType，老 meta 误标）/ 4 breadcrumb 完整链 + 不设上限
-  - 新 endpoint `GET /api/sessions/:id/subagents/:agentId?subdir=X` + 双重路径穿越防护
-  - sessionSlice 加 `subAgentCache` + `loadSubAgent` + `enterSubWorkflow` 真实现 + `resolveDrilledChatNode`
-  - WorkFlowCanvas dblclick 路由 + DelegateCard 双击 hint + auto-compact ⊞ badge
-  - DelegateDetail 真行为（drill 按钮 + load 状态 + 错误 + 多 ChatNode banner + worktreePath）
-  - DrillBreadcrumb 多级 + 任意级回退
-  - 227/227 tests 全绿（+18 单元 + endpoint + e2e）；typecheck / build 通过
-  - 性能：cache hit **22ms** / cold drill 1830ms / sub-agent jsonl 总 34MB / 嵌套深度 max 2 层
-  - **重要发现**：sub-agent sidecar 不是单 WorkFlow，是多 ChatNode 的 ChatFlow（27% 是多 ChatNode，最大 47 个 —— auto-compact agent 多次自压）。v0.5 渲染 [0] + banner，完整渲染 → v0.5.1。`design-data-model.md` 已同步
-  - **小坑**：Playwright dispatchEvent('dblclick') 不被 React Flow 12 视为 dblclick（合成事件缺 click-counting 序列）；e2e 走 DrillPanel 按钮路径，canvas dblclick 路径靠 store 单元测试覆盖
-  - 留给后续：**v0.6 数据模型统一**（吸收 v0.5.1 + v0.5.2 + v2.0）/ v0.7 compact / v0.10 cache LRU + audit fix
-  - 交付参考 `handoff-v0.5-subagent-nesting.md`
-- **2026-05-02 v0.4 ship（commit `36f02b7`）** —— drill panel 落地：
-  - 设计抉择拍板：1A 右侧 resizable sidebar / 2 跟随 viewMode + 面包屑 / 3 chunked GET + `?start=` byte offset + 滚动加载（不是初版 handoff 写的"截断 + Load full 按钮"）
-  - 新组件：`MarkdownView`（抄 Agentloom，remark-gfm + rehype-raw + rehype-sanitize）/ `JsonView`（collapsible + 长串 fold）/ `DiffView`（自动检测 `toolUseResult.structuredPatch`，零 diff lib）/ `DrillPanel` + `ChatNodeDetail` + `WorkNodeDetail`（5 类 kind 分支）/ `useToolResultChunks` 滚动钩子
-  - Backend：`GET /api/sessions/:id/tool-results/:refId` chunked + `?start=` + 双重路径穿越防护
-  - Bonus：Bash 工具 input 当 code block；Edit/MultiEdit/Write 走 DiffView
-  - 195/195 tests；bundle 410KB → 755KB（markdown 全家桶约 +330KB，预期内）
-  - **重要发现 1**：256MB selection round-trip avg 458ms 超 200ms 心理门槛。瓶颈不在 panel 而在 v0.3 的 `decoratedNodes = nodes.map(...)` 给 1500 ChatNode 重 prop 注入 → 整图 reconcile。修法是迁到 RF 内置 selection state，留 v0.9
-  - **重要发现 2**：CC v2.1.104+ tool-result overflow 主流走 `<persisted-output>` 字符串 marker（不是 `design-data-model.md` 原写的 `ContentReplacementRecord` 对象）。Loomscope 双格式都吃，doc 已同步更新
-  - 留给后续：v0.5 sub-agent 嵌套（DelegateDetail 占位已有）/ v0.6 compact rich chrome（CompactDetail 占位已有）/ AttachmentCard subtype 富化 / v0.9 selection 性能 + syntax highlight + code-split + audit fix
-  - 交付参考 `handoff-v0.4-drill-panel.md`
-- **2026-05-02 v0.3 ship（commit `cba8518` + `4d48232`）** —— inner WorkFlow drill-down 落地：
-  - 选项 C（drill-down 替换主视图）over B（单一大 flow + culling）—— 256MB session 全展开 ~60K WorkNode 可怕，drill 把单 React Flow 实例锁在每 ChatNode 几百节点
-  - `WorkFlowCanvas.tsx` + 5 类 WorkNode chrome（llm_call / tool_call / delegate / compact / attachment 折叠态）
-  - `SpawnEdge` 用 `arrow-spawn` 空心三角 marker（区分 continuation 灰色实心）—— 第二个 commit 修了 WorkFlowCanvas 错误地把所有 markerEnd 覆盖成 ArrowClosed 的问题
-  - `drillStack` store 切面：支持嵌套 drill（chatnode → workflow → subworkflow），不持久化（reload 回顶层）
-  - ChatFlow 和 WorkFlow `selectedNodeId` 各自独立
-  - 进入触发：节点上"进入工作流"按钮（不点卡主体），跟 Agentloom 对齐
-  - 150/150 tests 绿；256MB drill 进 413-WorkNode 的 ChatNode：60.9 FPS avg / 59.5 1%-low（>> 30 阈值）
-  - 留给后续：v0.4 drill panel（`workflowSelectedNodeId` 已铺好）/ v0.5 sub-agent 真嵌套（drillStack 已支持 subworkflow 帧）/ v0.6 compact 完整交互 + logical 弱边 / AttachmentCard subtype 富化 / v0.9 WorkFlow viewport 持久化
-  - 交付参考 `handoff-v0.3-inner-workflow.md`（保留 ad-hoc 任务交付模板）
-- **2026-05-02 v0.2 ship（commit `342357f`）** —— minimal canvas 落地：
-  - Backend（Hono + zod + commander，3 endpoint，CSRF + CORS）
-  - Store（Zustand 5 + 4 slice + persist 仅 UI 偏好）
-  - Canvas（React Flow + dagre LR + ChatNodeCard）
-  - UI（VS Code 风格 Sidebar + Header）
-  - Dev wiring（vite 5175 proxy → hono 5174）
-  - 99/99 tests 全绿，256MB session 端到端 3.37s（backend 解析 + JSON serialize）
-  - 待办（不阻塞 v0.3）：customTitle/agentName 接入 / session listing 优化 / 浏览器端 FPS 实测
-  - 详 `plan.md` v0.2 章节
-- **2026-05-02 v0.1 ship（commit `ea61a98`）** —— 数据解析层落地：
-  - 文件：`src/data/types.ts`、`src/parse/raw-record.ts`、`src/parse/jsonl.ts`、`src/parse/workflow-builder.ts`、`src/parse/sidecar.ts`、`__fixtures__/synthetic/`
-  - 39/39 unit tests 绿；256MB session 实测 2.19 秒解析 / 0 失败 / 93 delegate / 139 compact / 1522 ChatNode / 39434 llm_call / 21886 tool_call
-  - 实测纠正 7 处 doc 错误：promptId 仅在 user 记录 / sourceToolUseID 罕见走 block-level / compact dup uuid 处理 / file-history-snapshot 全 orphan / scheduled trigger 启发式 / 多 root 不存在 / flow events carve-out 时机
-  - 详见 `design-data-model.md` "v0.1 实测确认的解析规范" 小节
-- **2026-05-02 设计阶段（commits `b003f7b` → `c4edc8f`）** —— 大量设计讨论收敛，6 篇文档全面 fleshed out。关键发现 + 决策（按时间顺序）：
-  - Sub-agent trace 实测**不是不存而是存在 sidecar**——`subagents/agent-<id>.jsonl` 完整 trace；v0 支持真嵌套展开（推翻原"必须叶子节点"假设）
-  - ScheduleWakeup vs CronCreate 区分：前者本地、后者远端 CCR；222 vs 0 实测频次说明日常用的是 ScheduleWakeup
-  - Recap (away_summary) 真相：是 next-ChatNode brief，91% 后继 user record（之前以为是 ScheduleWakeup 流水的一环）
-  - 主轴方向修正：ChatFlow 不是纵向、跟 WorkFlow 一样**横向**
-  - Edge kinds：v0 渲 3 类 + schema 留 5 类
-  - Anchor 约定：左/右/上/下四个方向各承担一类语义
-  - Compact 数据语义：平铺（不嵌套）+ summary 在 user 记录
-  - 新增 `design-architecture.md`（前后端架构 / API / 持久化 / 安全 / Event Flow / UI Timing）
-  - Stack 锁定：Hono + zod + Zustand 5 + 4 slice 模式
-  - 安全：Mode A (默认 localhost) + Mode B (opt-in collab token)
-  - 不做：CCR 逆向、Docker、跨机器部署、L3 multiplayer、公网 SaaS
-  - L1 共读 + L2 共写支持视频会议协作 use case
-  - CC settings.json 用原生 `type:'http'` hooks（不是 curl 包裹）
-  - Native install only（Tailscale / SSH tunnel 处理远端访问）
-  - Event flow race-free 设计：fs.watch canonical + hook 加速器 + buffered line parsing
-  - UI update timing + 节点状态机（pending → running → completed → failed）
+> 简版（一行一条 milestone）。每条详情 + 决策 + 实测发现见 `devlog.md`。
+
+- **2026-05-03 v0.6 redo 排定 + Conversation tab 排进 v0.8/v∞.2/v∞.3**（`b2940b0`）—— 右侧 panel 改 2-tab；Conversation tab 跟 v0.8 ConversationView 合并；composer 在 v∞.2/v∞.3 演进
+- **2026-05-03 v0.6 第一版 revert**（`f9f6f03` + `773648e`）—— 7-milestone Data Model Unification 误读"取消 WorkNode/ChatNode 划分"为视觉层压平。M1 (Node 类型) + M2 (store dual-write) 保留作 redo 数据基础；M3-M7 revert 回 dual-canvas drill 模型
+- **2026-05-03 v0.6 第一次 ship**（`01c3bcf` → `cfe9026`，7 milestone）—— 后被 revert，详 `devlog.md`。保留 5 个实测发现（defaultFolded 语义 / cross-bucket focus / parser O(N²) 修法 / 4233 dup ID dedup / Playwright dblclick 限制）作 redo 参考
+- **2026-05-03 v0.5 ship**（`74d49d9`）—— sub-agent 真嵌套 drill 通了；227/227；cache hit 22ms / cold 1830ms；**实测发现**：sub-agent sidecar 不是单 WorkFlow 是 ChatFlow（27% 多 ChatNode）。`handoff-v0.5-subagent-nesting.md`
+- **2026-05-03 selection perf fix**（`df65051`）—— 提前从 v0.10 polish 拉出。per-card Zustand 订阅；1522-ChatNode session 458ms → **78.9ms**（5.8×）
+- **2026-05-02 v0.4 ship**（`36f02b7`）—— drill panel + MarkdownView/JsonView/DiffView + chunked tool-result endpoint；195/195。**实测发现**：CC v2.1.104+ tool-result overflow 用 `<persisted-output>` 字符串 marker（不是 `ContentReplacementRecord`）。`handoff-v0.4-drill-panel.md`
+- **2026-05-02 v0.3 ship**（`cba8518` + `4d48232`）—— inner WorkFlow drill-down + 5 类 WorkNode chrome + SpawnEdge 空心三角 marker；150/150；256MB drill 60.9 FPS。`handoff-v0.3-inner-workflow.md`
+- **2026-05-02 v0.2 ship**（`342357f`）+ 后续 ~25 个 polish commits —— minimal canvas + Hono backend + Zustand 4-slice + dev wiring；99/99。视觉对齐 Agentloom palette / TokenBar / NodeIdLine / model ribbon overlay / focus latest / hover edge tooltip 等密集 polish
+- **2026-05-02 v0.1 ship**（`ea61a98`）—— 数据解析层；39/39；256MB session 2.19s 解析。**实测纠正 7 处 doc 错误**（详 `design-data-model.md` "v0.1 实测确认的解析规范"小节）
+- **2026-05-02 设计阶段**（`b003f7b` → `c4edc8f`）—— 6 篇设计文档收敛。关键发现：sub-agent trace 在 sidecar / ScheduleWakeup vs CronCreate / Recap 是 next-brief / ChatFlow 横向 / Edge kinds 3+5 / Anchor 4 方向语义 / Compact summary 在 user 记录（不是 assistant！）/ Stack 锁定 / 安全 Mode A+B / 不做 CCR / Docker / 跨机器 / SaaS
+- **2026-05-01** 项目立项 + v0.0 scaffold（`8ca1ef0`）+ 5 篇文档初版（`4884d0e`）。命名抉择：放弃 "Claudeloom"（合规），定 "Loomscope"
