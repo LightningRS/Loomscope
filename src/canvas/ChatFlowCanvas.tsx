@@ -32,11 +32,15 @@ import { layoutChatFlow } from "@/canvas/layoutDag";
 import { ModelRibbonLayer } from "@/canvas/ModelRibbonLayer";
 import { ChatNodeCard } from "@/canvas/nodes/ChatNodeCard";
 import { ContinuationArrowDefs, ContinuationEdge } from "@/canvas/edges/ContinuationEdge";
+import { LogicalArrowDefs, LogicalEdge } from "@/canvas/edges/LogicalEdge";
 import type { ChatFlow } from "@/data/types";
 import { useStore } from "@/store/index";
 
 const nodeTypes: NodeTypes = { chatNode: ChatNodeCard };
-const edgeTypes: EdgeTypes = { continuation: ContinuationEdge };
+const edgeTypes: EdgeTypes = {
+  continuation: ContinuationEdge,
+  logical: LogicalEdge,
+};
 
 export interface ChatFlowCanvasProps {
   chatFlow: ChatFlow;
@@ -74,6 +78,7 @@ export function ChatFlowCanvas({ chatFlow, sessionId }: ChatFlowCanvasProps) {
       <ReactFlowProvider>
         <svg width={0} height={0} style={{ position: "absolute" }}>
           <ContinuationArrowDefs />
+          <LogicalArrowDefs />
         </svg>
         <CanvasInner
           chatFlow={chatFlow}

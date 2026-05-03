@@ -85,6 +85,30 @@ export function layoutChatFlow(chatFlow: ChatFlow): {
     }
   }
 
+  // v0.7 M4: emit logical edges from each compact ChatNode back to the
+  // pre-compact tail ChatNode that its compactMetadata.logicalParentChatNodeId
+  // references. Visually a反向弧 (backward arc) per design-visual-language —
+  // dashed浅灰. These edges deliberately do NOT call g.setEdge so dagre's
+  // LR layout stays driven only by parentChatNodeId continuation chains;
+  // tainting the layout with logical back-pointers would re-rank the
+  // pre-compact tail and visually break the time-ordered horizontal flow.
+  const chatNodeIds = new Set(chatFlow.chatNodes.map((c) => c.id));
+  for (const cn of chatFlow.chatNodes) {
+    if (!cn.isCompactSummary) continue;
+    const lpcn = cn.compactMetadata?.logicalParentChatNodeId;
+    if (!lpcn) continue;
+    // Defensive: skip when the target ChatNode isn't in this scope (=
+    // pre-compact tail was outside the synthetic ChatFlow being
+    // rendered, or compactMetadata has a stale id).
+    if (!chatNodeIds.has(lpcn)) continue;
+    edges.push({
+      id: `e-logical-${cn.id}->${lpcn}`,
+      source: cn.id,
+      target: lpcn,
+      type: "logical",
+    });
+  }
+
   dagre.layout(g);
 
   // Pre-compute which nodes have parents/children — drives Handle visibility.

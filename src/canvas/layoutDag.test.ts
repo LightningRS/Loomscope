@@ -501,3 +501,89 @@ describe("distinctTouchedFiles + fileTouchCount RFData (v0.7)", () => {
     expect(p2.data.fileTouchCount).toBe(0);
   });
 });
+
+describe("logical edges (v0.7 M4)", () => {
+  function compactCn(
+    id: string,
+    parentId: string | null,
+    logicalParentChatNodeId: string | null,
+  ) {
+    return makeChatNode({
+      id,
+      parentChatNodeId: parentId,
+      isCompactSummary: true,
+      compactMetadata: {
+        id: `compact-wn-${id}`,
+        kind: "compact",
+        parentUuid: null,
+        summaryText: "...",
+        trigger: "auto",
+        logicalParentChatNodeId,
+      },
+    });
+  }
+
+  it("emits a `logical` edge from compact ChatNode → its logicalParentChatNodeId target", () => {
+    const cf = makeChatFlow([
+      makeChatNode({ id: "a" }),
+      makeChatNode({ id: "b", parentChatNodeId: "a" }),
+      makeChatNode({ id: "c", parentChatNodeId: "b" }),
+      compactCn("d", "c", "c"),
+    ]);
+    const { edges } = layoutChatFlow(cf);
+    const logical = edges.filter((e) => e.type === "logical");
+    expect(logical).toHaveLength(1);
+    expect(logical[0].source).toBe("d");
+    expect(logical[0].target).toBe("c");
+    expect(logical[0].id).toMatch(/logical/);
+  });
+
+  it("does NOT generate a logical edge when target ChatNode is missing from this scope", () => {
+    const cf = makeChatFlow([
+      makeChatNode({ id: "a" }),
+      compactCn("d", "a", "ghost-id"),
+    ]);
+    const { edges } = layoutChatFlow(cf);
+    expect(edges.find((e) => e.type === "logical")).toBeUndefined();
+  });
+
+  it("does NOT generate a logical edge when logicalParentChatNodeId is missing", () => {
+    const cf = makeChatFlow([
+      makeChatNode({ id: "a" }),
+      compactCn("d", "a", null),
+    ]);
+    const { edges } = layoutChatFlow(cf);
+    expect(edges.find((e) => e.type === "logical")).toBeUndefined();
+  });
+
+  it("logical edges do NOT influence dagre node positions (LR continuation chain stays clean)", () => {
+    // Without logical edges, a → b → c → d should lay out left-to-right
+    // by parentChatNodeId. With a logical back-edge d → b (or d → a),
+    // a naive setEdge would try to re-rank b/a relative to d and shift
+    // x-coords. Loomscope intentionally skips dagre.setEdge for
+    // logicals — verify by comparing positions with vs without the
+    // logical metadata.
+    const baseline = makeChatFlow([
+      makeChatNode({ id: "a" }),
+      makeChatNode({ id: "b", parentChatNodeId: "a" }),
+      makeChatNode({ id: "c", parentChatNodeId: "b" }),
+      makeChatNode({ id: "d", parentChatNodeId: "c", isCompactSummary: false }),
+    ]);
+    const withLogical = makeChatFlow([
+      makeChatNode({ id: "a" }),
+      makeChatNode({ id: "b", parentChatNodeId: "a" }),
+      makeChatNode({ id: "c", parentChatNodeId: "b" }),
+      compactCn("d", "c", "b"), // logical back-edge to b
+    ]);
+    const baseNodes = layoutChatFlow(baseline).nodes;
+    const logNodes = layoutChatFlow(withLogical).nodes;
+    for (const id of ["a", "b", "c", "d"]) {
+      const bp = baseNodes.find((n) => n.id === id)!.position;
+      const lp = logNodes.find((n) => n.id === id)!.position;
+      expect(lp.x).toBe(bp.x);
+      expect(lp.y).toBe(bp.y);
+    }
+    // Sanity: the logical edge IS emitted in the second flow.
+    expect(layoutChatFlow(withLogical).edges.find((e) => e.type === "logical")).toBeDefined();
+  });
+});
