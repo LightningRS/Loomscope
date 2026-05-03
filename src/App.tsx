@@ -3,9 +3,12 @@
 // ``drillStack`` is non-empty. The chosen drill model (option C) means
 // only one canvas type renders at a time — picked by ``viewMode``.
 // Breadcrumb pinned top-left when in WorkFlow view to navigate back.
-// v0.5: drillStack can hold mixed chatnode + subworkflow frames; the
-// breadcrumb walks all of them, and the canvas resolves the active
-// ChatNode through the cached sub-agent ChatFlows.
+// v0.5: drillStack can hold mixed chatnode + subworkflow frames.
+// v0.6 redo: subworkflow frames now resolve to a FULL sub-agent
+// ChatFlow rendered recursively by ChatFlowCanvas (no more
+// chatNodes[0] collapse + no amber multi-ChatNode banner). Drilling
+// further into a sub-ChatFlow's ChatNode pushes another chatnode
+// frame.
 //
 // Visual chrome per `design-visual-language.md` 视觉 token 章节.
 
@@ -18,7 +21,7 @@ import { Header } from "@/components/Header";
 import { Sidebar } from "@/components/Sidebar";
 import { useStore } from "@/store/index";
 import {
-  resolveDrilledChatNode,
+  resolveDrillView,
   type DrillBreadcrumbItem,
 } from "@/store/sessionSlice";
 
@@ -33,19 +36,26 @@ export default function App() {
   }, [activeId, session]);
 
   // Resolve which view to show. Sub-agent drill frames pull the
-  // current ChatNode out of the cache, so the resolver returns null
-  // (= ChatFlow view) until the cache fills.
+  // sub ChatFlow out of the cache, so the resolver returns null
+  // (= ChatFlow view fallback) until the cache fills.
   const view = useMemo(() => {
     if (!session || !activeId) return { mode: "chatflow" as const };
-    const resolved = resolveDrilledChatNode(session);
+    const resolved = resolveDrillView(session);
     if (!resolved) return { mode: "chatflow" as const };
-    return {
-      mode: "workflow" as const,
-      chatNode: resolved.chatNode,
-      frameLabels: resolved.frameLabels,
-      multiChatNodeNotice: resolved.multiChatNodeNotice,
-    };
+    return resolved;
   }, [session, activeId]);
+
+  // ChatNode-detail scope for DrillPanel: in workflow mode we expose
+  // the owning ChatFlow (top-level or sub-agent) so a future click on
+  // a sibling ChatNode resolves correctly. In chatflow / sub-chatflow
+  // modes the visible ChatFlow is the scope.
+  const drillScopeChatFlow =
+    view.mode === "chatflow"
+      ? session?.chatFlow ?? null
+      : view.mode === "workflow"
+        ? view.scopeChatFlow
+        : view.chatFlow;
+  const drilledChatNode = view.mode === "workflow" ? view.chatNode : null;
 
   return (
     <div className="h-screen w-screen flex flex-col bg-gray-50 text-gray-900">
@@ -61,21 +71,23 @@ export default function App() {
           )}
           {activeId && session?.chatFlow && view.mode === "workflow" && (
             <>
-              <WorkFlowCanvas
-                chatNode={view.chatNode}
-                sessionId={activeId}
-                multiChatNodeNotice={view.multiChatNodeNotice}
-              />
+              <WorkFlowCanvas chatNode={view.chatNode} sessionId={activeId} />
+              <DrillBreadcrumb sessionId={activeId} frames={view.frameLabels} />
+            </>
+          )}
+          {activeId && session?.chatFlow && view.mode === "sub-chatflow" && (
+            <>
+              <ChatFlowCanvas chatFlow={view.chatFlow} sessionId={activeId} />
               <DrillBreadcrumb sessionId={activeId} frames={view.frameLabels} />
             </>
           )}
         </main>
-        {activeId && session?.chatFlow && (
+        {activeId && session?.chatFlow && drillScopeChatFlow && (
           <DrillPanel
             sessionId={activeId}
-            chatFlow={session.chatFlow}
+            chatFlow={drillScopeChatFlow}
             viewMode={view.mode}
-            drilledChatNode={view.mode === "workflow" ? view.chatNode : null}
+            drilledChatNode={drilledChatNode}
           />
         )}
       </div>

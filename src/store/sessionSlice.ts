@@ -123,17 +123,29 @@ export const createSessionSlice: StateCreator<LoomscopeStore, [], [], SessionSli
     set({ sessions: updated });
   },
 
-  // ── Drill-down navigation (v0.3) ────────────────────────────────────
+  // ── Drill-down navigation (v0.3 + v0.6 redo) ──────────────────────
   // Push a ChatNode frame and reset workflow-layer selection so the
-  // drill view opens "fresh". Idempotent on the same chatNodeId.
+  // drill view opens "fresh".
+  //
+  // Stack-aware: when the current top frame is ``subworkflow`` (= we're
+  // viewing a sub-agent's ChatFlow recursively), enterWorkflow PUSHES
+  // a chatnode frame so the drill stack records the path
+  // ``main → CN A → 🤖 Agent → CN B``. From any other state (empty or
+  // top-level chatnode), it RESETS to a single-frame stack — that's the
+  // top-level "click ChatNode in main canvas" path.
   enterWorkflow: (sessionId, chatNodeId) => {
     const updated = new Map(get().sessions);
     const cur = updated.get(sessionId) ?? blankSessionState();
-    const top = cur.drillStack[0];
-    if (top && top.kind === "chatnode" && top.chatNodeId === chatNodeId) return;
+    const top = cur.drillStack[cur.drillStack.length - 1];
+    // Idempotent on the same chatnode at the top.
+    if (top?.kind === "chatnode" && top.chatNodeId === chatNodeId) return;
+    const drillStack: DrillFrame[] =
+      top?.kind === "subworkflow"
+        ? [...cur.drillStack, { kind: "chatnode", chatNodeId }]
+        : [{ kind: "chatnode", chatNodeId }];
     updated.set(sessionId, {
       ...cur,
-      drillStack: [{ kind: "chatnode", chatNodeId }],
+      drillStack,
       workflowSelectedNodeId: null,
     });
     set({ sessions: updated });
@@ -283,27 +295,34 @@ export const createSessionSlice: StateCreator<LoomscopeStore, [], [], SessionSli
 });
 
 /**
- * Resolve the ChatNode whose WorkFlow should currently render in the
- * main canvas, walking ``drillStack`` against the live ``chatFlow``
- * and ``subAgentCache``. Returns null when the stack is empty (=
+ * Resolve the current drill view — what the main canvas should render
+ * given the ``drillStack`` walked against the live ``chatFlow`` plus
+ * ``subAgentCache``. Returns null when the stack is empty (= top-level
  * ChatFlow view) or when a frame can't be resolved (cache miss /
  * stale id) — the canvas should treat null as "fall back to ChatFlow
  * view + suppress breadcrumb depth".
  *
- * v0.5 picks ``chatNodes[0]`` for sub-agent ChatFlows; multi-ChatNode
- * sub-agents (27% of real data, mostly auto-compact) get a banner
- * notice from the canvas — full multi-ChatNode rendering is v0.5.1.
+ * v0.6 redo: sub-agent drill returns the FULL sub ChatFlow (rendered
+ * recursively by ChatFlowCanvas) instead of collapsing to chatNodes[0].
+ * The 27% multi-ChatNode sub-agents that needed the v0.5 amber banner
+ * now drill into a real second-level ChatFlow canvas.
  */
-export interface ResolvedDrillTarget {
-  // The ChatNode whose .workflow renders in the canvas.
-  chatNode: import("@/data/types").ChatNode;
-  // Per-frame label data so the breadcrumb can render
-  // ``ChatFlow / WorkFlow (CN abc) / 🤖 Agent (Explore) / …``.
-  frameLabels: DrillBreadcrumbItem[];
-  // True when the resolved sub-agent's ChatFlow has > 1 ChatNode and
-  // we're showing only the first. Canvas surfaces this as a banner.
-  multiChatNodeNotice: { totalChatNodes: number } | null;
-}
+export type ResolvedDrillView =
+  | {
+      mode: "workflow";
+      // The ChatNode whose .workflow renders in WorkFlowCanvas.
+      chatNode: import("@/data/types").ChatNode;
+      // ChatFlow that owns chatNode (top-level main or a sub-agent).
+      // DrillPanel uses this as the lookup scope for ChatNode selection.
+      scopeChatFlow: ChatFlow;
+      frameLabels: DrillBreadcrumbItem[];
+    }
+  | {
+      mode: "sub-chatflow";
+      // Sub-agent ChatFlow rendered recursively by ChatFlowCanvas.
+      chatFlow: ChatFlow;
+      frameLabels: DrillBreadcrumbItem[];
+    };
 
 export interface DrillBreadcrumbItem {
   // Frame depth (0 = first chatnode frame).
@@ -319,30 +338,30 @@ export interface DrillBreadcrumbItem {
   isAutoCompact: boolean;
 }
 
-export function resolveDrilledChatNode(
-  state: SessionState,
-): ResolvedDrillTarget | null {
+export function resolveDrillView(state: SessionState): ResolvedDrillView | null {
   if (!state.chatFlow || state.drillStack.length === 0) return null;
+  let scopeChatFlow: ChatFlow = state.chatFlow;
   let chatNode: import("@/data/types").ChatNode | null = null;
-  let multiChatNodeNotice: { totalChatNodes: number } | null = null;
   const labels: DrillBreadcrumbItem[] = [];
   for (let depth = 0; depth < state.drillStack.length; depth += 1) {
     const frame = state.drillStack[depth];
     if (frame.kind === "chatnode") {
-      const cn = state.chatFlow.chatNodes.find((c) => c.id === frame.chatNodeId);
+      const cn = scopeChatFlow.chatNodes.find((c) => c.id === frame.chatNodeId);
       if (!cn) return null;
       chatNode = cn;
       labels.push({
         depth,
         kind: "chatnode",
-        label: `WorkFlow (${cn.id.slice(0, 8)})`,
+        label: `ChatNode (${cn.id.slice(0, 8)})`,
         title: `ChatNode ${cn.id}`,
         isAutoCompact: false,
       });
       continue;
     }
-    // subworkflow: previous chatNode owns the delegate WorkNode
-    // whose agentId names the sub-agent ChatFlow.
+    // subworkflow: previous frame's chatNode owns the delegate WorkNode
+    // whose agentId names the sub-agent ChatFlow. The scope advances
+    // to that ChatFlow; chatNode resets so the next chatnode frame (if
+    // any) picks one out of the sub scope.
     if (!chatNode) return null;
     const delegate = chatNode.workflow.nodes.find(
       (n) => n.id === frame.parentWorkNodeId && n.kind === "delegate",
@@ -350,12 +369,8 @@ export function resolveDrilledChatNode(
     if (!delegate?.agentId) return null;
     const cached = state.subAgentCache.get(delegate.agentId);
     if (cached?.status !== "ready" || !cached.chatFlow) return null;
-    const subFirstChatNode = cached.chatFlow.chatNodes[0];
-    if (!subFirstChatNode) return null;
-    chatNode = subFirstChatNode;
-    if (cached.chatFlow.chatNodes.length > 1) {
-      multiChatNodeNotice = { totalChatNodes: cached.chatFlow.chatNodes.length };
-    }
+    scopeChatFlow = cached.chatFlow;
+    chatNode = null;
     const isAutoCompact = delegate.agentId.startsWith("acompact-");
     const agentLabel =
       cached.meta?.agentType ??
@@ -369,8 +384,12 @@ export function resolveDrilledChatNode(
       isAutoCompact,
     });
   }
-  if (!chatNode) return null;
-  return { chatNode, frameLabels: labels, multiChatNodeNotice };
+  const last = state.drillStack[state.drillStack.length - 1];
+  if (last.kind === "chatnode") {
+    if (!chatNode) return null;
+    return { mode: "workflow", chatNode, scopeChatFlow, frameLabels: labels };
+  }
+  return { mode: "sub-chatflow", chatFlow: scopeChatFlow, frameLabels: labels };
 }
 
 // Resolve the delegate WorkNode whose id matches parentWorkNodeId,

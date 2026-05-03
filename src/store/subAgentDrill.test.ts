@@ -7,14 +7,17 @@
 //   - error transition + retry
 //   - enterSubWorkflow: validates parentWorkNodeId, pushes frame,
 //     idempotent re-push, ignores when stack empty / not a delegate
-//   - resolveDrilledChatNode walks chatnode → subworkflow chains
+//   - resolveDrillView: walks chatnode → subworkflow chains; v0.6
+//     redo returns sub-chatflow union arm with full sub ChatFlow
+//     (no chatNodes[0] collapse, no multi-ChatNode banner)
+//   - enterWorkflow stack-aware push (sub-chatflow → push, top → reset)
 //   - session switch evicts the prior session's cache
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useStore } from "@/store/index";
 import {
-  resolveDrilledChatNode,
+  resolveDrillView,
   type DrillBreadcrumbItem,
 } from "@/store/sessionSlice";
 import type { ChatFlow, ChatNode, DelegateNode } from "@/data/types";
@@ -268,26 +271,28 @@ describe("enterSubWorkflow", () => {
   });
 });
 
-describe("resolveDrilledChatNode", () => {
+describe("resolveDrillView", () => {
   it("returns null when the stack is empty", () => {
     seedSession();
-    expect(resolveDrilledChatNode(useStore.getState().sessions.get(SID)!)).toBeNull();
+    expect(resolveDrillView(useStore.getState().sessions.get(SID)!)).toBeNull();
   });
 
-  it("resolves a chatnode-only stack to that ChatNode + breadcrumb", () => {
+  it("resolves a chatnode-only stack to a workflow-mode view + breadcrumb", () => {
     seedSession();
     useStore.getState().enterWorkflow(SID, CHAT_NODE_ID);
-    const got = resolveDrilledChatNode(useStore.getState().sessions.get(SID)!);
-    expect(got?.chatNode.id).toBe(CHAT_NODE_ID);
-    expect(got?.frameLabels).toHaveLength(1);
-    expect(got?.frameLabels[0].kind).toBe("chatnode");
-    expect(got?.multiChatNodeNotice).toBeNull();
+    const got = resolveDrillView(useStore.getState().sessions.get(SID)!);
+    expect(got?.mode).toBe("workflow");
+    if (got?.mode !== "workflow") throw new Error("expected workflow mode");
+    expect(got.chatNode.id).toBe(CHAT_NODE_ID);
+    expect(got.scopeChatFlow.id).toBe(SID);
+    expect(got.frameLabels).toHaveLength(1);
+    expect(got.frameLabels[0].kind).toBe("chatnode");
   });
 
-  it("walks chatnode → subworkflow once the cache is ready, picks chatNodes[0]", async () => {
+  it("walks chatnode → subworkflow into a sub-chatflow-mode view (no chatNodes[0] collapse)", async () => {
     seedSession();
     useStore.getState().enterWorkflow(SID, CHAT_NODE_ID);
-    const sub = subAgentChatFlow(["sub-p1"]);
+    const sub = subAgentChatFlow(["sub-p1", "sub-p2", "sub-p3"]);
     vi.stubGlobal(
       "fetch",
       vi.fn(
@@ -299,31 +304,47 @@ describe("resolveDrilledChatNode", () => {
     );
     useStore.getState().enterSubWorkflow(SID, "d1");
     await useStore.getState().loadSubAgent(SID, AGENT_ID);
-    const got = resolveDrilledChatNode(useStore.getState().sessions.get(SID)!);
-    expect(got?.chatNode.id).toBe("sub-p1");
-    expect(got?.frameLabels).toHaveLength(2);
-    const labels = got?.frameLabels as DrillBreadcrumbItem[];
+    const got = resolveDrillView(useStore.getState().sessions.get(SID)!);
+    expect(got?.mode).toBe("sub-chatflow");
+    if (got?.mode !== "sub-chatflow") throw new Error("expected sub-chatflow mode");
+    // Full sub ChatFlow surfaced — multi-ChatNode (27% of real data)
+    // gets a real second-level canvas instead of an amber banner.
+    expect(got.chatFlow.chatNodes).toHaveLength(3);
+    expect(got.frameLabels).toHaveLength(2);
+    const labels = got.frameLabels as DrillBreadcrumbItem[];
     expect(labels[1].kind).toBe("subworkflow");
     expect(labels[1].label).toContain("Explore");
-    expect(got?.multiChatNodeNotice).toBeNull();
   });
 
-  it("surfaces multiChatNodeNotice when sub-agent has > 1 ChatNode", async () => {
+  it("after sub-chatflow drill, enterWorkflow on a sub-ChatFlow ChatNode pushes (not resets)", async () => {
     seedSession();
     useStore.getState().enterWorkflow(SID, CHAT_NODE_ID);
-    const sub = subAgentChatFlow(["sub-p1", "sub-p2", "sub-p3"]);
+    const sub = subAgentChatFlow(["sub-p1", "sub-p2"]);
     vi.stubGlobal(
       "fetch",
       vi.fn(
         async () =>
-          new Response(JSON.stringify({ chatFlow: sub, meta: null }), { status: 200 }),
+          new Response(JSON.stringify({ chatFlow: sub, meta: { agentType: "Explore" } }), {
+            status: 200,
+          }),
       ),
     );
     useStore.getState().enterSubWorkflow(SID, "d1");
     await useStore.getState().loadSubAgent(SID, AGENT_ID);
-    const got = resolveDrilledChatNode(useStore.getState().sessions.get(SID)!);
-    expect(got?.chatNode.id).toBe("sub-p1");
-    expect(got?.multiChatNodeNotice?.totalChatNodes).toBe(3);
+    // Now drill into one of the sub ChatFlow's ChatNodes — should push,
+    // because the top frame is a subworkflow.
+    useStore.getState().enterWorkflow(SID, "sub-p2");
+    const stack = useStore.getState().sessions.get(SID)?.drillStack ?? [];
+    expect(stack).toHaveLength(3);
+    expect(stack[2]).toEqual({ kind: "chatnode", chatNodeId: "sub-p2" });
+    const got = resolveDrillView(useStore.getState().sessions.get(SID)!);
+    expect(got?.mode).toBe("workflow");
+    if (got?.mode !== "workflow") throw new Error("expected workflow mode");
+    // Resolved chatNode comes from the SUB ChatFlow, not the main one.
+    expect(got.chatNode.id).toBe("sub-p2");
+    expect(got.scopeChatFlow.id).toBe(AGENT_ID);
+    expect(got.frameLabels).toHaveLength(3);
+    expect(got.frameLabels[2].kind).toBe("chatnode");
   });
 
   it("returns null when the sub-agent cache hasn't loaded yet (canvas falls back)", () => {
@@ -342,7 +363,7 @@ describe("resolveDrilledChatNode", () => {
       });
       return { sessions };
     });
-    const got = resolveDrilledChatNode(useStore.getState().sessions.get(SID)!);
+    const got = resolveDrillView(useStore.getState().sessions.get(SID)!);
     // Cache miss → resolver bails out (App.tsx treats this as ChatFlow view).
     expect(got).toBeNull();
   });
@@ -368,9 +389,27 @@ describe("resolveDrilledChatNode", () => {
     );
     useStore.getState().enterSubWorkflow(SID, "d1");
     await useStore.getState().loadSubAgent(SID, "acompact-abc123");
-    const got = resolveDrilledChatNode(useStore.getState().sessions.get(SID)!);
+    const got = resolveDrillView(useStore.getState().sessions.get(SID)!);
     expect(got?.frameLabels[1].isAutoCompact).toBe(true);
     expect(got?.frameLabels[1].label).toContain("auto-compact");
+  });
+});
+
+describe("enterWorkflow", () => {
+  it("from empty stack → resets to a single-frame chatnode stack", () => {
+    seedSession();
+    useStore.getState().enterWorkflow(SID, CHAT_NODE_ID);
+    const stack = useStore.getState().sessions.get(SID)?.drillStack ?? [];
+    expect(stack).toEqual([{ kind: "chatnode", chatNodeId: CHAT_NODE_ID }]);
+  });
+
+  it("idempotent on the same chatNode at the top", () => {
+    seedSession();
+    useStore.getState().enterWorkflow(SID, CHAT_NODE_ID);
+    const stack0 = useStore.getState().sessions.get(SID)?.drillStack ?? [];
+    useStore.getState().enterWorkflow(SID, CHAT_NODE_ID);
+    const stack1 = useStore.getState().sessions.get(SID)?.drillStack ?? [];
+    expect(stack1).toEqual(stack0);
   });
 });
 

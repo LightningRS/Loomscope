@@ -21,7 +21,7 @@ interface Props {
   // ``chatnode`` when the main viewport is the ChatFlow canvas;
   // ``workflow`` when drilled into a WorkFlow. Drives which detail
   // component renders.
-  viewMode: "chatflow" | "workflow";
+  viewMode: "chatflow" | "workflow" | "sub-chatflow";
   // Only meaningful when viewMode === "workflow" — the ChatNode whose
   // WorkFlow is being viewed (panel header shows it as a breadcrumb).
   drilledChatNode: ChatNode | null;
@@ -42,8 +42,12 @@ export function DrillPanel({ sessionId, chatFlow, viewMode, drilledChatNode }: P
   );
 
   // Resolve the currently focused node based on viewMode + selection.
+  // chatflow + sub-chatflow both surface ChatNodeDetail; workflow
+  // surfaces WorkNodeDetail. ``chatFlow`` here is the *scope*
+  // ChatFlow (top-level for chatflow view, sub-agent for sub-chatflow
+  // view) — App.tsx narrows it before passing.
   const focused = useMemo(() => {
-    if (viewMode === "chatflow") {
+    if (viewMode === "chatflow" || viewMode === "sub-chatflow") {
       const cn = selectedChatId
         ? chatFlow.chatNodes.find((c) => c.id === selectedChatId) ?? null
         : null;
@@ -101,7 +105,7 @@ function Header({
   drilledChatNode,
   onCollapse,
 }: {
-  viewMode: "chatflow" | "workflow";
+  viewMode: "chatflow" | "workflow" | "sub-chatflow";
   drilledChatNode: ChatNode | null;
   onCollapse: () => void;
 }) {

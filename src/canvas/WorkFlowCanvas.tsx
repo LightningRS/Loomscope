@@ -1,16 +1,18 @@
 // WorkFlow canvas — drill-down view of one ChatNode's inner WorkFlow.
 //
-// Mounts when ``sessions[sid].drillStack`` is non-empty. Renders the
-// 5 WorkNode kinds (llm_call / tool_call / delegate / compact /
-// attachment) as React Flow nodes with dagre LR layout, mirroring the
-// ChatFlow canvas's chrome / handle behavior.
+// Mounts when ``sessions[sid].drillStack`` top frame is a ``chatnode``.
+// Renders the 5 WorkNode kinds (llm_call / tool_call / delegate /
+// compact / attachment) as React Flow nodes with dagre LR layout,
+// mirroring the ChatFlow canvas's chrome / handle behavior.
 //
 // Loomscope is a read-only viewer: nodes are not draggable / not
 // connectable, layout is dagre-deterministic. Per-WorkFlow viewport
 // state isn't persisted in v0.3 — fitView runs each time we drill in.
-// (v0.5 sub-agent真嵌套 will add ``subworkflow`` drill frames; this
-// component already keys its layout memo on the resolved WorkFlow so
-// nesting is a free upgrade.)
+//
+// v0.5 added ``subworkflow`` drill frames for sub-agent ChatFlows.
+// v0.6 redo: subworkflow frames now resolve to a full sub-agent
+// ChatFlow rendered by ChatFlowCanvas (recursive), not chatNodes[0]
+// here — so the v0.5 amber multiChatNodeNotice banner is gone.
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
 
@@ -54,10 +56,6 @@ const edgeTypes: EdgeTypes = {
 export interface WorkFlowCanvasProps {
   chatNode: ChatNode;
   sessionId: string;
-  // v0.5: when the active drill frame is a sub-agent whose ChatFlow
-  // has more than one ChatNode, surface a banner explaining we're
-  // showing only the first. Multi-ChatNode rendering is v0.5.1 backlog.
-  multiChatNodeNotice?: { totalChatNodes: number } | null;
 }
 
 export function WorkFlowCanvas(props: WorkFlowCanvasProps) {
@@ -72,7 +70,7 @@ export function WorkFlowCanvas(props: WorkFlowCanvasProps) {
   );
 }
 
-function CanvasInner({ chatNode, sessionId, multiChatNodeNotice }: WorkFlowCanvasProps) {
+function CanvasInner({ chatNode, sessionId }: WorkFlowCanvasProps) {
   const { nodes, edges } = useMemo(() => layoutWorkFlow(chatNode), [chatNode]);
   const setSelected = useStore((s) => s.setWorkflowSelected);
   const enterSubWorkflow = useStore((s) => s.enterSubWorkflow);
@@ -145,42 +143,31 @@ function CanvasInner({ chatNode, sessionId, multiChatNodeNotice }: WorkFlowCanva
   }
 
   return (
-    <>
-      <ReactFlow
-        data-testid="workflow-canvas"
-        nodes={nodes}
-        edges={decoratedEdges}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        onNodeClick={onNodeClick}
-        onNodeDoubleClick={onNodeDoubleClick}
-        minZoom={0.1}
-        maxZoom={2}
-        proOptions={{ hideAttribution: true }}
-        nodesDraggable={false}
-        nodesConnectable={false}
-        edgesReconnectable={false}
-        elementsSelectable={true}
-        deleteKeyCode={null}
-        panOnDrag={true}
-      >
-        <Background gap={24} size={1} color="#d1d5db" />
-        <Controls
-          position="bottom-left"
-          showInteractive={false}
-          className="!shadow-md !border !border-gray-200"
-        />
-      </ReactFlow>
-      {multiChatNodeNotice && (
-        <div
-          data-testid="multi-chatnode-notice"
-          className="absolute right-3 top-3 z-20 rounded border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-900 shadow-sm max-w-[280px]"
-          title="Multi-ChatNode sub-agent rendering is deferred to v0.5.1"
-        >
-          ⚠ Sub-agent has {multiChatNodeNotice.totalChatNodes} ChatNodes; showing the first
-        </div>
-      )}
-    </>
+    <ReactFlow
+      data-testid="workflow-canvas"
+      nodes={nodes}
+      edges={decoratedEdges}
+      nodeTypes={nodeTypes}
+      edgeTypes={edgeTypes}
+      onNodeClick={onNodeClick}
+      onNodeDoubleClick={onNodeDoubleClick}
+      minZoom={0.1}
+      maxZoom={2}
+      proOptions={{ hideAttribution: true }}
+      nodesDraggable={false}
+      nodesConnectable={false}
+      edgesReconnectable={false}
+      elementsSelectable={true}
+      deleteKeyCode={null}
+      panOnDrag={true}
+    >
+      <Background gap={24} size={1} color="#d1d5db" />
+      <Controls
+        position="bottom-left"
+        showInteractive={false}
+        className="!shadow-md !border !border-gray-200"
+      />
+    </ReactFlow>
   );
 }
 
