@@ -1,30 +1,29 @@
-// SVG overlay drawn on top of the React Flow canvas when ANY edge is
-// hovered. Visualizes the model usage range: groups all ChatNodes by
-// model, draws one smooth Catmull-Rom spline per group through the
-// centers of those ChatNodes (in chronological order). Different
-// models show as different colored ribbons simultaneously.
+// SVG overlay drawn on top of the React Flow canvas when an edge is
+// hovered. Replicates Agentloom's ribbon visual: per-edge sidewaysArc
+// from parent's right side to child's left side at center y, plus a
+// horizontal pass-through line through middle nodes so the ribbon
+// visually "贯穿" the card without breaking at every boundary.
 //
-// Why "hover any edge triggers all ribbons" not "hover edge highlights
-// only that family":
-//   - User asked for "different models, different colors". Showing
-//     only one family at a time hides the comparative info.
-//   - Always-on coloring is too noisy.
-//   - Hover any edge → show full picture for the chain → off when not
-//     hovering. Cheap, focused.
+// Why "BFS family from hovered edge" instead of "all groups always":
+//   - Mirrors Agentloom semantics. Hovering points at one model run;
+//     the BFS expands that run to all contiguous same-model edges,
+//     stopping at model-switch boundaries.
+//   - Loomscope today exposes only one ModelKind ("llm"). The
+//     `ribbonFamilies` function returns RibbonFamily[] anyway so adding
+//     judge / tool_call kinds later is mechanical.
 //
-// Why "through centers" not "card-edge to card-edge + horizontal
-// pass-through": the segmented approach broke at every card boundary
-// and pass-through lines were obscured by card bg. A single smooth
-// curve through centers reads as "this whole stretch ran on X" at a
-// glance.
+// Mounted as a child of <ReactFlow> (alongside <Background>, <Controls>)
+// so the SVG lives inside the .react-flow container. That puts its
+// stacking context next to xyflow internals — z-index 10 is above
+// .react-flow__viewport (z-index 2), so the ribbon visibly crosses the
+// card faces, matching Agentloom.
 
 import { useMemo } from "react";
 
 import { useStore, type ReactFlowState } from "@xyflow/react";
 
-import type { ChatFlow, ChatNode } from "@/data/types";
-
-import { colorForModel } from "./modelColor";
+import type { ChatFlow } from "@/data/types";
+import { ribbonFamilies, type RibbonFamily } from "@/canvas/modelFamilies";
 
 const CARD_FALLBACK_W = 208; // matches w-52 ChatNodeCard
 const CARD_FALLBACK_H = 140;
@@ -32,68 +31,47 @@ const CARD_FALLBACK_H = 140;
 const rfNodesSelector = (s: ReactFlowState) => s.nodes;
 const rfTransformSelector = (s: ReactFlowState) => s.transform;
 
-interface NodePoint {
-  id: string;
-  x: number; // center x
-  y: number; // center y
+interface NodeBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
-interface ModelGroup {
-  model: string | undefined; // undefined when target had no llm_call
-  color: string;
-  centers: NodePoint[]; // chatnode centers, ordered by source list order
-}
-
-function lastModelOf(cn: ChatNode): string | undefined {
-  const llms = cn.workflow.nodes.filter((n) => n.kind === "llm_call");
-  if (llms.length === 0) return undefined;
-  const last = llms[llms.length - 1];
-  return last.kind === "llm_call" ? last.model : undefined;
+export interface HoveredEdge {
+  parent: string;
+  child: string;
 }
 
 export function ModelRibbonLayer({
   chatFlow,
-  hoveredEdgeId,
+  hoveredEdge,
 }: {
   chatFlow: ChatFlow;
-  hoveredEdgeId: string | null;
+  hoveredEdge: HoveredEdge | null;
 }) {
   const rfNodes = useStore(rfNodesSelector);
   const transform = useStore(rfTransformSelector);
 
-  // Build chatNodeId → center point map from React Flow's measured boxes.
-  const centerById = useMemo(() => {
-    const m = new Map<string, NodePoint>();
+  const boxes = useMemo(() => {
+    const m = new Map<string, NodeBox>();
     for (const n of rfNodes) {
-      const w = n.width ?? n.measured?.width ?? CARD_FALLBACK_W;
-      const h = n.height ?? n.measured?.height ?? CARD_FALLBACK_H;
-      m.set(n.id, { id: n.id, x: n.position.x + w / 2, y: n.position.y + h / 2 });
+      m.set(n.id, {
+        x: n.position.x,
+        y: n.position.y,
+        w: n.width ?? n.measured?.width ?? CARD_FALLBACK_W,
+        h: n.height ?? n.measured?.height ?? CARD_FALLBACK_H,
+      });
     }
     return m;
   }, [rfNodes]);
 
-  const groups = useMemo<ModelGroup[]>(() => {
-    if (!hoveredEdgeId) return [];
-    // Group chatNodes by their model (last llm_call.model). Order
-    // within each group preserves chatFlow.chatNodes order (which is
-    // timestamp-ascending — buildChatFlow sorts).
-    const byModel = new Map<string | undefined, ModelGroup>();
-    for (const cn of chatFlow.chatNodes) {
-      const center = centerById.get(cn.id);
-      if (!center) continue; // not yet measured
-      const model = lastModelOf(cn);
-      let g = byModel.get(model);
-      if (!g) {
-        g = { model, color: colorForModel(model), centers: [] };
-        byModel.set(model, g);
-      }
-      g.centers.push(center);
-    }
-    return Array.from(byModel.values()).filter((g) => g.centers.length >= 2);
-    // Filter < 2: a single-node "group" has no ribbon to draw.
-  }, [hoveredEdgeId, chatFlow, centerById]);
+  const families = useMemo<RibbonFamily[]>(() => {
+    if (!hoveredEdge) return [];
+    return ribbonFamilies(chatFlow, hoveredEdge.parent, hoveredEdge.child);
+  }, [chatFlow, hoveredEdge]);
 
-  if (!hoveredEdgeId || groups.length === 0) return null;
+  if (!hoveredEdge || families.length === 0) return null;
 
   const [tx, ty, tz] = transform;
 
@@ -101,62 +79,99 @@ export function ModelRibbonLayer({
     <svg
       data-testid="model-ribbon-layer"
       className="pointer-events-none absolute inset-0 h-full w-full"
-      // z-index above xyflow's stacking (renderer=4, selection=6,
-      // connection-line=1001) so the ribbon is visibly drawn ON TOP
-      // of cards as it passes through their centers. With a lower
-      // z-index the curve is hidden behind cards and the visible
-      // gap-segments collapse to the same look as the old "side-to-
-      // side" approach — which is what we're trying to leave behind.
-      style={{ zIndex: 1100, overflow: "visible" }}
+      style={{ zIndex: 10, overflow: "visible" }}
     >
       <g transform={`translate(${tx}, ${ty}) scale(${tz})`}>
-        {groups.map((g, i) => (
-          <RibbonPath key={g.model ?? `none-${i}`} group={g} />
+        {families.map((family, idx) => (
+          <FamilyRibbon
+            key={family.kind}
+            family={family}
+            boxes={boxes}
+            stackIndex={idx}
+            stackTotal={families.length}
+          />
         ))}
       </g>
     </svg>
   );
 }
 
-function RibbonPath({ group }: { group: ModelGroup }) {
-  const d = catmullRomPath(group.centers);
-  if (!d) return null;
+function FamilyRibbon({
+  family,
+  boxes,
+  stackIndex,
+  stackTotal,
+}: {
+  family: RibbonFamily;
+  boxes: Map<string, NodeBox>;
+  stackIndex: number;
+  stackTotal: number;
+}) {
+  // When multiple kinds coexist the channels nudge up/down so they
+  // don't perfectly overlap. Centered stack: with one kind the offset
+  // is 0, which is the Loomscope case today.
+  const yNudge = 8 * (stackIndex - (stackTotal - 1) / 2);
+
+  const paths: string[] = [];
+
+  // Inter-node arcs: parent right edge → child left edge at center y.
+  // Side-to-side endpoints (not centers) match React Flow's edge
+  // handles so the ribbon visually replaces / overlays the actual
+  // continuation arrow.
+  for (const [parentId, childId] of family.edges) {
+    const a = boxes.get(parentId);
+    const b = boxes.get(childId);
+    if (!a || !b) continue;
+    const p1 = { x: a.x + a.w, y: a.y + a.h / 2 + yNudge };
+    const p2 = { x: b.x, y: b.y + b.h / 2 + yNudge };
+    paths.push(sidewaysArc(p1, p2));
+  }
+
+  // Pass-through: when a node has BOTH incoming and outgoing edges in
+  // this family, draw a straight horizontal line across the card at
+  // center y. Without it the ribbon terminates at each card edge and
+  // visually breaks at every node, losing the "this whole stretch ran
+  // on the same model" affordance.
+  const incoming = new Set<string>();
+  const outgoing = new Set<string>();
+  for (const [p, c] of family.edges) {
+    outgoing.add(p);
+    incoming.add(c);
+  }
+  for (const nid of family.nodeIds) {
+    if (!incoming.has(nid) || !outgoing.has(nid)) continue;
+    const box = boxes.get(nid);
+    if (!box) continue;
+    const y = box.y + box.h / 2 + yNudge;
+    paths.push(`M ${box.x} ${y} L ${box.x + box.w} ${y}`);
+  }
+
   return (
-    <path
-      d={d}
-      stroke={group.color}
-      strokeWidth={5}
-      strokeOpacity={0.55}
+    <g
+      stroke={family.color}
       strokeLinecap="round"
       strokeLinejoin="round"
       fill="none"
-    />
+    >
+      {paths.map((d, i) => (
+        <path key={i} d={d} strokeWidth={4} strokeOpacity={0.9} />
+      ))}
+    </g>
   );
 }
 
 /**
- * Catmull-Rom spline through `points` rendered as a sequence of cubic
- * Bezier segments. Tension = 0.5 (standard).
- *
- * Each interior segment Pi → Pi+1 uses control points derived from the
- * neighbors Pi-1 and Pi+2:
- *   c1 = Pi + (Pi+1 - Pi-1) / 6
- *   c2 = Pi+1 - (Pi+2 - Pi) / 6
- * For the endpoints we duplicate Pi/Pi+1 so the formula stays valid.
+ * Cubic Bezier from (from) to (to) with horizontal control-point
+ * tangents — same shape as React Flow's default Bezier edge. When
+ * source and target share a y the curve degenerates to a horizontal
+ * line, which is the desired result for linear LR-laid-out chains.
  */
-function catmullRomPath(points: NodePoint[]): string | null {
-  if (points.length < 2) return null;
-  const parts: string[] = [`M ${points[0].x} ${points[0].y}`];
-  for (let i = 0; i < points.length - 1; i++) {
-    const p0 = points[i - 1] ?? points[i];
-    const p1 = points[i];
-    const p2 = points[i + 1];
-    const p3 = points[i + 2] ?? p2;
-    const c1x = p1.x + (p2.x - p0.x) / 6;
-    const c1y = p1.y + (p2.y - p0.y) / 6;
-    const c2x = p2.x - (p3.x - p1.x) / 6;
-    const c2y = p2.y - (p3.y - p1.y) / 6;
-    parts.push(`C ${c1x} ${c1y}, ${c2x} ${c2y}, ${p2.x} ${p2.y}`);
-  }
-  return parts.join(" ");
+function sidewaysArc(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+): string {
+  const dx = to.x - from.x;
+  const cp1 = { x: from.x + dx * 0.5, y: from.y };
+  const cp2 = { x: to.x - dx * 0.5, y: to.y };
+  return `M ${from.x} ${from.y} C ${cp1.x} ${cp1.y}, ${cp2.x} ${cp2.y}, ${to.x} ${to.y}`;
 }

@@ -41,15 +41,17 @@ export interface ChatFlowCanvasProps {
   sessionId: string;
 }
 
+interface HoveredEdgeState {
+  parent: string;
+  child: string;
+  targetModel?: string;
+}
+
 export function ChatFlowCanvas({ chatFlow, sessionId }: ChatFlowCanvasProps) {
   // Edge hover tooltip state — lives at the wrapper level so the tooltip
-  // can render outside ReactFlow as a fixed-position overlay.
-  const [hoveredEdge, setHoveredEdge] = useState<{
-    id: string;
-    source: string;
-    target: string;
-    targetModel?: string;
-  } | null>(null);
+  // can render outside ReactFlow as a fixed-position overlay. The
+  // ribbon overlay reads it from inside CanvasInner via prop.
+  const [hoveredEdge, setHoveredEdge] = useState<HoveredEdgeState | null>(null);
   const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null);
 
   // Track cursor position only while an edge is hovered — avoids paying
@@ -74,11 +76,8 @@ export function ChatFlowCanvas({ chatFlow, sessionId }: ChatFlowCanvasProps) {
         <CanvasInner
           chatFlow={chatFlow}
           sessionId={sessionId}
+          hoveredEdge={hoveredEdge}
           onEdgeHover={setHoveredEdge}
-        />
-        <ModelRibbonLayer
-          chatFlow={chatFlow}
-          hoveredEdgeId={hoveredEdge?.id ?? null}
         />
       </ReactFlowProvider>
 
@@ -115,12 +114,11 @@ function EdgeModelTooltip({
 }
 
 interface CanvasInnerProps extends ChatFlowCanvasProps {
-  onEdgeHover: (
-    e: { id: string; source: string; target: string; targetModel?: string } | null,
-  ) => void;
+  hoveredEdge: HoveredEdgeState | null;
+  onEdgeHover: (e: HoveredEdgeState | null) => void;
 }
 
-function CanvasInner({ chatFlow, sessionId, onEdgeHover }: CanvasInnerProps) {
+function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasInnerProps) {
   const { nodes, edges } = useMemo(() => layoutChatFlow(chatFlow), [chatFlow]);
   const setSelected = useStore((s) => s.setSelected);
   const selectedNodeId = useStore(
@@ -170,9 +168,8 @@ function CanvasInner({ chatFlow, sessionId, onEdgeHover }: CanvasInnerProps) {
       onNodeClick={onNodeClick}
       onEdgeMouseEnter={(_e, edge: Edge) =>
         onEdgeHover({
-          id: edge.id,
-          source: edge.source,
-          target: edge.target,
+          parent: edge.source,
+          child: edge.target,
           targetModel: (edge.data as { targetModel?: string } | undefined)?.targetModel,
         })
       }
@@ -193,6 +190,12 @@ function CanvasInner({ chatFlow, sessionId, onEdgeHover }: CanvasInnerProps) {
         position="bottom-left"
         showInteractive={false}
         className="!shadow-md !border !border-gray-200"
+      />
+      <ModelRibbonLayer
+        chatFlow={chatFlow}
+        hoveredEdge={
+          hoveredEdge ? { parent: hoveredEdge.parent, child: hoveredEdge.child } : null
+        }
       />
     </ReactFlow>
   );
