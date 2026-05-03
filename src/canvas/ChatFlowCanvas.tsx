@@ -92,6 +92,27 @@ export function ChatFlowCanvas({ chatFlow, sessionId }: ChatFlowCanvasProps) {
   );
 }
 
+// Why this tooltip only shows `model` and not effort / fast-mode:
+//
+// We considered surfacing the request's reasoning effort and a
+// `fast mode` flag (toggled by `/fast`, opus-4-6 only) alongside the
+// model name. After scanning every assistant record across every
+// CC jsonl on disk, the assistant message field set is exactly:
+//
+//   container, content, context_management, diagnostics, id, model,
+//   role, stop_details, stop_reason, stop_sequence, type, usage
+//
+// Content blocks only carry `text / thinking / tool_use`. There is
+// no `effort`, `reasoning_effort`, `thinking_budget`, `fast_mode`, or
+// `[1m]`-style suffix anywhere — CC strips request-side parameters
+// before persisting, leaving just the bare model id (e.g.
+// `claude-opus-4-7`). Fast mode in particular is a UI-only toggle
+// that doesn't show up in the request snapshot at all.
+//
+// We could have added placeholder rows that always render as "—",
+// but that's pretending we have data we don't. If a future CC
+// version starts writing these fields, extend `targetModel` in
+// `layoutDag.ts` to a richer struct and add the rows here.
 function EdgeModelTooltip({
   targetModel,
   x,
