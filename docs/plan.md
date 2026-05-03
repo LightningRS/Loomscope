@@ -9,7 +9,7 @@
 | **v0.0** | scaffold | Vite+React+TS+Tailwind+xyflow+dagre 工程能跑 dev/build/test | ✅ commit `8ca1ef0` |
 | **v0.1** | parser | `src/parse/jsonl.ts` + `src/data/types.ts` + sidecar loader + 39 unit tests | ✅ commit `ea61a98`（256MB session 2.19s 解析 / 0 失败）|
 | **v0.2** | minimal canvas | Hono backend + Zustand 4-slice + ChatFlow 横向 canvas + Sidebar | ✅ commit `342357f`（99/99 tests，256MB 解析+序列化 3.37s） |
-| **v0.3** | inner WorkFlow | ChatNode 展开后看到内部 WorkFlow（tool_call / llm_call / delegate） | |
+| **v0.3** | inner WorkFlow | drill-down 替换主视图 + 5 类 WorkNode chrome + drillStack store 切面 + SpawnEdge 空心三角 | ✅ commit `cba8518` + `4d48232`（150/150 tests，256MB drill 60.9 FPS） |
 | **v0.4** | drill panel | 选节点后右侧栏显示完整内容 | |
 | **v0.5** | sub-agent 双态 | delegate WorkNode 折叠态 rich card + 展开态嵌套子 WorkFlow（lazy 读 sidecar） | |
 | **v0.6** | compact handling | 处理 isCompactSummary 节点 + logicalParentUuid 边 | |
@@ -79,15 +79,26 @@
 - 256MB session 预解析 cache（v0.9）
 - 256MB 浏览器端实测——架构师本机跑一次确认 FPS
 
-## v0.3 — inner WorkFlow
+## v0.3 — inner WorkFlow（已 ship 2026-05-02 commit `cba8518` + `4d48232`）
 
-ChatNode 展开后看到 WorkFlow。React Flow 的 nested view 是设计难点——参考 Agentloom `WorkFlowCanvas` 但不要直接抄，因为 Loomscope 数据形状不一样。
+ChatNode 不再是黑盒卡片：点"进入工作流"按钮把主视图切到该 ChatNode 的 WorkFlow canvas，看里面跑了哪些 llm_call / tool_call / delegate / compact / attachment。
 
-[TODO 作者]：用什么模式做 nested？
+落地概览：
 
-- 选项 A：每个 ChatNode 展开时打开一个新 React Flow 实例（隔离，但选中状态不互通）
-- 选项 B：所有节点都在一个大 flow 里，按 z-order / 子节点 collapsed/expanded 控制可见性
-- 选项 C：点 ChatNode 后切换主视图到 WorkFlow，类似 drill-down navigation
+- **drill-down 方案 (选项 C)**：drillStack store 切面 + 单一主视图切换 + 面包屑回退。选 C 而非 B（单一大 flow + culling）的理由：256MB session 全展开 ~60K WorkNode，drill 把 React Flow 实例规模上限锁在「单 ChatNode 几百节点」量级；同时跟 Agentloom 视觉家族一致
+- **5 类 WorkNode chrome**：llm_call / tool_call / delegate / compact / attachment 各自折叠态卡片，对齐 `design-visual-language.md`
+- **WorkFlowCanvas.tsx + SpawnEdge.tsx**：橙色 + 空心三角 marker 区分 spawn 边（`arrow-spawn`），continuation 仍是灰色实心三角
+- **drillStack 不持久化**：reload 后回到 ChatFlow 顶层视图（URL 路由是 v0.7 的事）
+- **互不干扰的 selection**：ChatFlow `selectedNodeId` 和 WorkFlow `workflowSelectedNodeId` 各自独立
+
+实测：256MB session drill 进 413-WorkNode 的 ChatNode：avg 60.9 FPS / 1%-low 59.5（远过 30 阈值）。
+
+下一步遗留（作为 backlog 留给后续版本）：
+- v0.4 drill panel（`workflowSelectedNodeId` 已铺好基础）
+- v0.5 sub-agent 真嵌套（drillStack 已支持 subworkflow 帧）
+- v0.6 compact 完整交互 + logical 弱边
+- AttachmentCard subtype 富化
+- WorkFlow viewport state 持久化（v0.9）
 
 ## v0.4 — drill panel
 

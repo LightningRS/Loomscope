@@ -23,17 +23,16 @@
 - **6 篇设计文档**——大部分讨论已收敛，TODO 标签已大幅消化（仍少量遗留，本文末尾"剩余开放问题"列出）。
 - **v0.1 数据解析层**（commit `ea61a98`）：`src/data/` + `src/parse/` 共 ~1900 行（含 454 行测试）；39/39 unit tests；256MB session 实测 2.19s 解析 / 0 失败。
 - **v0.2 minimal canvas**（commit `342357f`）：Hono backend (`src/server/`) + Zustand 4-slice (`src/store/`) + Canvas (`src/canvas/` React Flow + dagre LR) + UI (`src/components/` Sidebar + Header) + dev wiring（vite 5175 proxy → hono 5174）。99/99 tests，256MB 端到端 3.37s。
+- **v0.3 inner WorkFlow**（commit `cba8518` + `4d48232`）：drill-down 替换主视图（选项 C），5 类 WorkNode chrome + SpawnEdge 空心三角 + drillStack store 切面。150/150 tests，256MB drill 进 413-WorkNode 的 ChatNode 实测 60.9 FPS。
 
-## 还没做的部分（v0.3 起）
-- v0.3 inner WorkFlow（ChatNode 展开后看到内部 llm_call / tool_call / delegate / compact 节点）
-- v0.4 drill panel（右侧详情）
-- v0.5 sub-agent 双态（折叠 rich card + 展开真嵌套子 ChatFlow）
-- v0.6 compact ChatNode 视觉 + file-history-snapshot 时间窗绑定
-- v0.7 file-tail 实时增量
-- v0.8+ 性能优化 / 跨 session 搜索 / SQLite FTS5
-- Backend（Hono + zod，12 个 REST endpoint + SSE）—— 跟 canvas 一起做或先做
-- Frontend state（Zustand 5 + 4 slice + persist middleware）—— v0.2 一起
-- v∞.0 read-only 远程观察 / v∞.1 启动新 session / v∞.2 接管 + prompt 续接
+## 还没做的部分（v0.4 起）
+- v0.4 drill panel（右侧详情）—— `workflowSelectedNodeId` 已铺好
+- v0.5 sub-agent 双态（折叠 rich card + 展开真嵌套子 ChatFlow）—— drillStack 已支持 subworkflow 帧
+- v0.6 compact ChatNode 视觉 + file-history-snapshot 时间窗绑定 + logical 弱边
+- v0.7 fork 浏览（`forkedFrom` + `custom-title` parser / server merge / ConversationView + branchMemory / canvas fork badge）
+- v0.8 file-tail 实时增量
+- v0.9 性能优化 / WorkFlow viewport 持久化 / 跨 session 搜索 (SQLite FTS5)
+- v∞.0 read-only 远程观察 / v∞.1 启动新 session / v∞.2 leaf-continuation 续接 prompt / **v∞.3 任意节点 fork composer（"120% of CC"）**
 
 详见 `plan.md`。
 
@@ -116,6 +115,16 @@ npm run build
 ## 历史更新
 
 - **2026-05-01** 项目立项 + v0.0 scaffold 完成 + 5 篇文档初版（`4884d0e`）
+- **2026-05-02 v0.3 ship（commit `cba8518` + `4d48232`）** —— inner WorkFlow drill-down 落地：
+  - 选项 C（drill-down 替换主视图）over B（单一大 flow + culling）—— 256MB session 全展开 ~60K WorkNode 可怕，drill 把单 React Flow 实例锁在每 ChatNode 几百节点
+  - `WorkFlowCanvas.tsx` + 5 类 WorkNode chrome（llm_call / tool_call / delegate / compact / attachment 折叠态）
+  - `SpawnEdge` 用 `arrow-spawn` 空心三角 marker（区分 continuation 灰色实心）—— 第二个 commit 修了 WorkFlowCanvas 错误地把所有 markerEnd 覆盖成 ArrowClosed 的问题
+  - `drillStack` store 切面：支持嵌套 drill（chatnode → workflow → subworkflow），不持久化（reload 回顶层）
+  - ChatFlow 和 WorkFlow `selectedNodeId` 各自独立
+  - 进入触发：节点上"进入工作流"按钮（不点卡主体），跟 Agentloom 对齐
+  - 150/150 tests 绿；256MB drill 进 413-WorkNode 的 ChatNode：60.9 FPS avg / 59.5 1%-low（>> 30 阈值）
+  - 留给后续：v0.4 drill panel（`workflowSelectedNodeId` 已铺好）/ v0.5 sub-agent 真嵌套（drillStack 已支持 subworkflow 帧）/ v0.6 compact 完整交互 + logical 弱边 / AttachmentCard subtype 富化 / v0.9 WorkFlow viewport 持久化
+  - 交付参考 `handoff-v0.3-inner-workflow.md`（保留 ad-hoc 任务交付模板）
 - **2026-05-02 v0.2 ship（commit `342357f`）** —— minimal canvas 落地：
   - Backend（Hono + zod + commander，3 endpoint，CSRF + CORS）
   - Store（Zustand 5 + 4 slice + persist 仅 UI 偏好）
