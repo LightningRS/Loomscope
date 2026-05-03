@@ -8,7 +8,24 @@
 
 ## 2026-05-03
 
-### v0.6 redo ship（commits `a48f990` → `2865282`，5 milestone）
+### `<synthetic>` 假 llm_call 过滤 fix（commit `a13da49`）
+
+作者注意到 0735d228 的 ChatNode 0b81ff42 没显示 TokenBar。诊断：该 ChatNode 最后一个 llm_call `model="<synthetic>"` 且 usage 全 0。挖到底是 CC 自己的 4 类 placeholder 共用同一 sentinel：
+
+| 类型 | 触发 | error 字段 | 内容 |
+|---|---|---|---|
+| Rate limit (429) | 限流 | `"rate_limit"` | "You've hit your limit · resets X" |
+| API error (400/...) | 请求错 | `"unknown"` | "API Error: 400 ..." |
+| "No response requested" | CC 内部不需要 LLM 回应的占位 | null | 字面 "No response requested." |
+| 用户中断（Esc / Ctrl-C）| 流式 abort | null | **真实 partial 文本**（c0098244 v2.1.92 的 7 个就是这种）|
+
+四类共有事实：`model="<synthetic>"` + `usage` 全 0 + 不代表"turn 的规范结束状态"。Loomscope 三处都吃这个亏：(1) `deriveContextTokens` → TokenBar 整个不渲染（你的最初症状）(2) `lastModelOf`（layoutDag + modelFamilies 各一份）→ ribbon 染 `<synthetic>` 哈希出来的伪色 + edge tooltip 显示 "model: \<synthetic\>" (3) `maxContextForModel("<synthetic>")` 退到默认 200K 上限。
+
+**修法**：抽 `isRealLlmCall(n)` helper，filter `model === "<synthetic>"` 或 `errors.length > 0`；3 处使用点统一调用。+ 2 个 pin 测试（`layoutDag.test.ts` 覆盖 synthetic tail / errored tail 两条边界）；280 → 282 全绿。
+
+**没受影响**：synthetic 记录本身的 LlmCallCard 仍正常渲染（partial 内容 + 错误信息 + interrupt 标志在 drill 进 WorkFlow 时还是看得见）；ChatNode-level "我属于哪条 model 链"取倒数第 N 个真 llm_call 的 model（回到 opus-4-7 等）。9 个 session 实测都被覆盖。
+
+### v0.6 redo ship（commits `a48f990` → `121aa4b`，5 milestone + M6 doc sync）
 
 按 `handoff-v0.6-redo-node-base-interop.md` 实施。**作者澄清的本意守住**：数据层 `NodeBase` 共享接口 + 视觉层双画布嵌套保留 + delegate drill 进完整 sub-ChatFlow + WorkNode 卡片加 TokenBar/NodeIdLine。
 
@@ -24,8 +41,9 @@
 - M3 `e050eab` — `resolveDrillView` 重写成 union + ChatFlowCanvas 递归 + 删 amber multi-ChatNode banner + `enterWorkflow` 改成 stack-aware push（5 files, +195/-134）
 - M4 `37431c8` — `chrome/TokenBar.tsx` + `chrome/NodeIdLine.tsx` 抽出 + 5 类 WorkNode 卡按抉择 4 加 chrome + WF_NODE_SIZE 高度 +15~30px（10 files, +181/-98）
 - M5 `2865282` — DrillPanel 视图模式分发测试（3 个新 test，专测 sub-chatflow scope）
+- M6 `121aa4b` — devlog ship 条目（即本条）+ design-data-model.md NodeBase 小幅更新（2 节，<40 行；不重写整篇）
 
-**测试**：229 (M1 起点) → 235 (M5 收尾)，typecheck / build 都通过。
+**测试**：229 (M1 起点) → 235 (M5 收尾)，M6 doc-only 不动测试数；typecheck / build 都通过。
 
 **性能实测**（256MB session 1522 ChatNode）：解析 1946ms （v0.5 baseline 2500ms 的 78%；redo 后再测 1960ms 同基线），cache hit 仍 22ms（lazy-load 路径未动），selection per-card 订阅未动（v0.4 perf fix 钉死）。
 
@@ -42,8 +60,8 @@
 **与 v0.6 第一版的关键差别**：第一版按"取消视觉嵌套 + flat tree + default-fold"实施，被 revert；redo 严格只动数据层共享 base + sub-ChatFlow drill 视觉嵌套递归 + chrome 抽原子，**视觉层 chatflow/workflow 二分本身没动**。
 
 **残留 backlog**：
-- DrillPanel 在 sub-chatflow 模式下 selection 复用 `selectedNodeId` 全局字段（导致跨层 ChatNode 选择会"漏到"另一层）；当前 DrillPanel 自动按 scope 兜底返回空，未引入 `subChatFlowSelectedNodeId` 第三个字段。如未来跨层 selection 切换变成痛点，再加。
-- `design-data-model.md` 还没更新到反映 NodeBase；handoff 标小幅更新（"ChatNode 数据形态" + "WorkNode 数据形态"两节）—— 留作单独 doc-only 提交。
+- DrillPanel 在 sub-chatflow 模式下 selection 复用 `selectedNodeId` 全局字段（导致跨层 ChatNode 选择会"漏到"另一层）；当前 DrillPanel 自动按 scope 兜底返回空，未引入 `subChatFlowSelectedNodeId` 第三个字段。如未来跨层 selection 切换变成痛点，再加（v0.7 顺手或 v0.10 polish）
+- 测试新增 6 vs handoff 验收 ≥20 的 shortfall —— 既有 fixture-based 测试已 cover 大部分行为，新增主要在 push-vs-reset / scope 边界。**协调判断接受**：8 条硬约束都 verified，验收门槛偏 over-conservative。如要补全 14 条，建议覆盖 ChatFlowCanvas 递归实例 fitView 独立性 / cross-frame breadcrumb truncate selection 持久化 / WF_NODE_SIZE 边界等
 
 ### v0.6 第一版 revert + 重做方向澄清
 
