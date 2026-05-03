@@ -20,9 +20,11 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  useStore as useReactFlowStore,
   type Edge,
   type EdgeTypes,
   type NodeTypes,
+  type ReactFlowState,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -160,6 +162,32 @@ function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasIn
   );
 
   const rf = useReactFlow();
+  // We need to know when xyflow has actually measured the latest card
+  // before firing fitView — without measurements `fitView({ nodes: [{
+  // id }] })` reads an empty bbox and silently no-ops, which is what
+  // was leaving the viewport at the default origin on session-open
+  // and on hard refresh.
+  //
+  // The naive choice — `useNodesInitialized()` — looks like it does
+  // the job but actually stays `false` forever in Loomscope: it
+  // returns the store's `s.nodesInitialized` flag, which is only
+  // recomputed when xyflow re-runs `adoptUserNodes`, which only
+  // happens when the user-supplied `nodes` prop is replaced with one
+  // that carries `measured` back. Loomscope is viewer-only with no
+  // `onNodesChange`, so the round-trip never happens — measurements
+  // land on the InternalNode in `s.nodeLookup` but the flag never
+  // updates. Instead, subscribe directly to the latest node's
+  // measured-dimensions presence in `nodeLookup`. That selector
+  // re-runs whenever `updateNodeInternals` calls `set({})` after a
+  // ResizeObserver hit, and its boolean result flips false→true the
+  // moment our target card is ready — which is exactly the trigger
+  // we want.
+  const latestNodeId = nodes.length > 0 ? nodes[nodes.length - 1].id : null;
+  const latestNodeMeasured = useReactFlowStore((s: ReactFlowState) => {
+    if (!latestNodeId) return false;
+    const n = s.nodeLookup.get(latestNodeId);
+    return n?.measured.width !== undefined && n?.measured.height !== undefined;
+  });
   // Focus on the latest ChatNode when the user opens a different session.
   // Re-running on every chatFlow change is intentional — for v0.2 a
   // chatFlow change == "user picked a different session". When v0.7
@@ -167,18 +195,18 @@ function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasIn
   // incremental updates don't yank the viewport away from the user.
   const focusedSessionRef = useRef<string | null>(null);
   useEffect(() => {
-    if (nodes.length === 0) return;
+    if (!latestNodeMeasured) return;
+    if (!latestNodeId) return;
     if (focusedSessionRef.current === chatFlow.id) return;
-    const latest = nodes[nodes.length - 1]; // chatNodes are timestamp-sorted asc
     rf.fitView({
-      nodes: [{ id: latest.id }],
+      nodes: [{ id: latestNodeId }],
       padding: 0.4,
       maxZoom: 1.0,
       minZoom: 0.5,
       duration: 0,
     });
     focusedSessionRef.current = chatFlow.id;
-  }, [chatFlow.id, nodes, rf]);
+  }, [chatFlow.id, latestNodeId, latestNodeMeasured, rf]);
 
   return (
     <ReactFlow
