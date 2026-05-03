@@ -27,12 +27,11 @@
 - **v0.4 drill panel**（commit `36f02b7`）：右侧 resizable sidebar + 5 类 WorkNode detail + chunked tool-result lazy-load (`?start=` byte offset + 滚动加载) + MarkdownView (Agentloom 同款) + JsonView + DiffView (零 lib，自动检测 structuredPatch)。195/195 tests。
 - **v0.4 + selection perf fix**（commit `df65051`）：从 v0.4 暴露的 selection round-trip 458ms → 提前从 v0.10 拉出。每卡用 Zustand selector 自己订阅 `selectedNodeId === ownId`，wrapper 不再重 decorate `nodes` prop。1522-ChatNode session 实测 78.9ms avg / 86ms max（5.8×）。202/202 tests。
 - **v0.5 sub-agent 真嵌套**（commit `74d49d9`）：双击 delegate → drill 替换主视图（选项 A，复用 v0.3 drillStack）+ lazy load sidecar jsonl + Map cache + auto-compact badge（agentId 前缀判别）+ DrillBreadcrumb 多级回退。227/227 tests；cache hit 22ms / cold 1830ms / 实测全 session 嵌套深度 max 2 层。**实测发现**：27% sub-agent sidecar 是多 ChatNode（v0.5 渲染 [0] + banner，完整渲染 → v0.5.1，已被 v0.6 吸收）
-- **v0.6 数据模型统一**（commits `01c3bcf` → `cfe9026`，7 个 milestone）：取消 ChatFlow/WorkFlow 二分，统一递归 Node 树 + 默认折叠 + 按 kind 切 chrome；吸收 v0.5.1 / v0.5.2 / v2.0 全部。324/324 tests（+97）；selection 78.9 → **21.2ms**（4×）；多 ChatNode amber banner 消失；legacy 重复 ID 4233 个一并修。**留下两个 follow-up backlog**：v0.6.1 legacy cleanup（旧代码仍在树里）+ design-data-model.md 全文重写（10 章节清单见历史更新区）
+- **v0.6 第一次尝试 + revert**（commits `01c3bcf` → `cfe9026` 后 `f9f6f03` 回滚）：M1（Node 类型）+ M2（store dual-write nodeTree）保留作 latent 数据层基础；M3-M7（视觉层压平）revert，恢复 v0.5 dual-canvas + drill 模型 + ribbon。v0.6 第一版误读了作者意图（作者本意：数据层 Node 类型统一 + 视觉层 ChatFlow/WorkFlow 嵌套保留）。**v0.6 redo 待**
 
-## 还没做的部分（v0.6.1 起）
-- **v0.6.1 legacy cleanup** —— v0.6 选了 milestone-串行 migration 策略保证每步可回滚，所以旧 ChatFlow/WorkFlow 代码仍躺在树里（ChatFlowCanvas / WorkFlowCanvas / 5 类 WorkNode card / ChatNodeCard / chatFlowAdapter / parse/jsonl.ts + workflow-builder.ts / data/types.ts 中 legacy 段）。同步重写 design-data-model.md 全文
-- **v0.6.2 ExpandHint 全 kind** —— 当前只 user_message 有"展开工作流"按钮；其他 kind 只能 dblclick 触发（受 RF + Playwright 限制）
-- v0.7 compact handling（基于 v0.6 统一 Node）+ file-history-snapshot 时间窗绑定 + logical 弱边 —— CompactDetail 已留提示文案
+## 还没做的部分（v0.6 redo 起）
+- **v0.6 redo** —— 用 M1-M2 的 Node 类型作为 ChatNode/WorkNode 共享 base；视觉层维持 ChatFlowCanvas/WorkFlowCanvas dual-canvas drill；delegate 可 drill 进 sub-ChatFlow（解决 sub-agent multi-ChatNode）；WorkNode 加 TokenBar + NodeIdLine（跟 ChatNode 互通）。**这是当前最高优先级**
+- v0.7 compact handling（基于 v0.6 redo 后的 Node 互通模型）+ file-history-snapshot 时间窗绑定 + logical 弱边 —— CompactDetail 已留提示文案
 - v0.8 fork 浏览（`forkedFrom` + `custom-title` parser / server merge / ConversationView + branchMemory / canvas fork badge）
 - v0.9 file-tail 实时增量
 - v0.10 性能优化 / WorkFlow viewport 持久化 / 跨 session 搜索 (SQLite FTS5)
@@ -119,7 +118,15 @@ npm run build
 ## 历史更新
 
 - **2026-05-01** 项目立项 + v0.0 scaffold 完成 + 5 篇文档初版（`4884d0e`）
-- **2026-05-03 v0.6 ship（commits `01c3bcf` → `cfe9026`，7 个 milestone）** —— Data Model Unification 落地：
+- **2026-05-03 v0.6 第一次尝试 revert（commit `f9f6f03`）** —— 7-milestone 实施完后作者审视架构方向，指出本意被误读：
+  - 作者原话："之前我说的打通 ChatFlow 和 WorkFlow，不是说取消嵌套。表层 ChatFlow 仍然要保持原样，只是内部 WorkFlow 可以支持 ChatFlow 的特性，WorkNode 也能和 ChatNode 互通。"
+  - 误读路径：协调 agent 把"取消 WorkNode 和 ChatNode 的划分、统一为 Node"理解为 type + visual 双层都压平，提了 default-fold 模型作为视觉密度补偿。新 agent 实施了 single Canvas + flat Node tree。两个可见回归暴露错误：(1) Hover ribbon overlay 在新 Canvas 里没搬过来 (2) ChatNode 的 inner llm_call/tool_call 在 unified flat tree 下作为 ChatFlow 顶层 sibling 暴露（用户看到 bacd662d 后面"连接的 3 个节点"——本应在它的 WorkFlow drill 里）
+  - revert 范围：M3 (layoutNodes) / M4 (NodeCard) / M5 (single Canvas + App.tsx 改) / M6 (DrillPanel 改读 nodeTree) / M7 (doc banner) 全部 revert；保留 M1 (Node 类型) + M2 (store dual-write nodeTree) 作 latent 数据层基础
+  - 测试 324 → 280（删掉 44 个针对 reverted 路径的测试）；typecheck / build 全绿
+  - **v0.6 redo 方向（下一版）**：用 M1-M2 的 Node 类型作为 ChatNode/WorkNode **共享 base**；视觉层维持 ChatFlowCanvas/WorkFlowCanvas dual-canvas drill 不变；delegate WorkNode 可 drill 进 **sub-ChatFlow**（解决 sub-agent multi-ChatNode 27% 信息丢失，不再塌缩 chatNodes[0]）；WorkNode 加 TokenBar + NodeIdLine（跟 ChatNode 互通）
+  - **保留作为参考**：v0.6 第一版的 5 个实测发现（默认折叠语义混淆 / cross-bucket linking 让 focus 拖全图 / parser linkTurnRoots O(N²) → terminalAssistantByPromptId Map 修复 / legacy 4233 dup ID Map.set dedup 自动修复 / Playwright dispatchEvent dblclick 不触发 RF 12）—— 这些 finding 仍然有效，redo 时受益。Selection 4× 加速是 flat tree 默认 fold 让可见节点变少的副产物，redo 后回到原 dual-canvas 视觉密度，加速消失（但 v0.4 fix 的 78.9ms 仍在）
+  - 第一版 commit 链作历史保留：`01c3bcf` M1 / `e28b28f` M2 / `6c198d1` M3 / `4b7c364` M4 / `ff259f3` M5 / `4558fff` M6 / `cfe9026` M7
+- **2026-05-03 v0.6 第一次 ship（commits `01c3bcf` → `cfe9026`，7 个 milestone）** —— 后被 revert 见上条。Data Model Unification 落地（误读版）：
   - 4 个设计抉择拍板：1A 保留 v0.5 视觉密度（每 turn 一聚合卡内部 fold）/ 2B 保留 focus 模式 + 右键菜单触发（作者修订 alt+click → 右键）/ 3A 单一 selectedNodeId + useIsNodeSelected / 4C 按 milestone 串行 migration
   - 取消 ChatFlow/WorkFlow 二分，统一递归 Node 树（NodeKind: user_message / assistant_call / tool_call / delegate / compact / attachment）+ `defaultFolded` 字段（语义："my children hidden by default"，不是"我自己 hidden"）
   - 7 个 milestone：M1 数据类型 + 解析器 / M2 store / M3 layoutNodes 合并 / M4 单一 NodeCard / M5 单 Canvas + focus mode / M6 DrillPanel 适配 / M7 ship + doc banner。每个独立 commit 可单独 revert
