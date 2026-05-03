@@ -22,6 +22,7 @@ import {
   type ChatNodeRFNode,
 } from "@/canvas/layoutDag";
 import { copyToClipboardWithFallback } from "@/lib/clipboard";
+import { useStore } from "@/store/index";
 
 export function ChatNodeCard({ data, selected }: NodeProps<ChatNodeRFNode>) {
   const cn = data.chatNode;
@@ -141,22 +142,11 @@ export function ChatNodeCard({ data, selected }: NodeProps<ChatNodeRFNode>) {
 
       {/* Enter-WorkFlow drill button — always visible (Agentloom convention).
           Compact ChatNodes don't have inner WorkFlow (already summarized),
-          so the button is hidden for them. v0.2 stub; v0.3 wires real
-          drill action. */}
-      {!compact && (
-        <button
-          type="button"
-          className="mt-1 flex w-full items-center justify-center gap-1 rounded border border-gray-200 bg-gray-50 px-2 py-1 text-[10px] text-gray-600 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 transition-colors"
-          onClick={(e) => {
-            e.stopPropagation();
-            // TODO v0.3: useStore.getState().drillIntoWorkflow(cn.id)
-            console.debug("[v0.3 stub] drill into WorkFlow:", cn.id);
-          }}
-          data-testid={`enter-workflow-${cn.id}`}
-        >
-          <span>⤢</span>
-          <span>进入工作流</span>
-        </button>
+          so the button is hidden for them. We also hide for ChatNodes
+          with empty WorkFlow (slash-command paths handled separately
+          above; this catches edge cases like compact-summary-only). */}
+      {!compact && cn.workflow.nodes.length > 0 && (
+        <DrillButton chatNodeId={cn.id} />
       )}
 
       {/* Token bar */}
@@ -318,6 +308,31 @@ function NodeIdLine({ nodeId }: { nodeId: string }) {
     <div onClick={onClick} className={className} title={title} data-testid={`node-id-${nodeId}`}>
       {display}
     </div>
+  );
+}
+
+// Drill-down button — pushes a ``chatnode`` frame onto the session's
+// drillStack, switching the main viewport to WorkFlowCanvas. Pulled out
+// as its own component so the store subscription is tied to the button
+// and doesn't re-render the whole ChatNodeCard when ``activeSessionId``
+// changes for unrelated reasons.
+function DrillButton({ chatNodeId }: { chatNodeId: string }) {
+  const enter = useStore((s) => s.enterWorkflow);
+  const activeId = useStore((s) => s.activeSessionId);
+  return (
+    <button
+      type="button"
+      className="mt-1 flex w-full items-center justify-center gap-1 rounded border border-gray-200 bg-gray-50 px-2 py-1 text-[10px] text-gray-600 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 transition-colors"
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!activeId) return;
+        enter(activeId, chatNodeId);
+      }}
+      data-testid={`enter-workflow-${chatNodeId}`}
+    >
+      <span>⤢</span>
+      <span>进入工作流</span>
+    </button>
   );
 }
 

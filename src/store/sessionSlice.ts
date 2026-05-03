@@ -11,6 +11,8 @@ function blankSessionState(): SessionState {
     foldedNodeIds: new Set<string>(),
     viewport: EMPTY_VIEWPORT,
     selectedNodeId: null,
+    workflowSelectedNodeId: null,
+    drillStack: [],
     isLoading: false,
     error: null,
     lastUpdated: 0,
@@ -89,6 +91,60 @@ export const createSessionSlice: StateCreator<LoomscopeStore, [], [], SessionSli
     const updated = new Map(get().sessions);
     const cur = updated.get(sessionId) ?? blankSessionState();
     updated.set(sessionId, { ...cur, viewport: vp });
+    set({ sessions: updated });
+  },
+
+  // ── Drill-down navigation (v0.3) ────────────────────────────────────
+  // Push a ChatNode frame and reset workflow-layer selection so the
+  // drill view opens "fresh". Idempotent on the same chatNodeId.
+  enterWorkflow: (sessionId, chatNodeId) => {
+    const updated = new Map(get().sessions);
+    const cur = updated.get(sessionId) ?? blankSessionState();
+    const top = cur.drillStack[0];
+    if (top && top.kind === "chatnode" && top.chatNodeId === chatNodeId) return;
+    updated.set(sessionId, {
+      ...cur,
+      drillStack: [{ kind: "chatnode", chatNodeId }],
+      workflowSelectedNodeId: null,
+    });
+    set({ sessions: updated });
+  },
+
+  // Pop everything — back to ChatFlow view. Also clears workflow-layer
+  // selection so a future drill into a different ChatNode doesn't
+  // accidentally read a stale id.
+  exitWorkflow: (sessionId) => {
+    const updated = new Map(get().sessions);
+    const cur = updated.get(sessionId) ?? blankSessionState();
+    if (cur.drillStack.length === 0 && cur.workflowSelectedNodeId === null) return;
+    updated.set(sessionId, {
+      ...cur,
+      drillStack: [],
+      workflowSelectedNodeId: null,
+    });
+    set({ sessions: updated });
+  },
+
+  // Cut the stack to the first ``depth`` frames. ``depth=0`` is
+  // equivalent to ``exitWorkflow``. Used by the breadcrumb to jump
+  // back N levels in v0.5+ when nested drill stacks exist; v0.3 only
+  // reaches depth=1 in practice.
+  truncateDrillStack: (sessionId, depth) => {
+    const updated = new Map(get().sessions);
+    const cur = updated.get(sessionId) ?? blankSessionState();
+    if (cur.drillStack.length <= depth) return;
+    updated.set(sessionId, {
+      ...cur,
+      drillStack: cur.drillStack.slice(0, Math.max(0, depth)),
+      workflowSelectedNodeId: depth === 0 ? null : cur.workflowSelectedNodeId,
+    });
+    set({ sessions: updated });
+  },
+
+  setWorkflowSelected: (sessionId, nodeId) => {
+    const updated = new Map(get().sessions);
+    const cur = updated.get(sessionId) ?? blankSessionState();
+    updated.set(sessionId, { ...cur, workflowSelectedNodeId: nodeId });
     set({ sessions: updated });
   },
 });
