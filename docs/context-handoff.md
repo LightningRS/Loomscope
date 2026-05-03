@@ -24,11 +24,11 @@
 - **v0.1 数据解析层**（commit `ea61a98`）：`src/data/` + `src/parse/` 共 ~1900 行（含 454 行测试）；39/39 unit tests；256MB session 实测 2.19s 解析 / 0 失败。
 - **v0.2 minimal canvas**（commit `342357f`）：Hono backend (`src/server/`) + Zustand 4-slice (`src/store/`) + Canvas (`src/canvas/` React Flow + dagre LR) + UI (`src/components/` Sidebar + Header) + dev wiring（vite 5175 proxy → hono 5174）。99/99 tests，256MB 端到端 3.37s。
 - **v0.3 inner WorkFlow**（commit `cba8518` + `4d48232`）：drill-down 替换主视图（选项 C），5 类 WorkNode chrome + SpawnEdge 空心三角 + drillStack store 切面。150/150 tests，256MB drill 进 413-WorkNode 的 ChatNode 实测 60.9 FPS。
+- **v0.4 drill panel**（commit `36f02b7`）：右侧 resizable sidebar + 5 类 WorkNode detail + chunked tool-result lazy-load (`?start=` byte offset + 滚动加载) + MarkdownView (Agentloom 同款) + JsonView + DiffView (零 lib，自动检测 structuredPatch)。195/195 tests；256MB selection round-trip 458ms avg（瓶颈在 1500-ChatNode 全图 reconcile，留 v0.9 polish）。
 
-## 还没做的部分（v0.4 起）
-- v0.4 drill panel（右侧详情）—— `workflowSelectedNodeId` 已铺好
-- v0.5 sub-agent 双态（折叠 rich card + 展开真嵌套子 ChatFlow）—— drillStack 已支持 subworkflow 帧
-- v0.6 compact ChatNode 视觉 + file-history-snapshot 时间窗绑定 + logical 弱边
+## 还没做的部分（v0.5 起）
+- v0.5 sub-agent 双态（折叠 rich card + 展开真嵌套子 ChatFlow）—— drillStack 已支持 subworkflow 帧；DelegateDetail 已留提示文案
+- v0.6 compact ChatNode 视觉 + file-history-snapshot 时间窗绑定 + logical 弱边 —— CompactDetail 已留提示文案
 - v0.7 fork 浏览（`forkedFrom` + `custom-title` parser / server merge / ConversationView + branchMemory / canvas fork badge）
 - v0.8 file-tail 实时增量
 - v0.9 性能优化 / WorkFlow viewport 持久化 / 跨 session 搜索 (SQLite FTS5)
@@ -115,6 +115,16 @@ npm run build
 ## 历史更新
 
 - **2026-05-01** 项目立项 + v0.0 scaffold 完成 + 5 篇文档初版（`4884d0e`）
+- **2026-05-02 v0.4 ship（commit `36f02b7`）** —— drill panel 落地：
+  - 设计抉择拍板：1A 右侧 resizable sidebar / 2 跟随 viewMode + 面包屑 / 3 chunked GET + `?start=` byte offset + 滚动加载（不是初版 handoff 写的"截断 + Load full 按钮"）
+  - 新组件：`MarkdownView`（抄 Agentloom，remark-gfm + rehype-raw + rehype-sanitize）/ `JsonView`（collapsible + 长串 fold）/ `DiffView`（自动检测 `toolUseResult.structuredPatch`，零 diff lib）/ `DrillPanel` + `ChatNodeDetail` + `WorkNodeDetail`（5 类 kind 分支）/ `useToolResultChunks` 滚动钩子
+  - Backend：`GET /api/sessions/:id/tool-results/:refId` chunked + `?start=` + 双重路径穿越防护
+  - Bonus：Bash 工具 input 当 code block；Edit/MultiEdit/Write 走 DiffView
+  - 195/195 tests；bundle 410KB → 755KB（markdown 全家桶约 +330KB，预期内）
+  - **重要发现 1**：256MB selection round-trip avg 458ms 超 200ms 心理门槛。瓶颈不在 panel 而在 v0.3 的 `decoratedNodes = nodes.map(...)` 给 1500 ChatNode 重 prop 注入 → 整图 reconcile。修法是迁到 RF 内置 selection state，留 v0.9
+  - **重要发现 2**：CC v2.1.104+ tool-result overflow 主流走 `<persisted-output>` 字符串 marker（不是 `design-data-model.md` 原写的 `ContentReplacementRecord` 对象）。Loomscope 双格式都吃，doc 已同步更新
+  - 留给后续：v0.5 sub-agent 嵌套（DelegateDetail 占位已有）/ v0.6 compact rich chrome（CompactDetail 占位已有）/ AttachmentCard subtype 富化 / v0.9 selection 性能 + syntax highlight + code-split + audit fix
+  - 交付参考 `handoff-v0.4-drill-panel.md`
 - **2026-05-02 v0.3 ship（commit `cba8518` + `4d48232`）** —— inner WorkFlow drill-down 落地：
   - 选项 C（drill-down 替换主视图）over B（单一大 flow + culling）—— 256MB session 全展开 ~60K WorkNode 可怕，drill 把单 React Flow 实例锁在每 ChatNode 几百节点
   - `WorkFlowCanvas.tsx` + 5 类 WorkNode chrome（llm_call / tool_call / delegate / compact / attachment 折叠态）

@@ -465,11 +465,45 @@ type AgentMetadata = {
 
 ### `tool-results/<id>.txt` —— 大型 tool_result 溢出
 
-- 路径：`<projectDir>/<sessionId>/tool-results/<contentReplacementId>.txt`
+- 路径：`<projectDir>/<sessionId>/tool-results/<refId>.txt`
 - 触发条件：单条 tool_result 的 content 超过阈值时（实测最大 ~1.6 MB）
-- 主 jsonl 里那条 tool_result 的 content 字段被一个引用 id 替代（源码 `ContentReplacementRecord` 类型）
 - 实测 256MB session 旁边有 43 个 .txt（大多是 webfetch PDF / 长 Read 结果）
-- v0 必须支持 lazy 加载——drill 到该 tool_call 时才读 .txt
+- v0 必须支持 lazy 加载——drill 到该 tool_call 时才读 .txt（v0.4 落地，chunked GET + `?start=` byte offset）
+
+#### 主 jsonl 里"指针"的两种形态（v0.4 实测纠正）
+
+源码 `~/claude-code-source-code/src/types/logs.ts` 的 `ContentReplacementRecord` 给的是结构对象形式，实际写盘有两种：
+
+**A. ContentReplacementRecord 对象形式（源码声明的）**：
+
+```jsonc
+"content": [
+  // ... 其它 content blocks ...
+  {
+    "type": "content_replacement",
+    "refId": "b0h2c79j6"
+  }
+]
+```
+
+或单一对象作为 tool_result.content：`{ "type": "content_replacement", "refId": "..." }`。
+
+**B. `<persisted-output>` 字符串标记（CC v2.1.104+ 主流）**：
+
+tool_result.content 是字符串，内嵌：
+
+```
+<persisted-output>
+Output too large (144.2KB). Full output saved to: /home/u/.claude/projects/-x/sid/tool-results/b0h2c79j6.txt
+
+Preview:
+<preview text>
+</persisted-output>
+```
+
+`refId` 不显式列字段，要从绝对路径 basename `tool-results/(refId).txt` 正则提取。256MB session 实测全部走这种格式（拉到 39893 byte 文件耗时 12ms）。
+
+Loomscope 的 `extractOverflowRefId`（`src/components/drill/WorkNodeDetail.tsx`）双格式都吃：先扫 `<persisted-output>` 字符串 marker（modern path），fallback 到 `ContentReplacementRecord` 对象（旧 / 假设性 CC 版本）。content 是数组时两种都查。
 
 ### `remote-agents/remote-agent-<taskId>.meta.json` —— cron / RemoteTrigger
 
@@ -821,7 +855,7 @@ v0.7 是浏览侧（merged ChatFlow + ConversationView + branchMemory）；v∞.
    - 错误记录的 parentUuid 和后续成功记录的 parentUuid 关系是什么？
 3. ~~**多个 user `parentUuid=null` 出现时**~~ — v0.1 实测关闭：256MB session 只有 1 条 mid-session multi-root（即首条 user）。处理策略：不特殊化，多 root 自然成为兄弟 ChatNode（`parentChatNodeId=null`），按 timestamp 排序。详见上方"v0.1 实测确认的解析规范"小节。
 4. **attachment 的 UI 表现**：图片要不要预览？文件附件要不要 link 到本地路径？
-5. ~~**content 中的非常大字段**~~ — 实测确认 Claude Code 自己已经做了 lazy 化：超阈值的 tool_result content 写到 `tool-results/<id>.txt`，主 jsonl 只剩引用（`ContentReplacementRecord`）。Loomscope 跟着这套机制走即可。
+5. ~~**content 中的非常大字段**~~ — 实测确认 Claude Code 自己已经做了 lazy 化：超阈值的 tool_result content 写到 `tool-results/<id>.txt`。**指针有两种形态**（v0.4 实测发现）：源码 `ContentReplacementRecord` 对象形式 + CC v2.1.104+ 的 `<persisted-output>` 字符串 marker。Loomscope 双格式都吃，详见上方"`tool-results/<id>.txt` —— 大型 tool_result 溢出"小节。
 
 ## 跨文档引用
 
