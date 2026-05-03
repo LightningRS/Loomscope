@@ -2,7 +2,7 @@
 
 > 本文是 Loomscope 解析层的事实依据。开发 `src/parse/` / `src/data/` 时必读。所有"我们采纳什么 / 跳过什么"的决定都在这里。
 >
-> ⚠ **v0.6 即将重写**：v0.5 sub-agent 真嵌套实测暴露架构缺陷——Loomscope 沿用 Agentloom 的 ChatFlow / WorkFlow 二分硬套到 CC 的扁平 record tree 上（CC 自己的 jsonl 就是 unified parentUuid 树，二分是 Loomscope 解析时硬塞的）。v0.6 取消二分、统一为递归 Node 树 + 默认折叠规则。本文当前内容**保留作为 v0.5 时代的事实依据**，v0.6 ship 时会重写本文。计划详 `plan.md` v0.6 节。
+> ⚠ **v0.6 已 ship**（commits `01c3bcf` M1 → `4558fff` M6 → M7 ship 见 `plan.md`）：unified `Node` 树取代了 `ChatFlow → ChatNode → WorkFlow → WorkNode`。新 source of truth 在 `src/data/types.ts` 的 `Node` / `NodeTree` 类型 + `src/parse/nodeTree.ts` 解析器。本文以下内容**完整保留 v0.5 时代的解析事实依据**——这些事实（promptId 分组规则、tool_result 反向匹配、sub-agent jsonl 结构、`<persisted-output>` overflow 形态、auto-compact agent 命名等）在 v0.6 新模型下**完全适用**，只是落地到 `Node.kind` + `Node.parentId` 而不是 ChatNode/WorkNode 二分。本文待重写章节清单见 v0.6 ship 报告（context-handoff.md 历史更新区）。
 
 ## 数据源
 
