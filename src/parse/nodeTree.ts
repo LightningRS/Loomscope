@@ -545,13 +545,8 @@ function buildTurnNodes(
       ? fileHistorySnapshotUuids
       : undefined,
     permissionModeChanges: permissionModeChanges.length ? permissionModeChanges : undefined,
-    // Per抉择 1 选项 A: every Node defaults to ``children hidden``.
-    // The turn root's CARD is always visible (carve-out in
-    // ``layoutNodes``), but its children — assistant_call /
-    // tool_call / delegate / attachment — only show on explicit
-    // expand. ``defaultFolded`` is about children visibility, not
-    // about whether this node's own card renders.
-    defaultFolded: true,
+    // Compact / user_message default unfolded; aggregate filled later.
+    defaultFolded: false,
     isTurnRoot: true,
   };
 
@@ -663,7 +658,7 @@ function buildTurnNodes(
       preCompactDiscoveredTools: meta?.preCompactDiscoveredTools,
       summaryText:
         typeof r.message?.content === "string" ? r.message.content : "",
-      defaultFolded: true,
+      defaultFolded: false,
     });
   }
 

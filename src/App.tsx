@@ -1,16 +1,18 @@
-// v0.6 M5: single ``<Canvas>`` replaces the v0.3-v0.5 ChatFlow /
-// WorkFlow view branching. Sub-agent drilling stays (drillStack
-// continues to govern which NodeTree the canvas resolves) and adds
-// orthogonal focus mode (right-click → Focus on subtree) per抉择 2.
-//
-// Legacy Chat/WorkFlowCanvas are still in src/canvas/ (deleted in M7);
-// nothing in App.tsx references them anymore.
+// v0.2 layout: header above, sidebar left, canvas filling remaining area.
+// v0.3: drill-down WorkFlow view replaces the main viewport when
+// ``drillStack`` is non-empty. The chosen drill model (option C) means
+// only one canvas type renders at a time — picked by ``viewMode``.
+// Breadcrumb pinned top-left when in WorkFlow view to navigate back.
+// v0.5: drillStack can hold mixed chatnode + subworkflow frames; the
+// breadcrumb walks all of them, and the canvas resolves the active
+// ChatNode through the cached sub-agent ChatFlows.
 //
 // Visual chrome per `design-visual-language.md` 视觉 token 章节.
 
 import { useEffect, useMemo } from "react";
 
-import { Canvas } from "@/canvas/Canvas";
+import { ChatFlowCanvas } from "@/canvas/ChatFlowCanvas";
+import { WorkFlowCanvas } from "@/canvas/WorkFlowCanvas";
 import { DrillPanel } from "@/components/drill/DrillPanel";
 import { Header } from "@/components/Header";
 import { Sidebar } from "@/components/Sidebar";
@@ -30,15 +32,20 @@ export default function App() {
     }
   }, [activeId, session]);
 
-  // M6 still consumes ChatNode/WorkNode types from DrillPanel; keep
-  // the legacy resolver running so the right-side panel works during
-  // the M5→M6 transition. M6 swaps DrillPanel to read from nodeTree
-  // and this becomes a pure breadcrumb data source.
-  const drillView = useMemo(() => {
-    if (!session || !activeId) return null;
-    return resolveDrilledChatNode(session);
+  // Resolve which view to show. Sub-agent drill frames pull the
+  // current ChatNode out of the cache, so the resolver returns null
+  // (= ChatFlow view) until the cache fills.
+  const view = useMemo(() => {
+    if (!session || !activeId) return { mode: "chatflow" as const };
+    const resolved = resolveDrilledChatNode(session);
+    if (!resolved) return { mode: "chatflow" as const };
+    return {
+      mode: "workflow" as const,
+      chatNode: resolved.chatNode,
+      frameLabels: resolved.frameLabels,
+      multiChatNodeNotice: resolved.multiChatNodeNotice,
+    };
   }, [session, activeId]);
-  const focusedSubtreeRootId = session?.focusedSubtreeRootId ?? null;
 
   return (
     <div className="h-screen w-screen flex flex-col bg-gray-50 text-gray-900">
@@ -49,36 +56,41 @@ export default function App() {
           {!activeId && <EmptyState />}
           {activeId && session?.isLoading && <LoadingState />}
           {activeId && session?.error && <ErrorState message={session.error} />}
-          {activeId && session?.nodeTree && (
+          {activeId && session?.chatFlow && view.mode === "chatflow" && (
+            <ChatFlowCanvas chatFlow={session.chatFlow} sessionId={activeId} />
+          )}
+          {activeId && session?.chatFlow && view.mode === "workflow" && (
             <>
-              <Canvas sessionId={activeId} />
-              {(drillView?.frameLabels?.length ?? 0) > 0 || focusedSubtreeRootId ? (
-                <UnifiedBreadcrumb
-                  sessionId={activeId}
-                  drillFrames={drillView?.frameLabels ?? []}
-                  focusedSubtreeRootId={focusedSubtreeRootId}
-                />
-              ) : null}
+              <WorkFlowCanvas
+                chatNode={view.chatNode}
+                sessionId={activeId}
+                multiChatNodeNotice={view.multiChatNodeNotice}
+              />
+              <DrillBreadcrumb sessionId={activeId} frames={view.frameLabels} />
             </>
           )}
         </main>
-        {activeId && session?.nodeTree && <DrillPanel sessionId={activeId} />}
+        {activeId && session?.chatFlow && (
+          <DrillPanel
+            sessionId={activeId}
+            chatFlow={session.chatFlow}
+            viewMode={view.mode}
+            drilledChatNode={view.mode === "workflow" ? view.chatNode : null}
+          />
+        )}
       </div>
     </div>
   );
 }
 
-function UnifiedBreadcrumb({
+function DrillBreadcrumb({
   sessionId,
-  drillFrames,
-  focusedSubtreeRootId,
+  frames,
 }: {
   sessionId: string;
-  drillFrames: DrillBreadcrumbItem[];
-  focusedSubtreeRootId: string | null;
+  frames: DrillBreadcrumbItem[];
 }) {
   const exitWorkflow = useStore((s) => s.exitWorkflow);
-  const exitFocus = useStore((s) => s.exitFocus);
   const truncate = useStore((s) => s.truncateDrillStack);
   return (
     <nav
@@ -87,17 +99,14 @@ function UnifiedBreadcrumb({
     >
       <button
         type="button"
-        onClick={() => {
-          exitWorkflow(sessionId);
-          exitFocus(sessionId);
-        }}
+        onClick={() => exitWorkflow(sessionId)}
         data-testid="exit-workflow"
         className="hover:text-blue-600 hover:underline transition-colors"
       >
-        ← Top
+        ← ChatFlow
       </button>
-      {drillFrames.map((frame, i) => {
-        const isLast = i === drillFrames.length - 1 && !focusedSubtreeRootId;
+      {frames.map((frame, i) => {
+        const isLast = i === frames.length - 1;
         const truncateTo = i + 1;
         return (
           <span key={i} className="flex items-center gap-1">
@@ -130,27 +139,6 @@ function UnifiedBreadcrumb({
           </span>
         );
       })}
-      {focusedSubtreeRootId && (
-        <span className="flex items-center gap-1">
-          <span className="text-gray-400">/</span>
-          <span
-            className="font-mono text-[11px] text-blue-700 font-semibold"
-            title={`Focused on subtree ${focusedSubtreeRootId}`}
-            data-testid="focus-breadcrumb"
-          >
-            🎯 focus ({focusedSubtreeRootId.slice(0, 8)})
-          </span>
-          <button
-            type="button"
-            onClick={() => exitFocus(sessionId)}
-            className="ml-1 text-[10px] text-gray-500 hover:text-blue-600 hover:underline"
-            data-testid="exit-focus"
-            title="Exit focus mode (ESC also works)"
-          >
-            ✕
-          </button>
-        </span>
-      )}
     </nav>
   );
 }
