@@ -23,9 +23,17 @@ import {
 } from "@/canvas/layoutDag";
 import { copyToClipboardWithFallback } from "@/lib/clipboard";
 import { useStore } from "@/store/index";
+import { useIsChatNodeSelected } from "@/store/selectionHooks";
 
-export function ChatNodeCard({ data, selected }: NodeProps<ChatNodeRFNode>) {
+export function ChatNodeCard({ id, data }: NodeProps<ChatNodeRFNode>) {
   const cn = data.chatNode;
+  // Selection now subscribes per-card from the store rather than
+  // arriving via NodeProps. The canvas wrapper used to recompute
+  // `decoratedNodes = nodes.map(...)` on every selection change, which
+  // re-allocated all 1500 cards' object identities and forced React
+  // Flow to reconcile the entire graph. Subscribing per-card means
+  // 1498 cards see `false → false` and skip re-render.
+  const selected = useIsChatNodeSelected(id);
   const compact = data.isCompactSummary;
   const triggerSchedule = cn.trigger === "scheduled";
   const slash = data.slashCommand;
@@ -41,7 +49,7 @@ export function ChatNodeCard({ data, selected }: NodeProps<ChatNodeRFNode>) {
       <SlashCommandCard
         cn={cn}
         slash={slash}
-        selected={selected ?? false}
+        selected={selected}
         hasIncoming={data.hasIncomingEdge}
         hasOutgoing={data.hasOutgoingEdge}
       />

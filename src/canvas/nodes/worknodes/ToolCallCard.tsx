@@ -14,18 +14,20 @@ import {
   previewToolResult,
   type ToolCallRFNode,
 } from "@/canvas/layoutWorkflow";
+import { useIsWorkNodeSelected } from "@/store/selectionHooks";
 import { handleStyle, workNodeChromeClass } from "./cardChrome";
 
-export function ToolCallCard({ data, selected }: NodeProps<ToolCallRFNode>) {
+export function ToolCallCard({ id, data }: NodeProps<ToolCallRFNode>) {
   const n = data.workNode;
   const inputLines = previewToolInput(n);
   const resultPreview = previewToolResult(n);
   const failed = n.isError === true;
   const accent = failed ? "rose" : "amber";
+  const selected = useIsWorkNodeSelected(id);
 
   return (
     <div
-      className={workNodeChromeClass(accent, selected ?? false)}
+      className={workNodeChromeClass(accent, selected)}
       style={{ width: WF_NODE_SIZE.tool_call.width }}
       data-testid={`worknode-tool_call-${n.id}`}
       data-worknode-kind="tool_call"

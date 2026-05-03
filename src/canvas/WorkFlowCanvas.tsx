@@ -71,9 +71,6 @@ export function WorkFlowCanvas(props: WorkFlowCanvasProps) {
 function CanvasInner({ chatNode, sessionId }: WorkFlowCanvasProps) {
   const { nodes, edges } = useMemo(() => layoutWorkFlow(chatNode), [chatNode]);
   const setSelected = useStore((s) => s.setWorkflowSelected);
-  const selectedNodeId = useStore(
-    (s) => s.sessions.get(sessionId)?.workflowSelectedNodeId ?? null,
-  );
 
   const onNodeClick = useCallback(
     (_e: unknown, node: { id: string }) => {
@@ -82,10 +79,9 @@ function CanvasInner({ chatNode, sessionId }: WorkFlowCanvasProps) {
     [setSelected, sessionId],
   );
 
-  const decoratedNodes = useMemo(
-    () => nodes.map((n) => ({ ...n, selected: n.id === selectedNodeId })),
-    [nodes, selectedNodeId],
-  );
+  // No `decoratedNodes` indirection: each WorkNode card subscribes to
+  // its own selected boolean via `useIsWorkNodeSelected(id)`. See the
+  // ChatFlowCanvas counterpart for the perf rationale.
 
   // Edges carry their own markers via the per-kind components
   // (ContinuationEdge → `arrow-continuation` filled, SpawnEdge →
@@ -135,7 +131,7 @@ function CanvasInner({ chatNode, sessionId }: WorkFlowCanvasProps) {
   return (
     <ReactFlow
       data-testid="workflow-canvas"
-      nodes={decoratedNodes}
+      nodes={nodes}
       edges={decoratedEdges}
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}

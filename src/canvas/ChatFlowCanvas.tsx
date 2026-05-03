@@ -144,10 +144,6 @@ interface CanvasInnerProps extends ChatFlowCanvasProps {
 function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasInnerProps) {
   const { nodes, edges } = useMemo(() => layoutChatFlow(chatFlow), [chatFlow]);
   const setSelected = useStore((s) => s.setSelected);
-  const selectedNodeId = useStore(
-    (s) => s.sessions.get(sessionId)?.selectedNodeId ?? null,
-  );
-
   const onNodeClick = useCallback(
     (_e: unknown, node: { id: string }) => {
       setSelected(sessionId, node.id);
@@ -155,11 +151,11 @@ function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasIn
     [setSelected, sessionId],
   );
 
-  // Drive selected via the `selected` flag passed to node renderers.
-  const decoratedNodes = useMemo(
-    () => nodes.map((n) => ({ ...n, selected: n.id === selectedNodeId })),
-    [nodes, selectedNodeId],
-  );
+  // No `decoratedNodes` indirection: ChatNodeCard subscribes to its own
+  // selected boolean via `useIsChatNodeSelected(id)`. Wrapping nodes with
+  // a fresh `{ ...n, selected: ... }` per click meant React Flow saw
+  // 1500 new identities and reconciled the whole graph (458 ms on 256MB
+  // session in v0.4). Per-card subscription cuts that to 2 re-renders.
 
   const rf = useReactFlow();
   // We need to know when xyflow has actually measured the latest card
@@ -210,7 +206,7 @@ function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasIn
 
   return (
     <ReactFlow
-      nodes={decoratedNodes}
+      nodes={nodes}
       edges={edges}
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}

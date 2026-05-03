@@ -1,6 +1,6 @@
 // Smoke render tests for each WorkNode card. Cards are React Flow node
 // components — their NodeProps shape demands a Node-shaped object, but
-// since the cards only read ``data`` and ``selected`` we feed minimal
+// since the cards only read ``id`` + ``data`` (selected now subscribes
 // mock props rather than going through ReactFlow's node lifecycle.
 //
 // Goal: verify the per-kind chrome renders the data the visual spec
@@ -27,9 +27,11 @@ function withRF(node: ReactNode) {
   return <ReactFlowProvider>{node}</ReactFlowProvider>;
 }
 
-// Minimal NodeProps shim — the cards only access data + selected, but
-// React Flow's type demands the full prop set. Cast at the call site
-// is contained here so each test stays readable.
+// Minimal NodeProps shim — the cards only access id + data (selection
+// reads from the store via useIsWorkNodeSelected, default false here
+// since no activeSessionId is set), but React Flow's type demands the
+// full prop set. Cast at the call site is contained here so each test
+// stays readable.
 function nodeProps<D extends Record<string, unknown>>(
   type: string,
   id: string,

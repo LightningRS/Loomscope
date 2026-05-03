@@ -12,18 +12,20 @@ import {
   type DelegateRFNode,
 } from "@/canvas/layoutWorkflow";
 import type { DelegateNode } from "@/data/types";
+import { useIsWorkNodeSelected } from "@/store/selectionHooks";
 import { handleStyle, workNodeChromeClass } from "./cardChrome";
 
-export function DelegateCard({ data, selected }: NodeProps<DelegateRFNode>) {
+export function DelegateCard({ id, data }: NodeProps<DelegateRFNode>) {
   const n = data.workNode;
   const failed = n.status === "failed" || n.isError === true;
   const accent = failed ? "rose" : "purple";
   const contentPreview = delegateContentPreview(n);
   const desc = (n.description ?? "").trim();
+  const selected = useIsWorkNodeSelected(id);
 
   return (
     <div
-      className={workNodeChromeClass(accent, selected ?? false)}
+      className={workNodeChromeClass(accent, selected)}
       style={{ width: WF_NODE_SIZE.delegate.width }}
       data-testid={`worknode-delegate-${n.id}`}
       data-worknode-kind="delegate"

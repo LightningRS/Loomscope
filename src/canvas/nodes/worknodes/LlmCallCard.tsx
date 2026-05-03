@@ -12,18 +12,20 @@ import {
   previewLlmCallText,
   type LlmCallRFNode,
 } from "@/canvas/layoutWorkflow";
+import { useIsWorkNodeSelected } from "@/store/selectionHooks";
 import { handleStyle, workNodeChromeClass } from "./cardChrome";
 
-export function LlmCallCard({ data, selected }: NodeProps<LlmCallRFNode>) {
+export function LlmCallCard({ id, data }: NodeProps<LlmCallRFNode>) {
   const n = data.workNode;
   const text = previewLlmCallText(n);
   const thinkingLines = llmCallThinkingLines(n);
   const isError = (n.errors?.length ?? 0) > 0;
   const accent = isError ? "rose" : "blue";
+  const selected = useIsWorkNodeSelected(id);
 
   return (
     <div
-      className={workNodeChromeClass(accent, selected ?? false)}
+      className={workNodeChromeClass(accent, selected)}
       style={{ width: WF_NODE_SIZE.llm_call.width }}
       data-testid={`worknode-llm_call-${n.id}`}
       data-worknode-kind="llm_call"

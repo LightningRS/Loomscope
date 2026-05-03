@@ -16,6 +16,7 @@ import {
   attachmentLabel,
   type AttachmentRFNode,
 } from "@/canvas/layoutWorkflow";
+import { useIsWorkNodeSelected } from "@/store/selectionHooks";
 import { handleStyle, workNodeChromeClass } from "./cardChrome";
 
 const ICON_BY_KIND: Record<string, string> = {
@@ -27,7 +28,7 @@ const ICON_BY_KIND: Record<string, string> = {
   skill_listing: "📋",
 };
 
-export function AttachmentCard({ data, selected }: NodeProps<AttachmentRFNode>) {
+export function AttachmentCard({ id, data }: NodeProps<AttachmentRFNode>) {
   const n = data.workNode;
   const icon = ICON_BY_KIND[n.attachmentType] ?? "📎";
   const label = attachmentLabel(n);
@@ -35,10 +36,11 @@ export function AttachmentCard({ data, selected }: NodeProps<AttachmentRFNode>) 
   // mark these explicitly because the original content is no longer in
   // the jsonl.
   const isCompacted = n.attachmentType === "compact_file_reference";
+  const selected = useIsWorkNodeSelected(id);
 
   return (
     <div
-      className={workNodeChromeClass("gray", selected ?? false)}
+      className={workNodeChromeClass("gray", selected)}
       style={{ width: WF_NODE_SIZE.attachment.width }}
       data-testid={`worknode-attachment-${n.id}`}
       data-worknode-kind="attachment"

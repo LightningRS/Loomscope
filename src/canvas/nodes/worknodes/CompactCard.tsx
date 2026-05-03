@@ -17,20 +17,22 @@ import {
   compactSummaryPreview,
   type CompactRFNode,
 } from "@/canvas/layoutWorkflow";
+import { useIsWorkNodeSelected } from "@/store/selectionHooks";
 import { handleStyle, workNodeChromeClass } from "./cardChrome";
 
-export function CompactCard({ data, selected }: NodeProps<CompactRFNode>) {
+export function CompactCard({ id, data }: NodeProps<CompactRFNode>) {
   const n = data.workNode;
   const trigger = n.trigger ?? "auto";
   // ``manual`` = user typed /compact (uncommon, worth highlighting).
   // ``auto`` = harness fired at context-window threshold (most common).
   const accent = trigger === "manual" ? "purple-compact" : "teal";
   const summary = compactSummaryPreview(n);
+  const selected = useIsWorkNodeSelected(id);
 
   return (
     <div
       className={[
-        workNodeChromeClass(accent, selected ?? false),
+        workNodeChromeClass(accent, selected),
         // Dashed border per design-visual-language compact convention —
         // signals "this is a fold marker", not a normal node.
         "border-dashed",
