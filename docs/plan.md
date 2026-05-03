@@ -13,8 +13,7 @@
 | **v0.4** | drill panel | 右侧 resizable sidebar + 5 类 WorkNode detail + chunked tool-result lazy-load + MarkdownView/JsonView/DiffView | ✅ commit `36f02b7`（195/195 tests；256MB selection round-trip 458ms avg → 已提前在 commit `df65051` 解决）|
 | **v0.4 +** | selection perf fix | per-card Zustand 订阅，去掉 wrapper 重 prop 注入 | ✅ commit `df65051`（202/202；1522-ChatNode 458→78.9ms / 5.8×） |
 | **v0.5** | sub-agent 双态 | drill 替换主视图（选项 A）+ 双击 delegate → push subworkflow 帧 + lazy load + cache + auto-compact badge + breadcrumb 多级 | ✅ commit `74d49d9`（227/227；cache hit 22ms / cold drill 1830ms / 实测嵌套深度 max 2）|
-| **v0.6** | **数据模型统一**（Node 树重构）| ⚠ M3-M7 视觉层压平方向错误，已 revert（`f9f6f03`）。M1（Node 类型）+ M2（store dual-write nodeTree）保留作为下一版重做的 latent 数据层基础。原 v0.5.1（sub-agent 多 ChatNode）+ v0.5.2（WorkNode token bar + id）回到待做状态 | ⚠ revert 中（`f9f6f03`）；redo 待 |
-| **v0.6 redo** | 正确解读：保留 ChatFlow/WorkFlow 视觉嵌套 + 数据层 Node 类型互通 + delegate 可 drill 进 sub-ChatFlow | 用 M1-M2 的 Node 类型作为 ChatNode/WorkNode 的共享 base；视觉层恢复 ChatFlowCanvas/WorkFlowCanvas dual-canvas drill；sub-agent multi-ChatNode 用 sub-ChatFlow 渲染（不塌缩 chatNodes[0]）；WorkNode 加 TokenBar + NodeIdLine 跟 ChatNode 互通 | |
+| **v0.6** | **数据模型统一**（Node 树重构）| 第一版（`01c3bcf` → `cfe9026`）误读为视觉层压平，已 revert（`f9f6f03`）；redo 走"NodeBase 共享 + 视觉嵌套保留 + sub-ChatFlow drill" | ✅ redo M1+M3+M4+M5+M6 commits `a48f990` → `121aa4b`（235/235；NodeBase + ChatNode/WorkNode `extends`；多 ChatNode banner 消失；TokenBar/NodeIdLine 抽 shared atoms；解析 2500 → 1960ms）|
 | **v0.7** | compact handling | 处理 isCompactSummary 节点 + logicalParentUuid 边 + file-history-snapshot 时间窗绑定（基于 v0.6 统一 Node）| |
 | **v0.8** | fork 浏览 | parser 读 `forkedFrom` + `custom-title` / server merge fork 树 / **DrillPanel 2-tab（Detail + Conversation）** / ConversationView + branchMemory（在 Conversation tab 内）/ canvas fork badge | |
 | **v0.9** | file-tail mode | 监听 jsonl mtime 增量更新 canvas | |
@@ -189,13 +188,35 @@ delegate WorkNode 不再是 dead-end 折叠卡，双击展开 lazy 加载 sideca
 - v0.7 compact 完整交互
 - v0.10 sub-agent cache LRU eviction（目前 session 切换全清，单 session 内不淘汰；对当前 session 大小 OK，未来跨 session 持久化时再做）
 
-## v0.6 — Data Model Unification（M3-M7 已 revert 2026-05-03 commit `f9f6f03`）
+## v0.6 — Data Model Unification（redo 已 ship 2026-05-03 commits `a48f990` → `121aa4b`）
 
-> ⚠ **架构方向纠正**：v0.6 第一次实施（commits `01c3bcf` → `cfe9026`，7 个 milestone）把"unified Node 类型"误读成"取消视觉层嵌套"，实施了 single Canvas + flat Node tree + default-fold 的方案。作者澄清本意是**数据层 Node 类型统一让 ChatNode/WorkNode 互通，视觉层 ChatFlow/WorkFlow 嵌套保留**。M3（layoutNodes）+ M4（NodeCard）+ M5（single Canvas + App.tsx 改）+ M6（DrillPanel 改读 nodeTree）+ M7（doc banner）已 revert。M1（Node 类型）+ M2（store dual-write nodeTree）保留——下一版 v0.6 redo 用作数据层基础。
->
-> 两个回归（M5 引入）已修复：(1) 表层 ChatFlow 的 ModelRibbon hover overlay 恢复 (2) ChatNode 的内部 llm_call/tool_call 不再作为 ChatFlow 顶层 sibling 暴露，回到只有 drill 进 WorkFlow 才看见的嵌套模型。
->
-> v0.6 redo 待新 handoff，方向见上方总览表。
+**第一版（已 revert）**：commits `01c3bcf` → `cfe9026`（7 milestone）误读为"取消视觉层嵌套 + flat Node tree + default-fold"，被 revert（`f9f6f03`），M1+M2 残留代码（nodeTree/chatFlowAdapter）也在 redo M1 一并清理。详见 `devlog.md` 2026-05-03 条目。
+
+**redo 实际落地**（5 个 milestone，按抉择 B 跳 M2）：
+
+| M | commit | 内容 |
+|---|---|---|
+| M1 | `a48f990` | NodeBase interface + ChatNode/5 WorkNode `extends`；删第一版残留 `nodeTree.ts` / `chatFlowAdapter.ts` / `v06FoldAndFocus.test.ts` / SessionState 的 `nodeTree`/`expandedNodeIds`/`focusedSubtreeRootId` 字段 |
+| M2 | （跳过）| 抉择 B：sub-agent ChatFlow 走 lazy resolver `subAgentCache.get(agentId).chatFlow`，不 store-mutate delegate node |
+| M3 | `e050eab` | sub-ChatFlow drill：App.tsx viewMode 加 `"sub-chatflow"`，递归复用 ChatFlowCanvas；resolver 重写；enterWorkflow stack-aware；删 multi-ChatNode amber banner |
+| M4 | `37431c8` | 抽 `src/canvas/nodes/chrome/{TokenBar,NodeIdLine}.tsx` shared atoms；5 类 WorkNode 卡片按抉择 4 加 chrome（llm_call/delegate/compact 画 TokenBar；tool_call/attachment 跳过；5 类全加 NodeIdLine） |
+| M5 | `2865282` | DrillPanel sub-chatflow scope 测试 |
+| M6 | `121aa4b` | devlog ship 条目 + design-data-model.md NodeBase 小幅更新 |
+
+**4 个设计抉择**：1B（NodeBase + ChatNode/WorkNode extends）/ 2B（lazy resolver，不 store-mutate）/ 3A（递归 ChatFlowCanvas）/ 4A（按 kind 显示 TokenBar）
+
+**性能**：256MB jsonl 解析 2500 → **1960ms**；selection / cache 路径未动；多 ChatNode amber banner 消失。
+
+**8 条硬约束逐条状态**：1 双画布 ✅ / 2 viewMode + drillStack ✅ / 3 drill 替换主视图 ✅ / 4 无 default-fold ✅ / 5 内层不上 ChatFlow ✅ / 6 ModelRibbon ✅ / 7 测试不退（229 → 235）✅ / 8 selection per-card 不动 ✅
+
+**遗留 backlog**：
+- 跨层 ChatNode 选择字段（DrillPanel 共用 `selectedNodeId` 在 sub-ChatFlow 切换时会"漏到"sub 层；UX 不优但不 crash）—— v0.7 顺手或 v0.10 polish
+- 测试新增 6 vs handoff 验收门槛 ≥20 的 shortfall —— 既有 fixture-based 测试已 cover 大部分行为，新增主要在 push-vs-reset / scope 边界。如要补全 14 条，建议覆盖 ChatFlowCanvas 递归实例 fitView 独立性、cross-frame breadcrumb truncate selection 持久化、WF_NODE_SIZE 边界等。**协调判断接受**——核心硬约束都 verified，验收门槛 over-conservative
+
+### 实测发现 / surprise
+
+- v0.5 `enterWorkflow` 的 idempotent 检查只看 `drillStack[0]`（不是 `length-1`），说明 v0.5 实际上从未触发"在已有 stack 上 push chatnode 帧"，因为 sub-agent drill 总把 chatNodes[0] 折进同一帧。redo 改成 stack-aware 是 sub-ChatFlow 递归的前置
+- ChatFlowCanvas 递归挂载是 free upgrade —— 每个 `<ReactFlowProvider>` 实例 isolated，`focusedSessionRef` per instance，无需 special handling
 
 **触发原因（保留作为 redo 的背景）**：v0.5 sub-agent 真嵌套实测暴露架构缺陷——sub-agent jsonl 是完整 ChatFlow（含多个 ChatNode），但 Loomscope 当前 ChatFlow/WorkFlow 二分把它塌缩成单 WorkFlow 渲染（27% sub-agent 信息丢失）。根问题**不是**"取消嵌套"，而是"WorkNode 不能承载 ChatFlow 形态的 sub-agent"——下一版 v0.6 redo 让 delegate WorkNode 能 drill 进 sub-ChatFlow，多 ChatNode 自然完整渲染。
 

@@ -132,6 +132,8 @@ npm run build
 
 > 简版（一行一条 milestone）。每条详情 + 决策 + 实测发现见 `devlog.md`。
 
+- **2026-05-03 `<synthetic>` 假 llm_call 过滤 fix**（`a13da49`）—— 429 rate-limit 注入的 `model: "<synthetic>"` 假记录污染 last-llm_call 派生（TokenBar 归 0 / ribbon 染色错），跳过后 last real call 重新生效；282/282
+- **2026-05-03 v0.6 redo ship**（`a48f990` → `121aa4b`，5 milestone）—— NodeBase + ChatNode/WorkNode `extends`；递归 ChatFlowCanvas 走 sub-ChatFlow drill（amber banner 消失）；TokenBar/NodeIdLine 抽 shared atoms 给 5 类 WorkNode；235/235；解析 2500 → 1960ms。8 条硬约束全过
 - **2026-05-03 v0.6 redo 排定 + Conversation tab 排进 v0.8/v∞.2/v∞.3**（`b2940b0`）—— 右侧 panel 改 2-tab；Conversation tab 跟 v0.8 ConversationView 合并；composer 在 v∞.2/v∞.3 演进
 - **2026-05-03 v0.6 第一版 revert**（`f9f6f03` + `773648e`）—— 7-milestone Data Model Unification 误读"取消 WorkNode/ChatNode 划分"为视觉层压平。M1 (Node 类型) + M2 (store dual-write) 保留作 redo 数据基础；M3-M7 revert 回 dual-canvas drill 模型
 - **2026-05-03 v0.6 第一次 ship**（`01c3bcf` → `cfe9026`，7 milestone）—— 后被 revert，详 `devlog.md`。保留 5 个实测发现（defaultFolded 语义 / cross-bucket focus / parser O(N²) 修法 / 4233 dup ID dedup / Playwright dblclick 限制）作 redo 参考
