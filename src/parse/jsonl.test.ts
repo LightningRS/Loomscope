@@ -580,3 +580,156 @@ describe("sidecar loader", () => {
     expect(p).toMatch(/[\\/]claude-1000[\\/]-home-foo[\\/]sess-1[\\/]tasks[\\/]task-XYZ\.output$/);
   });
 });
+
+describe("file-history-snapshot binding (v0.7)", () => {
+  // Real CC schema: snapshot record carries `messageId` (top-level OR
+  // nested under `snapshot.messageId`) that resolves directly to a
+  // user/assistant record's uuid. promptId then comes via the existing
+  // resolvePromptId chain (parentUuid hop for assistant records that
+  // don't carry promptId themselves).
+  function snapshotRecord(opts: {
+    uuid: string;
+    messageId: string;
+    timestamp?: string;
+    trackedFiles?: string[];
+    isUpdate?: boolean;
+    nestMessageId?: boolean;
+  }): RawRecord {
+    const trackedBackups = (opts.trackedFiles ?? []).reduce<Record<string, string>>(
+      (acc, f) => {
+        acc[f] = "<original content>";
+        return acc;
+      },
+      {},
+    );
+    const rec: RawRecord = {
+      type: "file-history-snapshot",
+      uuid: opts.uuid,
+      parentUuid: null,
+      timestamp: opts.timestamp ?? "2026-04-10T03:10:00.000Z",
+      snapshot: {
+        messageId: opts.nestMessageId ? opts.messageId : undefined,
+        trackedFileBackups: trackedBackups,
+        timestamp: opts.timestamp ?? "2026-04-10T03:10:00.000Z",
+      },
+      isSnapshotUpdate: opts.isUpdate === true,
+    };
+    if (!opts.nestMessageId) {
+      (rec as unknown as { messageId: string }).messageId = opts.messageId;
+    }
+    return rec;
+  }
+
+  it("binds snapshot to ChatNode when messageId points at the user record (direct promptId)", () => {
+    const records = buildSyntheticRecords();
+    records.push(
+      snapshotRecord({
+        uuid: "snap-1",
+        messageId: fixtureUuids.u1, // p1's user record
+        trackedFiles: ["src/App.tsx", "src/main.tsx"],
+      }),
+    );
+    const cf = buildChatFlow(records, FIXTURE_PATH);
+    const cn1 = cf.chatNodes.find((c) => c.id === "p1");
+    expect(cn1?.meta.fileHistorySnapshots?.length).toBe(1);
+    const snap = cn1?.meta.fileHistorySnapshots?.[0];
+    expect(snap?.uuid).toBe("snap-1");
+    expect(snap?.trackedFiles).toEqual(["src/App.tsx", "src/main.tsx"]);
+    expect(snap?.isUpdate).toBe(false);
+    // Not orphaned.
+    expect(cf.orphans.find((o) => o.uuid === "snap-1")).toBeUndefined();
+  });
+
+  it("binds snapshot to ChatNode when messageId points at an assistant record (parentUuid hop)", () => {
+    // Assistant records don't carry promptId themselves. resolvePromptId
+    // walks parentUuid back to the user record.
+    const records = buildSyntheticRecords();
+    records.push(
+      snapshotRecord({
+        uuid: "snap-asst",
+        messageId: fixtureUuids.a1, // p1's assistant record
+        trackedFiles: ["docs/devlog.md"],
+      }),
+    );
+    const cf = buildChatFlow(records, FIXTURE_PATH);
+    const cn1 = cf.chatNodes.find((c) => c.id === "p1");
+    expect(cn1?.meta.fileHistorySnapshots?.length).toBe(1);
+    expect(cn1?.meta.fileHistorySnapshots?.[0].uuid).toBe("snap-asst");
+  });
+
+  it("accepts messageId nested under snapshot.messageId (CC alt schema)", () => {
+    const records = buildSyntheticRecords();
+    records.push(
+      snapshotRecord({
+        uuid: "snap-nested",
+        messageId: fixtureUuids.u1,
+        nestMessageId: true,
+        trackedFiles: ["x.ts"],
+      }),
+    );
+    const cf = buildChatFlow(records, FIXTURE_PATH);
+    const cn1 = cf.chatNodes.find((c) => c.id === "p1");
+    expect(cn1?.meta.fileHistorySnapshots?.[0].uuid).toBe("snap-nested");
+  });
+
+  it("orphans snapshot when messageId does not resolve to any record", () => {
+    const records = buildSyntheticRecords();
+    records.push(
+      snapshotRecord({
+        uuid: "snap-dangling",
+        messageId: "nonexistent-uuid-xxx",
+      }),
+    );
+    const cf = buildChatFlow(records, FIXTURE_PATH);
+    for (const cn of cf.chatNodes) {
+      expect(cn.meta.fileHistorySnapshots?.find((s) => s.uuid === "snap-dangling")).toBeUndefined();
+    }
+    const orph = cf.orphans.find((o) => o.uuid === "snap-dangling");
+    expect(orph).toBeDefined();
+    expect(orph?.reason).toMatch(/messageId/);
+  });
+
+  it("propagates isSnapshotUpdate true onto the FileHistorySnapshot record", () => {
+    const records = buildSyntheticRecords();
+    records.push(
+      snapshotRecord({
+        uuid: "snap-upd",
+        messageId: fixtureUuids.u1,
+        trackedFiles: ["a.ts"],
+        isUpdate: true,
+      }),
+    );
+    const cf = buildChatFlow(records, FIXTURE_PATH);
+    const cn1 = cf.chatNodes.find((c) => c.id === "p1");
+    expect(cn1?.meta.fileHistorySnapshots?.[0].isUpdate).toBe(true);
+  });
+
+  it("collects multiple snapshots for the same ChatNode in record order", () => {
+    const records = buildSyntheticRecords();
+    records.push(
+      snapshotRecord({
+        uuid: "snap-A",
+        messageId: fixtureUuids.u1,
+        trackedFiles: ["a.ts"],
+      }),
+      snapshotRecord({
+        uuid: "snap-B",
+        messageId: fixtureUuids.u1,
+        trackedFiles: ["b.ts"],
+      }),
+    );
+    const cf = buildChatFlow(records, FIXTURE_PATH);
+    const cn1 = cf.chatNodes.find((c) => c.id === "p1");
+    expect(cn1?.meta.fileHistorySnapshots?.map((s) => s.uuid)).toEqual([
+      "snap-A",
+      "snap-B",
+    ]);
+  });
+
+  it("snapshots stay null when ChatNode has no bound snapshots", () => {
+    const cf = buildChatFlow(buildSyntheticRecords(), FIXTURE_PATH);
+    for (const cn of cf.chatNodes) {
+      expect(cn.meta.fileHistorySnapshots).toBeUndefined();
+    }
+  });
+});

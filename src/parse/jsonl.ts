@@ -24,6 +24,7 @@ import type {
   ChatNode,
   ChatNodeMeta,
   ChatNodeUserMessage,
+  FileHistorySnapshot,
   FlowEvent,
   OrphanRecord,
 } from "@/data/types";
@@ -178,6 +179,9 @@ export function buildChatFlow(
   const bucketsByPid = new Map<string, PromptBucket>();
   const orphans: OrphanRecord[] = [];
   const flowEvents: FlowEvent[] = [];
+  // file-history-snapshot 通过 messageId → resolvePromptId 绑到 ChatNode；
+  // 这里暂存，buildChatNode 时按 promptId 取出。
+  const snapshotsByPid = new Map<string, FileHistorySnapshot[]>();
 
   // ⚠ Reality check: in real CC sessions only `type=user` records carry a
   // `promptId`. Everything else (assistant / attachment / file-history-snapshot
@@ -288,12 +292,45 @@ export function buildChatFlow(
     }
 
     if (r.type === "file-history-snapshot") {
-      // Tied to the surrounding ChatNode via parentUuid; without promptId we
-      // can't bind it cheaply. Stash for now.
+      // v0.7 binding via messageId direct lookup. Prior v0.1 doc claimed
+      // these were unbinding orphans (parentUuid:null + no promptId), but
+      // every snapshot carries `messageId` (top-level or nested under
+      // `snapshot.messageId`) that resolves to a user/assistant record by
+      // uuid — and that record resolves to a promptId via the existing
+      // resolvePromptId() chain (parentUuid hop for assistant records).
+      // Cross-user real-data sample (3059 snapshots): 100% have messageId,
+      // 99.97% resolve to a record, 67% directly carry promptId, the rest
+      // need parentUuid hop. Falls back to orphan only when both lookups
+      // fail. See design-data-model.md "file-history-snapshot binding".
+      const sn = (r.snapshot ?? {}) as {
+        messageId?: string;
+        trackedFileBackups?: Record<string, unknown>;
+        timestamp?: string;
+      };
+      const messageId =
+        (typeof (r as { messageId?: unknown }).messageId === "string"
+          ? ((r as { messageId?: string }).messageId as string)
+          : undefined) ?? sn.messageId;
+      const isUpdate = (r as { isSnapshotUpdate?: unknown }).isSnapshotUpdate === true;
+      const trackedFiles = sn.trackedFileBackups ? Object.keys(sn.trackedFileBackups) : [];
+      const snapshotPid = messageId ? resolvePromptId(messageId) : null;
+      if (snapshotPid) {
+        const list = snapshotsByPid.get(snapshotPid) ?? [];
+        list.push({
+          uuid: r.uuid ?? "",
+          timestamp: sn.timestamp ?? r.timestamp,
+          trackedFiles,
+          isUpdate,
+        });
+        snapshotsByPid.set(snapshotPid, list);
+        continue;
+      }
       orphans.push({
         uuid: r.uuid,
         type: "file-history-snapshot",
-        reason: "no promptId",
+        reason: messageId
+          ? `messageId ${messageId} did not resolve to a promptId`
+          : "no messageId on snapshot record",
       });
       continue;
     }
@@ -314,6 +351,7 @@ export function buildChatFlow(
       boundariesByUuid,
       awaySummaryByUuid,
       scheduledFireByUuid,
+      snapshotsByPid.get(bucket.promptId),
     );
     if (cn) chatNodes.push(cn);
   }
@@ -364,6 +402,7 @@ function buildChatNode(
   boundariesByUuid: Map<string, RawRecord>,
   awaySummaryByUuid: Map<string, RawRecord>,
   scheduledFireByUuid: Map<string, RawRecord>,
+  fileHistorySnapshots?: FileHistorySnapshot[],
 ): ChatNode | null {
   // Root user record preference (highest → lowest):
   //   1. Non-meta user record (the actual user prompt or slash-command body)
@@ -403,7 +442,6 @@ function buildChatNode(
 
   // Attachments referencing this prompt's user message.
   const attachments: AttachmentNode[] = [];
-  const fileHistorySnapshotUuids: string[] = [];
   const permissionModeChanges: Array<{ uuid: string; permissionMode: string }> = [];
   for (const r of bucket.records) {
     if (r.type === "attachment") {
@@ -423,11 +461,12 @@ function buildChatNode(
           });
         }
       }
-    } else if (r.type === "file-history-snapshot" && r.uuid) {
-      fileHistorySnapshotUuids.push(r.uuid);
     } else if (r.type === "permission-mode" && r.uuid && typeof r.permissionMode === "string") {
       permissionModeChanges.push({ uuid: r.uuid, permissionMode: r.permissionMode });
     }
+    // file-history-snapshot is bound separately via snapshotsByPid (see
+    // buildChatFlow); the records never enter a bucket because their
+    // promptId is resolved from messageId, not by promptId field.
   }
 
   const userMessage: ChatNodeUserMessage = {
@@ -491,9 +530,10 @@ function buildChatNode(
   const meta: ChatNodeMeta = {
     awaySummary: awaySummaryAttached,
     scheduledFireUuid,
-    fileHistorySnapshotUuids: fileHistorySnapshotUuids.length
-      ? fileHistorySnapshotUuids
-      : undefined,
+    fileHistorySnapshots:
+      fileHistorySnapshots && fileHistorySnapshots.length
+        ? fileHistorySnapshots
+        : undefined,
     permissionModeChanges: permissionModeChanges.length ? permissionModeChanges : undefined,
   };
 

@@ -204,10 +204,29 @@ export interface ChatNodeUserMessage {
   attachments: AttachmentNode[];
 }
 
+// file-history-snapshot record (CC writes one per turn). v0.1 doc said
+// these were unbinding orphans (parentUuid:null + no promptId), but
+// v0.7 实测 found `snapshot.messageId` directly references a
+// user/assistant record uuid — so binding goes through messageId →
+// indexByUuid → resolvePromptId, not through timestamp window heuristics.
+// trackedFiles is the Object.keys of `snapshot.trackedFileBackups`
+// (CC's git-status snapshot of file paths the turn touched).
+export interface FileHistorySnapshot {
+  uuid: string;
+  timestamp?: string;
+  trackedFiles: string[];
+  // True when this snapshot is an *update* of a prior snapshot rather
+  // than the first one for the turn. Renderer can de-emphasise these
+  // because they don't represent new file changes per se.
+  isUpdate: boolean;
+}
+
 export interface ChatNodeMeta {
   awaySummary?: { uuid: string; content: string; timestamp?: string };
   scheduledFireUuid?: string; // system/scheduled_task_fire uuid linked to this ChatNode
-  fileHistorySnapshotUuids?: string[];
+  // v0.7: snapshots resolved to this ChatNode via messageId direct
+  // lookup (see parse/jsonl.ts file-history-snapshot binding).
+  fileHistorySnapshots?: FileHistorySnapshot[];
   permissionModeChanges?: Array<{ uuid: string; permissionMode: string }>;
   errors?: NodeError[];
 }
