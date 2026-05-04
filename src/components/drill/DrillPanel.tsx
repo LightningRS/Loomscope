@@ -7,6 +7,13 @@
 // Toggle button on the panel header lets users collapse to a 12px
 // strip when they need full canvas width — preferred over hard-hide
 // so the strip stays as a re-entry affordance.
+//
+// v0.8 M3: panel becomes 2-tab — Detail (1:1 v0.4-v0.7 behaviour) +
+// Conversation (M4 fills it; M3 ships placeholder). Tab state is
+// global UI pref via UISlice.drillPanelTab (per micro-decision 1B),
+// persisted via partialize. Detail tab content is identical to v0.7's
+// panel body — extracted into DetailTabContent subcomponent purely so
+// the JSX of the wrapper reads cleanly with the new tab strip.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -14,6 +21,7 @@ import { ChatNodeDetail } from "@/components/drill/ChatNodeDetail";
 import { WorkNodeDetail } from "@/components/drill/WorkNodeDetail";
 import { useStore } from "@/store/index";
 import type { ChatFlow, ChatNode, WorkNode } from "@/data/types";
+import type { DrillPanelTab } from "@/store/types";
 
 interface Props {
   sessionId: string;
@@ -34,6 +42,118 @@ export function DrillPanel({ sessionId, chatFlow, viewMode, drilledChatNode }: P
   const collapsed = useStore((s) => s.drillPanelCollapsed);
   const setWidth = useStore((s) => s.setDrillPanelWidth);
   const toggle = useStore((s) => s.toggleDrillPanel);
+  const tab = useStore((s) => s.drillPanelTab);
+  const setTab = useStore((s) => s.setDrillPanelTab);
+
+  if (collapsed) {
+    return (
+      <CollapsedStrip
+        width={COLLAPSED_WIDTH}
+        onExpand={toggle}
+      />
+    );
+  }
+
+  return (
+    <aside
+      data-testid="drill-panel"
+      className="relative flex h-full flex-col border-l border-gray-200 bg-gray-50"
+      style={{ width, minWidth: width, maxWidth: width }}
+    >
+      <ResizeHandle width={width} setWidth={setWidth} />
+      <Header
+        viewMode={viewMode}
+        drilledChatNode={drilledChatNode}
+        onCollapse={toggle}
+      />
+      <TabStrip activeTab={tab} onSelect={setTab} />
+      <div className="flex-1 min-h-0 overflow-y-auto p-3">
+        {tab === "detail" && (
+          <DetailTabContent
+            sessionId={sessionId}
+            chatFlow={chatFlow}
+            viewMode={viewMode}
+            drilledChatNode={drilledChatNode}
+          />
+        )}
+        {tab === "conversation" && (
+          <ConversationTabPlaceholder />
+        )}
+      </div>
+    </aside>
+  );
+}
+
+// 2-tab strip — sits between Header and content. Per hard constraint
+// #11, switching between tabs MUST not affect Detail tab content
+// behaviour (it's just a visibility toggle, not a re-render trigger).
+function TabStrip({
+  activeTab,
+  onSelect,
+}: {
+  activeTab: DrillPanelTab;
+  onSelect: (tab: DrillPanelTab) => void;
+}) {
+  return (
+    <div
+      data-testid="drill-panel-tabs"
+      className="flex items-center border-b border-gray-200 bg-white"
+    >
+      <TabButton
+        active={activeTab === "detail"}
+        onClick={() => onSelect("detail")}
+        testId="drill-panel-tab-detail"
+        label="Detail"
+      />
+      <TabButton
+        active={activeTab === "conversation"}
+        onClick={() => onSelect("conversation")}
+        testId="drill-panel-tab-conversation"
+        label="Conversation"
+      />
+    </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  testId,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  testId: string;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-testid={testId}
+      data-active={active ? "true" : "false"}
+      className={[
+        "px-3 py-1.5 text-[11px] font-medium transition-colors",
+        active
+          ? "text-blue-700 border-b-2 border-blue-500 -mb-px"
+          : "text-gray-500 hover:text-gray-800 hover:bg-gray-50",
+      ].join(" ")}
+    >
+      {label}
+    </button>
+  );
+}
+
+// Extracted Detail tab body — identical to v0.7's panel content. M4
+// will mount ConversationView in the Conversation tab; M3 ships a
+// placeholder so each milestone is independently committable per
+// project convention.
+function DetailTabContent({
+  sessionId,
+  chatFlow,
+  viewMode,
+  drilledChatNode,
+}: Props) {
   const selectedChatId = useStore(
     (s) => s.sessions.get(sessionId)?.selectedNodeId ?? null,
   );
@@ -60,43 +180,35 @@ export function DrillPanel({ sessionId, chatFlow, viewMode, drilledChatNode }: P
     return { kind: "worknode" as const, workNode: wn };
   }, [viewMode, selectedChatId, selectedWorkId, chatFlow, drilledChatNode]);
 
-  if (collapsed) {
-    return (
-      <CollapsedStrip
-        width={COLLAPSED_WIDTH}
-        onExpand={toggle}
-      />
-    );
-  }
-
   return (
-    <aside
-      data-testid="drill-panel"
-      className="relative flex h-full flex-col border-l border-gray-200 bg-gray-50"
-      style={{ width, minWidth: width, maxWidth: width }}
+    <>
+      {focused.kind === "chatnode" && focused.chatNode && (
+        <ChatNodeDetail chatNode={focused.chatNode} />
+      )}
+      {focused.kind === "chatnode" && !focused.chatNode && (
+        <EmptyHint label="点 ChatNode 查看详情" />
+      )}
+      {focused.kind === "worknode" && focused.workNode && (
+        <WorkNodeDetail workNode={focused.workNode} sessionId={sessionId} />
+      )}
+      {focused.kind === "worknode" && !focused.workNode && (
+        <EmptyHint label="点 WorkNode 查看详情" />
+      )}
+      {focused.kind === "empty" && <EmptyHint label="进入工作流后选 WorkNode 查看" />}
+    </>
+  );
+}
+
+// M3 placeholder — M4 mounts ConversationView with the Claude App
+// chat-bubble UI + BranchSelector for forks.
+function ConversationTabPlaceholder() {
+  return (
+    <div
+      data-testid="conversation-tab-placeholder"
+      className="flex h-full items-center justify-center text-[12px] text-gray-400 italic"
     >
-      <ResizeHandle width={width} setWidth={setWidth} />
-      <Header
-        viewMode={viewMode}
-        drilledChatNode={drilledChatNode}
-        onCollapse={toggle}
-      />
-      <div className="flex-1 min-h-0 overflow-y-auto p-3">
-        {focused.kind === "chatnode" && focused.chatNode && (
-          <ChatNodeDetail chatNode={focused.chatNode} />
-        )}
-        {focused.kind === "chatnode" && !focused.chatNode && (
-          <EmptyHint label="点 ChatNode 查看详情" />
-        )}
-        {focused.kind === "worknode" && focused.workNode && (
-          <WorkNodeDetail workNode={focused.workNode} sessionId={sessionId} />
-        )}
-        {focused.kind === "worknode" && !focused.workNode && (
-          <EmptyHint label="点 WorkNode 查看详情" />
-        )}
-        {focused.kind === "empty" && <EmptyHint label="进入工作流后选 WorkNode 查看" />}
-      </div>
-    </aside>
+      Conversation view coming in M4
+    </div>
   );
 }
 

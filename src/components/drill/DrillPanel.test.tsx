@@ -6,7 +6,7 @@
 // by details.test.tsx; here we just assert the dispatch + scope plumbing.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 import { DrillPanel } from "@/components/drill/DrillPanel";
 import { useStore } from "@/store/index";
@@ -56,6 +56,9 @@ beforeEach(() => {
     }),
     activeSessionId: SID,
     drillPanelCollapsed: false,
+    // v0.8 M3: explicit reset so the persisted localStorage value
+    // doesn't leak across tests in jsdom.
+    drillPanelTab: "detail",
   }));
 });
 
@@ -127,5 +130,94 @@ describe("DrillPanel viewMode dispatch", () => {
     expect(screen.queryByTestId("work-node-detail")).toBeNull();
     // Hint string surfaces from EmptyHint.
     expect(screen.getByText(/点 WorkNode 查看详情/)).toBeTruthy();
+  });
+});
+
+describe("DrillPanel 2-tab strip (v0.8 M3)", () => {
+  it("renders both tab buttons with the active one marked", () => {
+    const cf = chatFlow(SID, [chatNode("p1")]);
+    render(
+      <DrillPanel
+        sessionId={SID}
+        chatFlow={cf}
+        viewMode="chatflow"
+        drilledChatNode={null}
+      />,
+    );
+    const detailTab = screen.getByTestId("drill-panel-tab-detail");
+    const convTab = screen.getByTestId("drill-panel-tab-conversation");
+    expect(detailTab).toBeTruthy();
+    expect(convTab).toBeTruthy();
+    expect(detailTab.dataset.active).toBe("true");
+    expect(convTab.dataset.active).toBe("false");
+  });
+
+  it("clicking Conversation tab swaps the body to the placeholder + flips active marker", () => {
+    const cf = chatFlow(SID, [chatNode("p1")]);
+    useStore.setState((s) => ({
+      sessions: new Map(s.sessions).set(SID, {
+        ...s.sessions.get(SID)!,
+        chatFlow: cf,
+        selectedNodeId: "p1",
+      }),
+    }));
+    render(
+      <DrillPanel
+        sessionId={SID}
+        chatFlow={cf}
+        viewMode="chatflow"
+        drilledChatNode={null}
+      />,
+    );
+    // Default Detail tab — ChatNodeDetail visible.
+    expect(screen.getByTestId("chat-node-detail")).toBeTruthy();
+    // Switch to Conversation tab.
+    fireEvent.click(screen.getByTestId("drill-panel-tab-conversation"));
+    expect(useStore.getState().drillPanelTab).toBe("conversation");
+    expect(screen.queryByTestId("chat-node-detail")).toBeNull();
+    expect(screen.getByTestId("conversation-tab-placeholder")).toBeTruthy();
+    expect(
+      screen.getByTestId("drill-panel-tab-conversation").dataset.active,
+    ).toBe("true");
+  });
+
+  it("Conversation tab placeholder includes M4 hint text", () => {
+    useStore.setState({ drillPanelTab: "conversation" });
+    const cf = chatFlow(SID, [chatNode("p1")]);
+    render(
+      <DrillPanel
+        sessionId={SID}
+        chatFlow={cf}
+        viewMode="chatflow"
+        drilledChatNode={null}
+      />,
+    );
+    expect(screen.getByText(/Conversation view coming in M4/i)).toBeTruthy();
+  });
+
+  it("hard constraint #11: Detail tab content matches v0.7 1:1 (chatflow + selected → ChatNodeDetail)", () => {
+    // This is the regression guard. If a future M3 follow-up changes
+    // anything inside ChatNodeDetail / WorkNodeDetail by accident,
+    // this test (and details.test.tsx) catches it.
+    const cf = chatFlow(SID, [chatNode("p1"), chatNode("p2")]);
+    useStore.setState((s) => ({
+      sessions: new Map(s.sessions).set(SID, {
+        ...s.sessions.get(SID)!,
+        chatFlow: cf,
+        selectedNodeId: "p2",
+      }),
+    }));
+    render(
+      <DrillPanel
+        sessionId={SID}
+        chatFlow={cf}
+        viewMode="chatflow"
+        drilledChatNode={null}
+      />,
+    );
+    // Same assertion as the v0.6/v0.7 dispatch test — proves Detail
+    // tab is still the same code path.
+    const detail = screen.getByTestId("chat-node-detail");
+    expect(detail.textContent).toContain("p2");
   });
 });

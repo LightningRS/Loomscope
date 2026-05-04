@@ -15,6 +15,10 @@ export const createUISlice: StateCreator<LoomscopeStore, [], [], UISlice> = (set
   sidebarCollapsed: false,
   drillPanelWidth: DEFAULT_DRILL_PANEL_WIDTH,
   drillPanelCollapsed: false,
+  // Default "detail" preserves v0.4-v0.7 single-view behaviour for
+  // first-time users; persisted via partialize so subsequent loads
+  // honour the user's last selection.
+  drillPanelTab: "detail" as const,
   pinnedWorkspaces: [],
   hiddenWorkspaces: [],
   focusedWorkspace: null,
@@ -34,6 +38,8 @@ export const createUISlice: StateCreator<LoomscopeStore, [], [], UISlice> = (set
 
   toggleDrillPanel: () =>
     set((s) => ({ drillPanelCollapsed: !s.drillPanelCollapsed })),
+
+  setDrillPanelTab: (tab) => set({ drillPanelTab: tab }),
 
   pinWorkspace: (cwd) =>
     set((s) => ({

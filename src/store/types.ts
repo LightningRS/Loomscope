@@ -7,12 +7,23 @@ import type { AgentMetadata } from "@/parse/sidecar";
 
 // ─── UI slice ────────────────────────────────────────────────────────────────
 
+// v0.8 M3: DrillPanel tabs. Per design micro-decision 1B, the tab
+// state is global (UISlice) — partialize automatically writes it to
+// localStorage so the user's "I prefer Detail tab" preference
+// survives reload. per-session preferences would have needed a
+// separate persistence path; the global pref matches user intent
+// (tab choice is about the panel's role, not about the session).
+export type DrillPanelTab = "detail" | "conversation";
+
 export interface UISlice {
   sidebarWidth: number;
   sidebarCollapsed: boolean;
   // v0.4 drill panel width (right-side resizable). 0 = collapsed.
   drillPanelWidth: number;
   drillPanelCollapsed: boolean;
+  // v0.8 M3: which tab is active in DrillPanel. "detail" preserves
+  // v0.4-v0.7 single-view behaviour 1:1.
+  drillPanelTab: DrillPanelTab;
   pinnedWorkspaces: string[];
   hiddenWorkspaces: string[];
   focusedWorkspace: string | null;
@@ -21,6 +32,7 @@ export interface UISlice {
   toggleSidebar: () => void;
   setDrillPanelWidth: (w: number) => void;
   toggleDrillPanel: () => void;
+  setDrillPanelTab: (tab: DrillPanelTab) => void;
   pinWorkspace: (cwd: string) => void;
   unpinWorkspace: (cwd: string) => void;
   hideWorkspace: (cwd: string) => void;
