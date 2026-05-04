@@ -10,7 +10,7 @@ v0.7.1 compact inline fold 刚 ship（commit `0e1ea63` 含 viewport-anchor patch
 
 工作目录：`/home/usingnamespacestc/Loomscope` —— 已是 main，89+ commits ahead of origin。
 
-## 11 个问题清单
+## 12 个问题清单
 
 ### #1 DrillPanel "DETAIL" 标题冗余 + 收起箭头位置
 
@@ -234,7 +234,48 @@ selfDelta = (selfSnap \ parentSnap)  ∪  distinctToolUseFiles(cn)
 
 **Code anchor**：`src/components/drill/ConversationView.tsx` 找 `<MarkdownView>` 渲染那两段（user `:148`，assistant `:154`），在 bubble / footer 加按钮。
 
-**测试**：覆盖 click → 调 `navigator.clipboard.writeText`（vitest mock clipboard）+ 状态切换 ✓ → 📋。
+**测试**：覆盖 click → 调 `navigator.clipboard.writeText`（vitest mock clipboard）+ 状态切换 ✓ → 📗。
+
+---
+
+### #12 Conversation 选中下游消息灰化（不截断）
+
+**现状**：`ConversationView.tsx` 用 `pathUtils.resolvePath(chatFlow, selectedId)` 解析当前要渲染的 message path —— 当前实现 walk parentChatNodeId 从 endpoint 到 root，所以 endpoint = selectedId 时 path 只到 selectedId 截断，selectedId 之后的 children 不渲染。
+
+**期望**：
+- 点击 message X → `selectedId = X`（canvas highlight + DrillPanel detail 跟原来一样）
+- Conversation 渲染 path 仍然走到 **leaf**（X 所在 branch 末尾）；X 之后的 message 仍然出现
+- X 之后的 message 用 `opacity-50` 或 `text-gray-400` 视觉灰化，hover 时稍亮（`hover:opacity-80`）
+- 灰化 message 仍然可点击，点击后变成 selectedId（再次重新 reflow 灰化范围）
+
+**实现思路**：
+
+修 `pathUtils.resolvePath` 或加新函数 `resolvePathThroughLeaf(chatFlow, selectedId)`：
+1. 当前 endpoint 选择逻辑：`selectedId ? byId.get(selectedId) : defaultLatestLeaf`
+2. 改成：先用 selectedId 决定 branch（结合 branchMemory），再 `findLatestLeafInSubtree(selectedId)` 找该 branch 的 leaf；endpoint = leaf
+3. 同时返回 `selectedIndex`（path 中 selectedId 位置；找不到 = path.length-1 = leaf 自己）
+
+ConversationView 渲染 loop 用 `selectedIndex` 决定每条 message 的样式：
+- `idx <= selectedIndex` → 正常样式（上下文背景）
+- `idx > selectedIndex` → 加 `opacity-40 hover:opacity-80 transition-opacity`
+
+⚠ 兼容性注意：
+- BranchSelector 行为不能变 —— 用户在 fork 点切 branch 仍然走 pickBranch 路径
+- 默认初次打开 Conversation tab（无 selection）→ selectedId = null → endpoint = defaultLatestLeaf → 全 path 全亮（无灰化），跟现行行为一致
+- selectedId = leaf 自己 → 灰化范围空，行为退化为现行
+- selectedId 不在当前 branch（用户切 branch 后又点了别的 branch 的 node）→ findLatestLeafInSubtree 走 selectedId 所在 branch，重新 reflow
+
+**Code anchor**：
+- `src/components/drill/pathUtils.ts:49-90`（resolvePath 改算法 OR 新增函数）
+- `src/components/drill/ConversationView.tsx:58`（resolvePath 调用 + 渲染 loop 加 idx 判断）
+
+**测试**：
+- selectedId = 中段 node → returned path 包含 selectedId 之后的 children，selectedIndex 对应中段位置
+- selectedId = leaf → selectedIndex = path.length-1，所有 message 都不灰化
+- selectedId = null → 默认 latest leaf，无灰化
+- 点灰化 message → selectedId 翻到那条；下一次 resolvePath 灰化范围更新
+
+**跟 #5 hover-to-pan 的关系**：#5 的 hover-to-pan 也接 selectedId 切换路径；这里改完后，hover 灰化 message 同样可以触发 pan + auto-unfold（自然集成，不需要额外协调）。
 
 ---
 
@@ -243,8 +284,8 @@ selfDelta = (selfSnap \ parentSnap)  ∪  distinctToolUseFiles(cn)
 依赖图：
 - **M1 quick wins (并行安全)**：#1 + #6 + #8 — 三条都是局部小改、互不干扰，单 commit 也行 / 三个独立 commit 也行
 - **M2 panel 布局**：#2 + #7 — 都是 DrillPanel + App layout 重构；先 #2（修 bug），后 #7（加新功能在干净的 layout 上）
-- **M3 conversation 滚动 + 懒加载 + 复制 + typography**：#3 → #4 → #11 → #10 — 都集中在 ConversationView 文件，串行做最经济：先 #3（scroll-to-bottom）→ #4（lazy load 切片）→ #11（每条 message 加复制按钮）→ #10（typography theme.extend 微调）。ship 顺序中 #11 不依赖 #10 但落地范围交叠，连着改 commit 干净
-- **M4 hover-to-pan + auto-unfold**：#5 — 跨组件，依赖 M3 already 落地的 path-rendering scaffolding
+- **M3 conversation 滚动 + 懒加载 + 复制 + 灰化 + typography**：#12 → #3 → #4 → #11 → #10 — 都集中在 ConversationView + pathUtils 文件，串行做最经济：先 #12（pathUtils 改算法 + 灰化样式，是后面所有 conversation 行为的基础，selectedId 不再截断 path）→ #3（scroll-to-bottom）→ #4（lazy load 切片）→ #11（每条 message 加复制按钮）→ #10（typography theme.extend 微调）。ship 顺序中 #11 不依赖 #10 但落地范围交叠，连着改 commit 干净
+- **M4 hover-to-pan + auto-unfold**：#5 — 跨组件，依赖 M3 already 落地的 path-rendering scaffolding（#12 后 conversation message 全 path 都渲染了，hover 任何一条都可触发 pan）
 - **M5 文件改动语义**：#9 — 独立，可以放在任何位置；建议放最后避免跟 panel 改动 merge 冲突
 
 每个 milestone **独立 commit**（可单独 revert）；commit 信息照之前 v0.7.1 / v0.8 风格。
