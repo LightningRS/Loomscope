@@ -28,3 +28,21 @@ body,
 .react-flow__panel.react-flow__attribution {
   display: none;
 }
+
+/* Inline-code wrap belt-and-suspenders. Typography plugin already sets
+   `overflow-wrap: anywhere` + `word-break: break-word` via theme.extend
+   (tailwind.config.js), but that lives in the components layer and the
+   chip's padding can still produce visible overflow if any parent
+   utility nudges the cascade. Force the issue here in the utilities
+   layer with `!important` so long inline tokens like
+   `copy-msg-${role}-${chatNodeId}` always wrap inside narrow
+   DrillPanel widths. Re-verify on @tailwindcss/typography upgrades:
+   if the plugin grows native wrap support this rule becomes
+   redundant and can be dropped. */
+@layer utilities {
+  .prose code,
+  .prose-sm code {
+    overflow-wrap: anywhere !important;
+    word-break: break-all !important;
+  }
+}
