@@ -209,3 +209,66 @@ describe("DrillPanel 2-tab strip (v0.8 M3)", () => {
     expect(detail.textContent).toContain("p2");
   });
 });
+
+describe("DrillPanel TabStrip (v0.8.1 #1: collapse + breadcrumb folded into tabs)", () => {
+  it("does NOT render the v0.8 'DETAIL' header text — that was redundant with the tab labels", () => {
+    const cf = chatFlow(SID, [chatNode("p1")]);
+    const { container } = render(
+      <DrillPanel
+        sessionId={SID}
+        chatFlow={cf}
+        viewMode="chatflow"
+        drilledChatNode={null}
+      />,
+    );
+    // The literal "DETAIL" uppercase header from v0.8 M3 is gone.
+    // Tab labels "Detail" / "Conversation" are the new chrome.
+    expect(container.textContent).not.toMatch(/DETAIL/);
+  });
+
+  it("collapse button moved into the tab strip (right-aligned)", () => {
+    const cf = chatFlow(SID, [chatNode("p1")]);
+    render(
+      <DrillPanel
+        sessionId={SID}
+        chatFlow={cf}
+        viewMode="chatflow"
+        drilledChatNode={null}
+      />,
+    );
+    const tabs = screen.getByTestId("drill-panel-tabs");
+    const collapse = screen.getByTestId("drill-panel-collapse");
+    expect(tabs.contains(collapse)).toBe(true);
+  });
+
+  it("workflow-mode breadcrumb moved into the tab strip", () => {
+    const cf = chatFlow(SID, [chatNode("p1")]);
+    render(
+      <DrillPanel
+        sessionId={SID}
+        chatFlow={cf}
+        viewMode="workflow"
+        drilledChatNode={cf.chatNodes[0]}
+      />,
+    );
+    const tabs = screen.getByTestId("drill-panel-tabs");
+    const breadcrumb = screen.getByTestId("drill-panel-breadcrumb");
+    expect(tabs.contains(breadcrumb)).toBe(true);
+    expect(breadcrumb.textContent).toContain("p1".slice(0, 8));
+  });
+
+  it("clicking the moved collapse button still toggles the panel", () => {
+    const cf = chatFlow(SID, [chatNode("p1")]);
+    render(
+      <DrillPanel
+        sessionId={SID}
+        chatFlow={cf}
+        viewMode="chatflow"
+        drilledChatNode={null}
+      />,
+    );
+    expect(useStore.getState().drillPanelCollapsed).toBe(false);
+    fireEvent.click(screen.getByTestId("drill-panel-collapse"));
+    expect(useStore.getState().drillPanelCollapsed).toBe(true);
+  });
+});

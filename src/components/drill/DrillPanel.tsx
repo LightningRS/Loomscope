@@ -62,12 +62,13 @@ export function DrillPanel({ sessionId, chatFlow, viewMode, drilledChatNode }: P
       style={{ width, minWidth: width, maxWidth: width }}
     >
       <ResizeHandle width={width} setWidth={setWidth} />
-      <Header
+      <TabStrip
+        activeTab={tab}
+        onSelect={setTab}
         viewMode={viewMode}
         drilledChatNode={drilledChatNode}
         onCollapse={toggle}
       />
-      <TabStrip activeTab={tab} onSelect={setTab} />
       <div className="flex-1 min-h-0 overflow-y-auto p-3">
         {tab === "detail" && (
           <DetailTabContent
@@ -85,15 +86,27 @@ export function DrillPanel({ sessionId, chatFlow, viewMode, drilledChatNode }: P
   );
 }
 
-// 2-tab strip — sits between Header and content. Per hard constraint
-// #11, switching between tabs MUST not affect Detail tab content
-// behaviour (it's just a visibility toggle, not a re-render trigger).
+// 2-tab strip — top of panel, replacing the v0.8 Header. The "DETAIL"
+// uppercase header was redundant once tabs existed (Detail and
+// Conversation are tab labels themselves); v0.8.1 #1 removes it and
+// folds the breadcrumb (workflow-mode `↳ CN xxxxxxxx`) + collapse
+// button into this strip on the right side.
+//
+// Per hard constraint #11, switching between tabs MUST not affect
+// Detail tab content behaviour (it's just a visibility toggle, not a
+// re-render trigger).
 function TabStrip({
   activeTab,
   onSelect,
+  viewMode,
+  drilledChatNode,
+  onCollapse,
 }: {
   activeTab: DrillPanelTab;
   onSelect: (tab: DrillPanelTab) => void;
+  viewMode: "chatflow" | "workflow" | "sub-chatflow";
+  drilledChatNode: ChatNode | null;
+  onCollapse: () => void;
 }) {
   return (
     <div
@@ -112,6 +125,30 @@ function TabStrip({
         testId="drill-panel-tab-conversation"
         label="Conversation"
       />
+      {viewMode === "workflow" && drilledChatNode && (
+        // Mode-following breadcrumb: keep parent ChatNode visible
+        // even when the panel is rendering WorkNode detail (preserves
+        // v0.4 design choice 2). Sits between tab buttons and the
+        // collapse button so it gets squeezed first when the panel
+        // is narrow — both tabs and collapse stay clickable.
+        <span
+          className="ml-2 inline-flex min-w-0 items-center gap-1 truncate text-[10px] text-gray-400 font-mono"
+          title={drilledChatNode.id}
+          data-testid="drill-panel-breadcrumb"
+        >
+          <span>↳</span>
+          <span className="truncate">CN {drilledChatNode.id.slice(0, 8)}</span>
+        </span>
+      )}
+      <button
+        type="button"
+        className="ml-auto flex h-6 w-6 items-center justify-center rounded text-gray-400 hover:bg-gray-200 hover:text-gray-700 transition-colors"
+        onClick={onCollapse}
+        title="Collapse panel"
+        data-testid="drill-panel-collapse"
+      >
+        ▶
+      </button>
     </div>
   );
 }
@@ -197,46 +234,6 @@ function DetailTabContent({
       )}
       {focused.kind === "empty" && <EmptyHint label="进入工作流后选 WorkNode 查看" />}
     </>
-  );
-}
-
-function Header({
-  viewMode,
-  drilledChatNode,
-  onCollapse,
-}: {
-  viewMode: "chatflow" | "workflow" | "sub-chatflow";
-  drilledChatNode: ChatNode | null;
-  onCollapse: () => void;
-}) {
-  return (
-    <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-gray-200 bg-white">
-      <span className="text-[10px] font-semibold tracking-widest text-gray-500">
-        DETAIL
-      </span>
-      {viewMode === "workflow" && drilledChatNode && (
-        // Mode-following + breadcrumb: keep parent ChatNode visible
-        // even when the panel is rendering WorkNode detail (per
-        // design抉择 2).
-        <span
-          className="ml-1 inline-flex items-center gap-1 truncate text-[10px] text-gray-400 font-mono"
-          title={drilledChatNode.id}
-          data-testid="drill-panel-breadcrumb"
-        >
-          <span>↳</span>
-          <span className="truncate">CN {drilledChatNode.id.slice(0, 8)}</span>
-        </span>
-      )}
-      <button
-        type="button"
-        className="ml-auto flex h-6 w-6 items-center justify-center rounded text-gray-400 hover:bg-gray-200 hover:text-gray-700 transition-colors"
-        onClick={onCollapse}
-        title="Collapse panel"
-        data-testid="drill-panel-collapse"
-      >
-        ▶
-      </button>
-    </div>
   );
 }
 
