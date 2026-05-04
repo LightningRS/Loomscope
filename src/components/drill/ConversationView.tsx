@@ -23,6 +23,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { useCanvasPanShim } from "@/canvas/CanvasPanContext";
 import { MarkdownView } from "@/components/MarkdownView";
 import {
   findLatestLeafInSubtree,
@@ -53,6 +54,11 @@ const TOKEN_BUDGET_INITIAL = 50_000;
 const TOKEN_BUDGET_EXTEND = 30_000;
 const SCROLL_TOP_THRESHOLD = 200;
 
+// v0.8.1 #5: hover-to-pan dwell. 250ms felt right in user testing —
+// shorter and casual scroll-throughs trigger pans; longer and the
+// "I'm pointing at this" intent feels delayed.
+const HOVER_PAN_DELAY_MS = 250;
+
 export function ConversationView({ sessionId, chatFlow }: Props) {
   const selectedId = useStore(
     (s) => s.sessions.get(sessionId)?.selectedNodeId ?? null,
@@ -62,6 +68,7 @@ export function ConversationView({ sessionId, chatFlow }: Props) {
   );
   const setSelected = useStore((s) => s.setSelected);
   const pickBranch = useStore((s) => s.pickBranch);
+  const panToChatNode = useCanvasPanShim();
 
   const { path, forks, selectedIndex } = useMemo(
     () => resolvePath(chatFlow, selectedId),
@@ -182,6 +189,7 @@ export function ConversationView({ sessionId, chatFlow }: Props) {
                 skipNextScrollRef.current = true;
                 setSelected(sessionId, nid);
               }}
+              onHoverDwell={() => panToChatNode(nid)}
             />
             {fork && (
               <BranchSelector
@@ -219,20 +227,44 @@ function MessageBubble({
   isSelected,
   isDimmed,
   onSelect,
+  onHoverDwell,
 }: {
   chatNode: ChatNode;
   isSelected: boolean;
   isDimmed: boolean;
   onSelect: () => void;
+  onHoverDwell: () => void;
 }) {
   const userText = useMemo(() => extractText(chatNode.userMessage.content), [chatNode]);
   const assistantText = useMemo(() => lastAssistantText(chatNode), [chatNode]);
+  // v0.8.1 #5: 250ms hover dwell timer. mouseenter starts it,
+  // mouseleave clears it. Clearing on unmount is automatic via the
+  // ref-cleanup pattern (we only carry one timer per bubble).
+  const hoverTimerRef = useRef<number | null>(null);
+  const startDwell = useCallback(() => {
+    if (hoverTimerRef.current !== null) {
+      window.clearTimeout(hoverTimerRef.current);
+    }
+    hoverTimerRef.current = window.setTimeout(() => {
+      hoverTimerRef.current = null;
+      onHoverDwell();
+    }, HOVER_PAN_DELAY_MS);
+  }, [onHoverDwell]);
+  const cancelDwell = useCallback(() => {
+    if (hoverTimerRef.current !== null) {
+      window.clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+  }, []);
+  useEffect(() => () => cancelDwell(), [cancelDwell]);
   return (
     <div
       data-testid={`conversation-bubble-${chatNode.id}`}
       data-selected={isSelected ? "true" : "false"}
       data-dimmed={isDimmed ? "true" : "false"}
       onClick={onSelect}
+      onMouseEnter={startDwell}
+      onMouseLeave={cancelDwell}
       className={[
         "group relative cursor-pointer pl-3 transition-all",
         isSelected

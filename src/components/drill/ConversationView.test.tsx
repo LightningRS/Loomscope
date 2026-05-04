@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 
+import { CanvasPanContext } from "@/canvas/CanvasPanContext";
 import { ConversationView, packStartIdx } from "@/components/drill/ConversationView";
 import { useStore } from "@/store/index";
 import type { ChatFlow, ChatNode } from "@/data/types";
@@ -352,6 +353,59 @@ describe("ConversationView — v0.8.1 #4 lazy slice render", () => {
     // All bubbles still render.
     expect(screen.getByTestId("conversation-bubble-a")).toBeTruthy();
     expect(screen.getByTestId("conversation-bubble-c")).toBeTruthy();
+  });
+});
+
+describe("ConversationView — v0.8.1 #5 hover-to-pan dwell", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  function renderWithPan(panFn: (id: string) => void, cf: ChatFlow, selectedId: string) {
+    seed(cf, selectedId);
+    const ref = { current: panFn as ((id: string) => void) | null };
+    return render(
+      <CanvasPanContext.Provider value={{ ref }}>
+        <ConversationView sessionId={SID} chatFlow={cf} />
+      </CanvasPanContext.Provider>,
+    );
+  }
+
+  it("calls panToChatNode after 250ms dwell on a bubble", () => {
+    const panSpy = vi.fn();
+    const cf = flow([cn("a", null), cn("b", "a")]);
+    renderWithPan(panSpy, cf, "b");
+    fireEvent.mouseEnter(screen.getByTestId("conversation-bubble-a"));
+    // Not yet — under threshold.
+    vi.advanceTimersByTime(200);
+    expect(panSpy).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(60);
+    expect(panSpy).toHaveBeenCalledWith("a");
+  });
+
+  it("mouseleave before 250ms cancels the pending pan", () => {
+    const panSpy = vi.fn();
+    const cf = flow([cn("a", null), cn("b", "a")]);
+    renderWithPan(panSpy, cf, "b");
+    const bubble = screen.getByTestId("conversation-bubble-a");
+    fireEvent.mouseEnter(bubble);
+    vi.advanceTimersByTime(100);
+    fireEvent.mouseLeave(bubble);
+    vi.advanceTimersByTime(500);
+    expect(panSpy).not.toHaveBeenCalled();
+  });
+
+  it("mouseenter on another bubble before 250ms restarts the timer for the new target", () => {
+    const panSpy = vi.fn();
+    const cf = flow([cn("a", null), cn("b", "a")]);
+    renderWithPan(panSpy, cf, "b");
+    fireEvent.mouseEnter(screen.getByTestId("conversation-bubble-a"));
+    vi.advanceTimersByTime(100);
+    fireEvent.mouseLeave(screen.getByTestId("conversation-bubble-a"));
+    fireEvent.mouseEnter(screen.getByTestId("conversation-bubble-b"));
+    vi.advanceTimersByTime(260);
+    // Only "b" fires — "a" was cancelled.
+    expect(panSpy).toHaveBeenCalledTimes(1);
+    expect(panSpy).toHaveBeenCalledWith("b");
   });
 });
 

@@ -89,6 +89,33 @@ export function compactIdFromFoldId(foldId: string): string {
   return foldId.slice(CHAT_FOLD_PREFIX.length);
 }
 
+// v0.8.1 #5: derive the chain of fold-host compact ids that hide
+// `targetId`, in unfold order (outer-most first). Returns an empty
+// array when the target is already visible. Pure: callers apply the
+// unfolds via the regular store action.
+export function computeUnfoldChainTo(
+  chatFlow: ChatFlow,
+  foldedCompactIds: Set<string>,
+  targetId: string,
+): string[] {
+  let working = foldedCompactIds;
+  let proj = computeFoldProjection(chatFlow, working);
+  const chain: string[] = [];
+  // Cap iterations defensively — a malformed projection that fails
+  // to peel a host on each step would otherwise loop forever.
+  const cap = working.size + 1;
+  while (proj.hidden.has(targetId) && chain.length < cap) {
+    const host = proj.foldByHidden.get(targetId);
+    if (!host) break;
+    chain.push(host);
+    const next = new Set(working);
+    next.delete(host);
+    working = next;
+    proj = computeFoldProjection(chatFlow, working);
+  }
+  return chain;
+}
+
 // Compute the projection. Returns an empty projection (all maps empty)
 // when ``foldedCompactIds`` is empty — callers should short-circuit
 // in that common case before iterating. Stable wrt input ordering:

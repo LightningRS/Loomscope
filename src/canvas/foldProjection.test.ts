@@ -20,6 +20,7 @@ import {
   chatFoldIdFor,
   compactIdFromFoldId,
   computeFoldProjection,
+  computeUnfoldChainTo,
   isChatFoldId,
 } from "@/canvas/foldProjection";
 import type { ChatFlow, ChatNode } from "@/data/types";
@@ -355,5 +356,49 @@ describe("computeFoldProjection — defensive guards", () => {
     // And the attribution is exactly to each respective host.
     expect(proj.foldByHidden.get("a")).toBe("d1");
     expect(proj.foldByHidden.get("b")).toBe("d2");
+  });
+});
+
+
+// ────────────────────────────────────────────────────────────────────
+// computeUnfoldChainTo (v0.8.1 #5)
+// ────────────────────────────────────────────────────────────────────
+
+describe("computeUnfoldChainTo — fold-chain peel for hover-to-pan", () => {
+  it("returns [] when target is already visible", () => {
+    const cf = chatFlow([
+      chatNode("a", null),
+      chatNode("b", "a"),
+      chatNode("c", "b", true, "b"),
+    ]);
+    expect(computeUnfoldChainTo(cf, new Set(["c"]), "c")).toEqual([]);
+    expect(computeUnfoldChainTo(cf, new Set(), "a")).toEqual([]);
+  });
+
+  it("returns the host that hides target when one fold absorbs it", () => {
+    const cf = chatFlow([
+      chatNode("a", null),
+      chatNode("b", "a"),
+      chatNode("c", "b", true, "b"),
+    ]);
+    expect(computeUnfoldChainTo(cf, new Set(["c"]), "a")).toEqual(["c"]);
+    expect(computeUnfoldChainTo(cf, new Set(["c"]), "b")).toEqual(["c"]);
+  });
+
+  it("peels nested compacts outer-first when target hides under both", () => {
+    // a → b → c → d(compact_inner over c) → e → f(compact_outer over e+d+c+b+a)
+    const cf = chatFlow([
+      chatNode("a", null),
+      chatNode("b", "a"),
+      chatNode("c", "b"),
+      chatNode("d", "c", true, "c"),
+      chatNode("e", "d"),
+      chatNode("f", "e", true, "e"),
+    ]);
+    // Both folded → outer wins largest-first → unfolding outer first.
+    const chain = computeUnfoldChainTo(cf, new Set(["d", "f"]), "a");
+    // f absorbs everything (a..e + d). After unfold f, d still hides
+    // a..c. So chain = [f, d].
+    expect(chain).toEqual(["f", "d"]);
   });
 });

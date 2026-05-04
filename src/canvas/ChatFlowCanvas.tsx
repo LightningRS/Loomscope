@@ -12,7 +12,7 @@
 // "default-fold old ChatNodes" optimization once we hit perf walls per
 // `requirements.md`).
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   Background,
@@ -28,6 +28,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
+import { CanvasPanContext } from "@/canvas/CanvasPanContext";
 import { layoutChatFlow } from "@/canvas/layoutDag";
 import { ModelRibbonLayer } from "@/canvas/ModelRibbonLayer";
 import { ChatFoldNodeCard } from "@/canvas/nodes/ChatFoldNodeCard";
@@ -37,7 +38,7 @@ import {
   FoldAnchorContext,
   type FoldAnchorAPI,
 } from "@/canvas/FoldAnchorContext";
-import { isChatFoldId } from "@/canvas/foldProjection";
+import { computeUnfoldChainTo, isChatFoldId } from "@/canvas/foldProjection";
 import type { ChatFlow } from "@/data/types";
 import { useStore } from "@/store/index";
 
@@ -313,6 +314,71 @@ function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasIn
     });
     focusedSessionRef.current = chatFlow.id;
   }, [chatFlow.id, latestNodeId, latestNodeMeasured, rf]);
+
+  // v0.8.1 #5: register a pan-to-chat-node handler that ConversationView
+  // hover triggers can call. The handler:
+  //   1. computes the fold-host chain hiding `targetId` (if any)
+  //   2. unfolds them in order from outer-most → inner-most
+  //   3. stashes a pending pan target so the next layout commit
+  //      centres the canvas on the now-visible node.
+  //
+  // Auto-unfold here deliberately does NOT go through FoldAnchorContext.
+  // Anchor's contract is "preserve the user's MANUAL hand on the
+  // wheel"; for the auto path we want the canvas to slide to the
+  // newly-visible target, not stay glued to where the host used to be.
+  const panCtx = useContext(CanvasPanContext);
+  const pendingPanRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!panCtx) return;
+    panCtx.ref.current = (targetId: string) => {
+      const cur = useStore.getState().sessions.get(sessionId);
+      if (!cur || !cur.chatFlow) return;
+      const chain = computeUnfoldChainTo(
+        cur.chatFlow,
+        cur.foldedCompactIds,
+        targetId,
+      );
+      // Apply unfolds via the regular store actions (each one persists
+      // to localStorage in turn). After the loop, target is visible.
+      for (const host of chain) {
+        unfoldAction(sessionId, host);
+      }
+      pendingPanRef.current = targetId;
+      // If no unfold was needed, the next layout commit isn't coming
+      // — pan immediately. Otherwise the [nodes]-effect below picks
+      // it up after layoutChatFlow re-runs.
+      if (chain.length === 0) {
+        const node = rf.getNode(targetId);
+        if (node) {
+          const vp = rf.getViewport();
+          rf.setCenter(
+            node.position.x + (node.measured?.width ?? 0) / 2,
+            node.position.y + (node.measured?.height ?? 0) / 2,
+            { zoom: vp.zoom, duration: 200 },
+          );
+        }
+        pendingPanRef.current = null;
+      }
+    };
+    return () => {
+      if (panCtx.ref.current) panCtx.ref.current = null;
+    };
+  }, [panCtx, sessionId, rf, unfoldAction]);
+
+  // After each layout commit, drain the pending pan target.
+  useEffect(() => {
+    const target = pendingPanRef.current;
+    if (!target) return;
+    const node = rf.getNode(target);
+    if (!node) return; // Still hidden — wait for the next layout.
+    const vp = rf.getViewport();
+    rf.setCenter(
+      node.position.x + (node.measured?.width ?? 0) / 2,
+      node.position.y + (node.measured?.height ?? 0) / 2,
+      { zoom: vp.zoom, duration: 200 },
+    );
+    pendingPanRef.current = null;
+  }, [nodes, rf]);
 
   // Apply the captured fold anchor: after every layout commit (= nodes
   // identity changed), if a fold/unfold has just stashed an anchor,
