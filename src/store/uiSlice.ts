@@ -23,6 +23,7 @@ export const createUISlice: StateCreator<LoomscopeStore, [], [], UISlice> = (set
   // caches the pre-fullscreen drag width so toggling back restores it.
   drillPanelFullscreen: false,
   prevDrillPanelWidth: null,
+  conversationHoveredChatNodeId: null,
   // Default "detail" preserves v0.4-v0.7 single-view behaviour for
   // first-time users; persisted via partialize so subsequent loads
   // honour the user's last selection.
@@ -74,6 +75,9 @@ export const createUISlice: StateCreator<LoomscopeStore, [], [], UISlice> = (set
         prevDrillPanelWidth: s.drillPanelWidth,
       };
     }),
+
+  setConversationHoveredChatNodeId: (id) =>
+    set({ conversationHoveredChatNodeId: id }),
 
   setDrillPanelTab: (tab) => set({ drillPanelTab: tab }),
 

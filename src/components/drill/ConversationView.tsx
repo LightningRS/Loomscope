@@ -153,6 +153,9 @@ export function ConversationView({ sessionId, chatFlow }: Props) {
   // mean MarkdownView re-parses, which becomes the dominant resize-lag
   // cost on long conversations. Pass primitives (chatNodeId) to the
   // bubble; bubble composes its own click handler internally.
+  const setConversationHovered = useStore(
+    (s) => s.setConversationHoveredChatNodeId,
+  );
   const handleSelect = useCallback(
     (nid: string) => {
       skipNextScrollRef.current = true;
@@ -163,9 +166,13 @@ export function ConversationView({ sessionId, chatFlow }: Props) {
   const handleHoverDwell = useCallback(
     (nid: string) => {
       panToChatNode(nid);
+      setConversationHovered(nid);
     },
-    [panToChatNode],
+    [panToChatNode, setConversationHovered],
   );
+  const handleHoverEnd = useCallback(() => {
+    setConversationHovered(null);
+  }, [setConversationHovered]);
 
   if (!chatFlow || path.length === 0) {
     return (
@@ -207,6 +214,7 @@ export function ConversationView({ sessionId, chatFlow }: Props) {
               isDimmed={isDimmed}
               onSelect={handleSelect}
               onHoverDwell={handleHoverDwell}
+              onHoverEnd={handleHoverEnd}
             />
             {fork && (
               <BranchSelector
@@ -253,12 +261,14 @@ function MessageBubbleImpl({
   isDimmed,
   onSelect,
   onHoverDwell,
+  onHoverEnd,
 }: {
   chatNode: ChatNode;
   isSelected: boolean;
   isDimmed: boolean;
   onSelect: (chatNodeId: string) => void;
   onHoverDwell: (chatNodeId: string) => void;
+  onHoverEnd: () => void;
 }) {
   const userText = useMemo(() => extractText(chatNode.userMessage.content), [chatNode]);
   const assistantText = useMemo(() => lastAssistantText(chatNode), [chatNode]);
@@ -280,7 +290,13 @@ function MessageBubbleImpl({
       window.clearTimeout(hoverTimerRef.current);
       hoverTimerRef.current = null;
     }
-  }, []);
+    // Clear the conversation-hover highlight on canvas regardless of
+    // whether the dwell already fired. If the user moved cursor away
+    // before the 250ms threshold, we never set the highlight — the
+    // call is a no-op in that case (clears to null which is already
+    // null).
+    onHoverEnd();
+  }, [onHoverEnd]);
   const handleClick = useCallback(() => onSelect(chatNode.id), [onSelect, chatNode.id]);
   useEffect(() => () => cancelDwell(), [cancelDwell]);
   return (

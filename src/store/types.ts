@@ -29,6 +29,12 @@ export interface UISlice {
   // the pre-fullscreen width so toggling back restores it.
   drillPanelFullscreen: boolean;
   prevDrillPanelWidth: number | null;
+  // v0.8.1 polish: chatNodeId currently being hovered in the
+  // Conversation tab (after the 250ms dwell threshold). Drives a
+  // dashed-outline highlight on the corresponding ChatNodeCard so
+  // the user can see which canvas card the hovered message maps to.
+  // Cleared on bubble mouseleave. Transient — not persisted.
+  conversationHoveredChatNodeId: string | null;
   pinnedWorkspaces: string[];
   hiddenWorkspaces: string[];
   focusedWorkspace: string | null;
@@ -38,6 +44,7 @@ export interface UISlice {
   setDrillPanelWidth: (w: number) => void;
   toggleDrillPanel: () => void;
   toggleDrillPanelFullscreen: () => void;
+  setConversationHoveredChatNodeId: (id: string | null) => void;
   setDrillPanelTab: (tab: DrillPanelTab) => void;
   pinWorkspace: (cwd: string) => void;
   unpinWorkspace: (cwd: string) => void;

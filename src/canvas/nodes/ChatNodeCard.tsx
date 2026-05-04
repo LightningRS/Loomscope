@@ -20,7 +20,7 @@ import { type ChatNodeRFNode } from "@/canvas/layoutDag";
 import { NodeIdLine } from "@/canvas/nodes/chrome/NodeIdLine";
 import { TokenBar } from "@/canvas/nodes/chrome/TokenBar";
 import { useStore } from "@/store/index";
-import { useIsChatNodeSelected } from "@/store/selectionHooks";
+import { useIsChatNodeSelected, useIsConversationHovered } from "@/store/selectionHooks";
 
 export function ChatNodeCard({ id, data }: NodeProps<ChatNodeRFNode>) {
   const cn = data.chatNode;
@@ -31,6 +31,13 @@ export function ChatNodeCard({ id, data }: NodeProps<ChatNodeRFNode>) {
   // Flow to reconcile the entire graph. Subscribing per-card means
   // 1498 cards see `false → false` and skip re-render.
   const selected = useIsChatNodeSelected(id);
+  // v0.8.1 polish: dashed outline when the corresponding message is
+  // being hovered in the Conversation panel (after dwell threshold).
+  // Using `outline` instead of `border` so it doesn't fight with the
+  // existing selected/scheduled/leaf border palette and doesn't
+  // affect layout. Per-card subscription via the hook (single bool)
+  // so 1499 cards skip re-render — only the enter/leave pair flips.
+  const conversationHovered = useIsConversationHovered(id);
   const compact = data.isCompactSummary;
   const triggerSchedule = cn.trigger === "scheduled";
   const slash = data.slashCommand;
@@ -107,6 +114,14 @@ export function ChatNodeCard({ id, data }: NodeProps<ChatNodeRFNode>) {
         accentClass,
         borderClass,
       ].join(" ")}
+      style={
+        conversationHovered
+          ? {
+              outline: "2px dashed rgb(96 165 250)",
+              outlineOffset: "2px",
+            }
+          : undefined
+      }
       data-testid={`chat-node-${cn.id}`}
     >
       {/* Handles — invisible 0×0 when no edge connects (viewer mode). */}

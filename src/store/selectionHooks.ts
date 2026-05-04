@@ -32,3 +32,11 @@ export function useIsWorkNodeSelected(id: string): boolean {
     return s.sessions.get(sid)?.workflowSelectedNodeId === id;
   });
 }
+
+/** True iff `id` is the ChatNode currently being hovered in the
+ * Conversation tab (after the dwell threshold). Same per-card pattern
+ * as `useIsChatNodeSelected` so 1499 cards skip re-render and only the
+ * enter / leave pair flips. */
+export function useIsConversationHovered(id: string): boolean {
+  return useStore((s) => s.conversationHoveredChatNodeId === id);
+}
