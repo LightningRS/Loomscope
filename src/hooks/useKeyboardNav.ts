@@ -1,8 +1,14 @@
-// Global keyboard navigation. Vim-ish: j/k for prev/next ChatNode in
-// the current path, Enter to drill into the focused ChatNode's
-// WorkFlow, Esc to pop the drill stack.
+// Global keyboard navigation. Arrow Left/Right map prev/next ChatNode
+// along the conversation path — matches the canvas's LR layout (time
+// flows left→right, so right = forward, left = backward). Enter drills
+// into the focused ChatNode's WorkFlow; Esc pops the drill stack.
 //
-// Only ChatNode-level navigation is wired. WorkFlow-level j/k could
+// j/k were considered (Vim convention) but felt inverted in an LR
+// canvas — "j = down = next" doesn't read the same way as "right =
+// next" when nodes flow horizontally. Arrows-only keeps the mental
+// model 1:1 with what's on screen.
+//
+// Only ChatNode-level navigation is wired. WorkFlow-level nav could
 // land later but isn't on the v0.10 list.
 //
 // Stale-closure-proof: handler reads fresh state via useStore.getState()
@@ -45,7 +51,8 @@ export function useKeyboardNav(): void {
       // pathUtils.resolvePath only knows the top-level fork map.)
       const drillStack = sess?.drillStack ?? [];
 
-      if (e.key === "j" || e.key === "ArrowDown") {
+      if (e.key === "ArrowRight") {
+        // forward in time / down the chain — matches canvas LR layout
         e.preventDefault();
         const sel =
           sess?.selectedNodeId ?? findLatestLeafId(chatFlow) ?? null;
@@ -56,7 +63,8 @@ export function useKeyboardNav(): void {
         return;
       }
 
-      if (e.key === "k" || e.key === "ArrowUp") {
+      if (e.key === "ArrowLeft") {
+        // backward in time / up the chain
         e.preventDefault();
         const sel =
           sess?.selectedNodeId ?? findLatestLeafId(chatFlow) ?? null;

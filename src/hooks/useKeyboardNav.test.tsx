@@ -73,67 +73,63 @@ afterEach(() => {
 });
 
 describe("useKeyboardNav", () => {
-  // a → b → c → d (linear chain)
+  // a → b → c → d (linear chain). Time flows left→right on the canvas,
+  // so ArrowRight = forward = next, ArrowLeft = backward = prev.
   const linear = () => flow([cn("a", null), cn("b", "a"), cn("c", "b"), cn("d", "c")]);
 
-  it("j moves selection forward along the path", () => {
+  it("ArrowRight moves selection forward along the path", () => {
     seed(linear(), "b");
     render(<Harness />);
-    fireEvent.keyDown(window, { key: "j" });
+    fireEvent.keyDown(window, { key: "ArrowRight" });
     expect(useStore.getState().sessions.get(SID)?.selectedNodeId).toBe("c");
   });
 
-  it("ArrowDown is an alias for j", () => {
-    seed(linear(), "b");
-    render(<Harness />);
-    fireEvent.keyDown(window, { key: "ArrowDown" });
-    expect(useStore.getState().sessions.get(SID)?.selectedNodeId).toBe("c");
-  });
-
-  it("k moves selection backward along the path", () => {
+  it("ArrowLeft moves selection backward along the path", () => {
     seed(linear(), "c");
     render(<Harness />);
-    fireEvent.keyDown(window, { key: "k" });
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
     expect(useStore.getState().sessions.get(SID)?.selectedNodeId).toBe("b");
   });
 
-  it("ArrowUp is an alias for k", () => {
-    seed(linear(), "c");
-    render(<Harness />);
-    fireEvent.keyDown(window, { key: "ArrowUp" });
-    expect(useStore.getState().sessions.get(SID)?.selectedNodeId).toBe("b");
-  });
-
-  it("k at root is a no-op (idx 0 has no prev)", () => {
+  it("ArrowLeft at root is a no-op (idx 0 has no prev)", () => {
     seed(linear(), "a");
     render(<Harness />);
-    fireEvent.keyDown(window, { key: "k" });
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
     expect(useStore.getState().sessions.get(SID)?.selectedNodeId).toBe("a");
   });
 
-  it("j at leaf is a no-op", () => {
+  it("ArrowRight at leaf is a no-op", () => {
     seed(linear(), "d");
     render(<Harness />);
-    fireEvent.keyDown(window, { key: "j" });
+    fireEvent.keyDown(window, { key: "ArrowRight" });
     expect(useStore.getState().sessions.get(SID)?.selectedNodeId).toBe("d");
   });
 
-  it("with no selection, j seeds at the latest leaf and moves to leaf-then-no-op", () => {
-    // First j: with sel=null, idx defaults to path.length-1 (= leaf), no
-    // next, so no-op. Second press doesn't move either. Doesn't crash.
+  it("with no selection, ArrowRight at the implicit leaf is a no-op", () => {
+    // sel=null → endpoint = latest leaf → no next available
     seed(linear(), null);
     render(<Harness />);
-    fireEvent.keyDown(window, { key: "j" });
-    // No selection set because j at leaf is a no-op.
+    fireEvent.keyDown(window, { key: "ArrowRight" });
     expect(useStore.getState().sessions.get(SID)?.selectedNodeId).toBeNull();
   });
 
-  it("with no selection, k moves from latest leaf to leaf-1", () => {
+  it("with no selection, ArrowLeft moves from latest leaf to leaf-1", () => {
     seed(linear(), null);
     render(<Harness />);
-    fireEvent.keyDown(window, { key: "k" });
-    // Default endpoint = leaf "d", k → "c"
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    // Default endpoint = leaf "d", left → "c"
     expect(useStore.getState().sessions.get(SID)?.selectedNodeId).toBe("c");
+  });
+
+  it("ArrowDown / ArrowUp / j / k are NOT mapped (only horizontal arrows)", () => {
+    // LR canvas — vertical-axis keys would feel reversed (j=down ≠ next).
+    // Confirm none of them move selection.
+    seed(linear(), "b");
+    render(<Harness />);
+    for (const key of ["ArrowDown", "ArrowUp", "j", "k"]) {
+      fireEvent.keyDown(window, { key });
+    }
+    expect(useStore.getState().sessions.get(SID)?.selectedNodeId).toBe("b");
   });
 
   it("Enter from top-level ChatFlow view enters WorkFlow drill", () => {
@@ -170,7 +166,7 @@ describe("useKeyboardNav", () => {
     );
     const input = document.querySelector('[data-testid="input"]') as HTMLInputElement;
     input.focus();
-    fireEvent.keyDown(input, { key: "j", bubbles: true });
+    fireEvent.keyDown(input, { key: "ArrowRight", bubbles: true });
     // Selection unchanged
     expect(useStore.getState().sessions.get(SID)?.selectedNodeId).toBe("b");
   });
@@ -178,13 +174,13 @@ describe("useKeyboardNav", () => {
   it("ignores keys with modifier (Meta/Ctrl/Alt)", () => {
     seed(linear(), "b");
     render(<Harness />);
-    fireEvent.keyDown(window, { key: "j", ctrlKey: true });
+    fireEvent.keyDown(window, { key: "ArrowRight", ctrlKey: true });
     expect(useStore.getState().sessions.get(SID)?.selectedNodeId).toBe("b");
   });
 
   it("no-op when no active session", () => {
     render(<Harness />);
-    fireEvent.keyDown(window, { key: "j" });
+    fireEvent.keyDown(window, { key: "ArrowRight" });
     expect(useStore.getState().activeSessionId).toBeNull();
     // Doesn't throw.
   });
