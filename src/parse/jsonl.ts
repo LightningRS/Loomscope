@@ -575,14 +575,17 @@ function buildChatNode(
 
   const compactWorkNode = workflow.nodes.find((n) => n.kind === "compact");
   const slashCommand = detectSlashCommand(bucket.records);
-  // v0.8: hoist forkedFrom from any record in this bucket onto the
-  // ChatNode. CC `/branch` writes the same forkedFrom on every record
-  // copied into the new fork session, so all bucket records sharing one
-  // promptId carry the same value by construction. We take the first
-  // we see and warn (console.warn) if a later record disagrees — an
-  // inconsistent bucket would mean the source jsonl was hand-edited
-  // or written by a different tool than CC `/branch`.
-  const forkedFrom = detectForkedFrom(bucket);
+  // v0.8: hoist forkedFrom onto the ChatNode. CC `/branch` writes
+  // forkedFrom on every record copied into the new fork session, but
+  // `messageUuid` is the COPIED RECORD'S OWN uuid (different per
+  // record). Only `sessionId` is uniform across the bucket. Hoist:
+  //   - sessionId  : from rootUser.forkedFrom (sanity-checked equal
+  //                  across bucket; warn on mismatch)
+  //   - messageUuid: from rootUser.forkedFrom — points at the source
+  //                  bucket's rootUser, the canonical "source ChatNode
+  //                  identifier" in the original session
+  // Non-fork buckets (no forkedFrom on rootUser) → undefined.
+  const forkedFrom = detectForkedFrom(rootUser, bucket);
   return {
     kind: "chat",
     id: bucket.promptId,
@@ -602,35 +605,42 @@ function buildChatNode(
 }
 
 function detectForkedFrom(
+  rootUser: RawRecord,
   bucket: PromptBucket,
 ): { sessionId: string; messageUuid: string } | undefined {
-  let chosen: { sessionId: string; messageUuid: string } | undefined;
+  // The root user record's forkedFrom is the canonical hoist source:
+  // its messageUuid (= the record's own preserved uuid) uniquely
+  // identifies the source bucket's root in the original session.
+  const root = rootUser.forkedFrom;
+  if (
+    !root ||
+    typeof root !== "object" ||
+    typeof root.sessionId !== "string" ||
+    typeof root.messageUuid !== "string"
+  ) {
+    return undefined;
+  }
+  // Sanity-check sessionId consistency across the bucket. CC `/branch`
+  // copies all records from one source session, so every record in a
+  // copied bucket should share forkedFrom.sessionId. (messageUuid
+  // legitimately differs per record — that's the per-record uuid.)
   for (const r of bucket.records) {
     const ff = r.forkedFrom;
     if (
-      !ff ||
-      typeof ff !== "object" ||
-      typeof ff.sessionId !== "string" ||
-      typeof ff.messageUuid !== "string"
+      ff &&
+      typeof ff === "object" &&
+      typeof ff.sessionId === "string" &&
+      ff.sessionId !== root.sessionId
     ) {
-      continue;
-    }
-    if (!chosen) {
-      chosen = { sessionId: ff.sessionId, messageUuid: ff.messageUuid };
-      continue;
-    }
-    // Multiple records carrying inconsistent forkedFrom inside one
-    // bucket — log once per bucket and stick with the first value.
-    if (chosen.sessionId !== ff.sessionId || chosen.messageUuid !== ff.messageUuid) {
       // eslint-disable-next-line no-console
       console.warn(
-        `[parser] inconsistent forkedFrom inside bucket ${bucket.promptId}: ` +
-          `${JSON.stringify(chosen)} vs ${JSON.stringify(ff)} — keeping the first`,
+        `[parser] inconsistent forkedFrom.sessionId inside bucket ${bucket.promptId}: ` +
+          `root=${root.sessionId} vs record=${ff.sessionId} — keeping rootUser's`,
       );
       break;
     }
   }
-  return chosen;
+  return { sessionId: root.sessionId, messageUuid: root.messageUuid };
 }
 
 // Detect a slash-command invocation by scanning the bucket's user records

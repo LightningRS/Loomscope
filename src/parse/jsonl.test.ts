@@ -744,33 +744,55 @@ describe("file-history-snapshot binding (v0.7)", () => {
 });
 
 describe("fork tracking — forkedFrom + custom-title (v0.8 M1)", () => {
-  // Helper: clone the synthetic fixture and stamp forkedFrom on every
-  // user/assistant record in p1 — mimics what CC `/branch` writes.
+  // Helper: clone the synthetic fixture and stamp per-record forkedFrom
+  // on the bucket records of the given promptIds, mimicking how CC
+  // `/branch` writes — sessionId uniform across bucket but messageUuid
+  // = each record's own preserved uuid (different per record).
   function withForkedRecords(
-    forkedFrom: { sessionId: string; messageUuid: string },
+    sourceSessionId: string,
     targetPromptIds: string[],
   ): RawRecord[] {
     const records = buildSyntheticRecords();
     return records.map((r) => {
-      if (r.promptId && targetPromptIds.includes(r.promptId)) {
-        return { ...r, forkedFrom };
+      if (
+        r.promptId &&
+        targetPromptIds.includes(r.promptId) &&
+        typeof r.uuid === "string"
+      ) {
+        return {
+          ...r,
+          forkedFrom: { sessionId: sourceSessionId, messageUuid: r.uuid },
+        };
       }
       return r;
     });
   }
 
-  it("hoists forkedFrom from a bucket's records onto the ChatNode", () => {
-    const ff = {
-      sessionId: "original-session-aaaa-bbbb-cccc-dddddddddddd",
-      messageUuid: "src-msg-uuid-0001",
-    };
-    const records = withForkedRecords(ff, ["p1"]);
+  it("hoists forkedFrom from rootUser onto the ChatNode (sessionId + rootUser.uuid)", () => {
+    const sid = "original-session-aaaa-bbbb-cccc-dddddddddddd";
+    const records = withForkedRecords(sid, ["p1"]);
     const cf = buildChatFlow(records, FIXTURE_PATH);
     const cn1 = cf.chatNodes.find((c) => c.id === "p1");
-    expect(cn1?.forkedFrom).toEqual(ff);
+    // messageUuid points at the source bucket's rootUser uuid (= u1
+    // in our synthetic fixture, since uuid is preserved by /branch).
+    expect(cn1?.forkedFrom).toEqual({ sessionId: sid, messageUuid: fixtureUuids.u1 });
     // p2 / p3 unaffected (not stamped).
     const cn2 = cf.chatNodes.find((c) => c.id === "p2");
     expect(cn2?.forkedFrom).toBeUndefined();
+  });
+
+  it("does NOT warn when bucket records carry the same sessionId but different per-record messageUuid (= the normal /branch shape)", () => {
+    const sid = "original-session-aaaa";
+    const records = withForkedRecords(sid, ["p1"]);
+    const warn = console.warn;
+    const calls: string[] = [];
+    console.warn = (msg: string) => calls.push(msg);
+    try {
+      buildChatFlow(records, FIXTURE_PATH);
+      expect(calls.filter((m) => m.includes("forkedFrom"))).toEqual([]);
+    } finally {
+      console.warn = warn;
+    }
   });
 
   it("hoists `customTitle` from `{type: 'custom-title'}` record to ChatFlow", () => {
@@ -798,22 +820,17 @@ describe("fork tracking — forkedFrom + custom-title (v0.8 M1)", () => {
     expect(cf.orphans.find((o) => o.type === "custom-title")).toBeUndefined();
   });
 
-  it("warns + keeps the first when bucket records carry inconsistent forkedFrom", () => {
+  it("warns + keeps rootUser's when bucket records carry inconsistent forkedFrom.sessionId (hand-edited / non-/branch source)", () => {
     const records = buildSyntheticRecords();
-    const a = {
-      sessionId: "src-a-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-      messageUuid: "msg-a",
-    };
-    const b = {
-      sessionId: "src-b-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-      messageUuid: "msg-b",
-    };
-    let stamped = 0;
+    const sidA = "src-a-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    const sidB = "src-b-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+    // Stamp rootUser (u1) with sidA, stamp the next record (a1) with sidB.
     const mutated = records.map((r) => {
-      if (r.promptId === "p1" && stamped < 2) {
-        const ff = stamped === 0 ? a : b;
-        stamped += 1;
-        return { ...r, forkedFrom: ff };
+      if (r.uuid === fixtureUuids.u1) {
+        return { ...r, forkedFrom: { sessionId: sidA, messageUuid: r.uuid! } };
+      }
+      if (r.uuid === fixtureUuids.a1) {
+        return { ...r, forkedFrom: { sessionId: sidB, messageUuid: r.uuid! } };
       }
       return r;
     });
@@ -823,8 +840,11 @@ describe("fork tracking — forkedFrom + custom-title (v0.8 M1)", () => {
     try {
       const cf = buildChatFlow(mutated, FIXTURE_PATH);
       const cn1 = cf.chatNodes.find((c) => c.id === "p1");
-      expect(cn1?.forkedFrom).toEqual(a); // first wins
-      expect(calls.some((m) => m.includes("inconsistent forkedFrom"))).toBe(true);
+      // rootUser's wins — sidA + u1 uuid.
+      expect(cn1?.forkedFrom).toEqual({ sessionId: sidA, messageUuid: fixtureUuids.u1 });
+      expect(
+        calls.some((m) => m.includes("inconsistent forkedFrom.sessionId")),
+      ).toBe(true);
     } finally {
       console.warn = warn;
     }
