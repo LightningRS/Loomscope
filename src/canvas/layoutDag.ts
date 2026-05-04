@@ -34,11 +34,18 @@ export interface ChatNodeRFData extends Record<string, unknown> {
   llmCount: number;
   totalThinkingChars: number;
   isCompactSummary: boolean;
-  // Distinct file paths touched in the turn, derived from
+  // Cumulative working-tree-dirty count, derived from
   // ChatNode.meta.fileHistorySnapshots[*].trackedFiles. Used for the
-  // 📁 N stats chip on ChatNodeCard. 0 = no snapshots bound (badge
-  // hidden).
+  // 📁 N stats chip on ChatNodeCard. = "本轮累积文件改动" — every
+  // file dirty since the last commit, NOT just files this turn
+  // touched. 0 = no snapshots bound (badge hidden).
   fileTouchCount: number;
+  // v0.8.1 #9 polish: per-node file-change count = nodeOwnFileChanges
+  // (selfSnap \ parentSnap) ∪ tool_use. Drives the ✏️ N stats chip
+  // — "本节点文件改动" — only files this specific ChatNode is
+  // responsible for, stripped of the cumulative dirty set inherited
+  // from ancestors. 0 = badge hidden.
+  nodeOwnFileChangeCount: number;
   // v0.8 M5: number of immediate children of this ChatNode in the
   // (possibly merged) ChatFlow. Drives the ⑂ N fork indicator chip
   // on ChatNodeCard — surfaces when ≥2, signals "this is a fork
@@ -242,6 +249,7 @@ export function layoutChatFlow(
           hasOutgoingEdge: parentIds.has(cn.id),
         },
         childCountOf.get(cn.id) ?? 0,
+        chatFlow,
       ),
     });
   }
@@ -373,6 +381,7 @@ function deriveCardData(
   cn: ChatNode,
   edges: { hasIncomingEdge: boolean; hasOutgoingEdge: boolean },
   childCount: number,
+  chatFlow: ChatFlow,
 ): ChatNodeRFData {
   const { contextTokens, maxContextTokens } = deriveContextTokens(cn);
   return {
@@ -389,6 +398,7 @@ function deriveCardData(
     }, 0),
     isCompactSummary: cn.isCompactSummary,
     fileTouchCount: distinctTouchedFiles(cn).size,
+    nodeOwnFileChangeCount: nodeOwnFileChanges(cn, chatFlow).size,
     childCount,
     contextTokens,
     maxContextTokens,

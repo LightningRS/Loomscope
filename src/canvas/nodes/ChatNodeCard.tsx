@@ -201,10 +201,20 @@ export function ChatNodeCard({ id, data }: NodeProps<ChatNodeRFNode>) {
             ▸{Math.round(data.totalThinkingChars / 100) / 10}k
           </span>
         )}
+        {data.nodeOwnFileChangeCount > 0 && (
+          <span
+            className="inline-flex items-center gap-0.5"
+            title={`本节点文件改动 (${data.nodeOwnFileChangeCount} 个) — 仅这一节点直接造成的改动`}
+            data-testid={`chat-node-${cn.id}-self-file-changes`}
+          >
+            <span className="text-gray-400">✏️</span>
+            <span className="font-mono">{data.nodeOwnFileChangeCount}</span>
+          </span>
+        )}
         {data.fileTouchCount > 0 && (
           <span
             className="inline-flex items-center gap-0.5"
-            title={`本轮文件改动 (${data.fileTouchCount} 个)`}
+            title={`本轮累积文件改动 (${data.fileTouchCount} 个) — git 工作区自上次 commit 以来累积的 dirty 文件`}
             data-testid={`chat-node-${cn.id}-file-touch`}
           >
             <span className="text-gray-400">📁</span>
