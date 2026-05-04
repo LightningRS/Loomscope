@@ -300,23 +300,19 @@ function MessageBubbleImpl({
       ].join(" ")}
     >
       {userText && (
-        <div className="mb-2 flex justify-end">
+        <div className="mb-2 flex items-end justify-end gap-2">
+          {/* "复制" sits to the LEFT of the bubble, bottom-aligned with
+              the bubble's bottom edge. Sits on the white panel
+              background so uses the light/gray tone (not dark/white). */}
+          <CopyButton
+            text={userText}
+            role="user"
+            chatNodeId={chatNode.id}
+            tone="light"
+          />
           <div className="max-w-[85%]">
-            {/* User bubble: blue rounded-2xl. "复制" sits OUTSIDE the
-                bubble, below + left-aligned within the same 85%
-                wrapper (Agentloom style — feels lighter than text-on-
-                blue inside the bubble). On the white panel background
-                so it uses the gray "light" tone, not dark/white. */}
             <div className="prose prose-sm prose-invert rounded-2xl bg-blue-500 px-3 py-2 text-[13px] text-white break-words">
               <MarkdownView>{userText}</MarkdownView>
-            </div>
-            <div className="mt-1">
-              <CopyButton
-                text={userText}
-                role="user"
-                chatNodeId={chatNode.id}
-                tone="light"
-              />
             </div>
           </div>
         </div>
