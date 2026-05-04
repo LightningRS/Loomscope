@@ -29,23 +29,26 @@ body,
   display: none;
 }
 
-/* Inline-code wrap belt-and-suspenders. Typography plugin tries to
-   set `overflow-wrap: anywhere` via theme.extend (tailwind.config.js),
-   but in user testing — even in fresh incognito sessions — long
-   inline tokens like `copy-msg-${role}-${chatNodeId}` STILL overflow
-   the right edge in narrow DrillPanel widths. Suspected cause: the
-   `.prose-sm :where(code)` selector typography emits has zero
-   specificity from :where() and ends up losing to some other
-   utility / browser default for inline-element wrapping with
-   padding.
-   Use the most direct selector possible — `:not(pre) > code` matches
-   ONLY inline code (skipping code blocks which want x-axis scroll
-   instead) — combined with !important. Specificity 0,0,2 + !important
-   beats any prose-layer cascade. NOT scoped under @layer so cascade
-   priority is even safer.
-   Re-verify on @tailwindcss/typography upgrades: if the plugin grows
-   native wrap support this rule becomes redundant. */
+/* Inline-code styling + wrap. Tailwind typography plugin's
+   theme.extend in `tailwind.config.js` was supposed to handle these,
+   but in user testing the dev-server CSS only emitted the base
+   font-size override — the chip's background / padding / radius
+   never landed (suspected stale HMR or :where()-zero-specificity
+   loss). Pin the styling here in plain CSS so it doesn't depend on
+   typography plugin merging behaviour.
+   `:not(pre) > code` selects ONLY inline code (skipping <pre><code>
+   code blocks which want horizontal scroll, not chip styling).
+   Specificity 0,0,2 + !important beats any prose-layer cascade. */
 :not(pre) > code {
+  background-color: rgb(243 244 246); /* tailwind gray-100 */
+  color: rgb(31 41 55); /* tailwind gray-800 */
+  padding: 0.1em 0.3em;
+  border-radius: 0.25rem;
+  font-weight: 500;
+  font-size: 0.85em;
+  /* In prose-invert (dark theme — used on blue user-message bubbles),
+     light-gray-on-blue is intentional: the chip should stay readable
+     and visually distinct from the bubble's text-white surroundings. */
   overflow-wrap: anywhere !important;
   word-break: break-all !important;
 }
