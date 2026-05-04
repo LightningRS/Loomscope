@@ -660,6 +660,28 @@ describe("layoutChatFlow — fold integration", () => {
     expect(data.preTokens).toBe(50_000);
   });
 
+  it("v0.8.1 #8: chatFold's hasIncomingEdge reflects whether a visible upstream feeds the absorbed range", () => {
+    // chainWithCompact() has a → b → c → COMPACT(d, lpcn=c). When d is
+    // folded, a/b/c hidden, but a is the session root (parentChatNodeId
+    // === null) — there's no upstream visible node feeding the range,
+    // so the `parent → fold-input` edge never gets emitted.
+    //
+    // In practice with the current `computeCompactRange` semantics
+    // (walks parentChatNodeId all the way to root before stopping),
+    // every fold's range starts at a session root → hasIncomingEdge
+    // is always false, the fold-input handle never shows. The wiring
+    // stays correct defensive code: should the range algorithm ever
+    // be changed to NOT reach root (e.g. v∞ partial-fold semantics),
+    // the layoutDag tracker + ChatFoldNodeData flag flip naturally.
+    const cf = chainWithCompact();
+    const { nodes } = layoutChatFlow(cf, new Set(["d"]));
+    const fold = nodes.find((n) => n.id === "chatfold:d");
+    expect(fold).toBeDefined();
+    if (!fold) return;
+    const data = fold.data as { hasIncomingEdge: boolean };
+    expect(data.hasIncomingEdge).toBe(false);
+  });
+
   it("places the chatFold phantom upstream (left) of the host compact in LR layout", () => {
     const cf = chainWithCompact();
     const { nodes } = layoutChatFlow(cf, new Set(["d"]));

@@ -126,6 +126,10 @@ export function layoutChatFlow(
   //                         entry edges when n hidden range members
   //                         share a visible parent)
   const emittedFoldEntries = new Set<string>();
+  // v0.8.1 #8: track which fold phantoms received at least one
+  // `parent → fold` edge (= visible upstream ChatNode feeding into
+  // the absorbed range). Drives the card's left-handle visibility.
+  const foldsWithIncoming = new Set<string>();
   for (const cn of chatFlow.chatNodes) {
     const p = cn.parentChatNodeId;
     if (!p) continue;
@@ -176,6 +180,7 @@ export function layoutChatFlow(
     const key = `${p}->${foldId}`;
     if (emittedFoldEntries.has(key)) continue;
     emittedFoldEntries.add(key);
+    foldsWithIncoming.add(foldId); // v0.8.1 #8 — drives left-handle visibility
     g.setEdge(p, foldId);
     edges.push({
       id: `e-${p}->${foldId}`,
@@ -259,6 +264,7 @@ export function layoutChatFlow(
         count,
         lastMemberId,
         preTokens,
+        hasIncomingEdge: foldsWithIncoming.has(foldId),
       },
     });
   }

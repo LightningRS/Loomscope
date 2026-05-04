@@ -22,6 +22,7 @@ function defaultData(overrides: Partial<ChatFoldNodeData> = {}): ChatFoldNodeDat
     count: 3,
     lastMemberId: "tail-1",
     preTokens: 12_345,
+    hasIncomingEdge: true,
     ...overrides,
   };
 }
@@ -112,5 +113,36 @@ describe("ChatFoldNodeCard", () => {
     );
     fireEvent.click(screen.getByTestId("chatfold-host-1"));
     expect(unfold).not.toHaveBeenCalled();
+  });
+
+  // v0.8.1 #8 — left handle visibility tied to hasIncomingEdge.
+  it("renders the visible fold-input handle when hasIncomingEdge=true", () => {
+    const { container } = render(
+      withRF(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        <ChatFoldNodeCard {...(NOOP_NODE_PROPS as any)} data={defaultData({ hasIncomingEdge: true })} />,
+      ),
+    );
+    // Both handles render; left handle should NOT be 0×0.
+    const handles = container.querySelectorAll(".react-flow__handle-left");
+    expect(handles.length).toBeGreaterThan(0);
+    const leftStyle = (handles[0] as HTMLElement).style;
+    // visible style sets width:5px (we wrote width: 5)
+    expect(leftStyle.width).toBe("5px");
+    expect(leftStyle.background).not.toBe("transparent");
+  });
+
+  it("hides the fold-input handle (0×0 + transparent) when hasIncomingEdge=false", () => {
+    const { container } = render(
+      withRF(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        <ChatFoldNodeCard {...(NOOP_NODE_PROPS as any)} data={defaultData({ hasIncomingEdge: false })} />,
+      ),
+    );
+    const handles = container.querySelectorAll(".react-flow__handle-left");
+    expect(handles.length).toBeGreaterThan(0);
+    const leftStyle = (handles[0] as HTMLElement).style;
+    expect(leftStyle.width).toBe("0px");
+    expect(leftStyle.background).toBe("transparent");
   });
 });

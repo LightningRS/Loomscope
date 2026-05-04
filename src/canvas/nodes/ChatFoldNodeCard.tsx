@@ -37,6 +37,13 @@ export interface ChatFoldNodeData extends Record<string, unknown> {
   // size CC compressed when this compact ran". Treated as the most
   // representative aggregate-tokens figure for the range.
   preTokens?: number;
+  // v0.8.1 #8: true iff layoutChatFlow emitted a continuation edge
+  // ending at this fold's `fold-input` handle (= some visible parent
+  // feeds the absorbed range). Drives whether the left handle dot
+  // shows on the card. When false (= the fold is at the leftmost
+  // edge of the canvas, no upstream visible ChatNode), the handle is
+  // hidden so it doesn't dangle.
+  hasIncomingEdge: boolean;
 }
 
 export type ChatFoldRFNode = RFNode<ChatFoldNodeData, "chatFold">;
@@ -96,13 +103,21 @@ export function ChatFoldNodeCard({ data }: NodeProps<ChatFoldRFNode>) {
       {/* Handles: edges enter from the left (the first range member's
           original incoming continuation edge target is rerouted here),
           and exit on the right (to the host compact card). M3 wires
-          edge.targetHandle / sourceHandle accordingly. */}
+          edge.targetHandle / sourceHandle accordingly.
+          v0.8.1 #8: hide the left handle dot when nothing flows in
+          (= fold sits at the canvas's leftmost edge with no upstream
+          visible parent). Same convention as ChatNodeCard's
+          hasIncomingEdge handle visibility — keeps the canvas clean. */}
       <Handle
         id="fold-input"
         type="target"
         position={Position.Left}
         isConnectable={false}
-        style={{ background: "#94a3b8", width: 5, height: 5, border: "none" }}
+        style={
+          data.hasIncomingEdge
+            ? { background: "#94a3b8", width: 5, height: 5, border: "none" }
+            : { background: "transparent", width: 0, height: 0, border: "none" }
+        }
       />
       <Handle
         id="fold-output-right"
