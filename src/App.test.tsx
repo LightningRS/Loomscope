@@ -38,15 +38,17 @@ afterEach(() => {
 describe("App shell", () => {
   it("renders Header + Sidebar + empty canvas state when no session active", async () => {
     render(<App />);
-    expect(screen.getByText("Loomscope")).toBeTruthy();
+    // "Loomscope" appears in both the Header and the empty-state title
+    // since the v0.10 polish enhanced empty state. getAllByText handles
+    // both occurrences; we just verify one of them exists.
+    expect(screen.getAllByText("Loomscope").length).toBeGreaterThan(0);
     expect(screen.getByTestId("sidebar")).toBeTruthy();
     expect(screen.getByTestId("canvas-host")).toBeTruthy();
-    // Empty-state text is split across nested span (highlight on "sidebar"),
-    // so match on the canvas-host textContent rather than getByText (which
-    // requires single-element matches).
+    // Empty-state body text — match on canvas-host textContent so we
+    // don't need to know the exact split between spans.
     expect(
       screen.getByTestId("canvas-host").textContent?.replace(/\s+/g, " "),
-    ).toMatch(/Select a session from the sidebar/i);
+    ).toMatch(/Claude Code session 可视化阅读器/);
     // Sidebar's effect should fire a refresh.
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalled();

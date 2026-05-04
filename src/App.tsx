@@ -169,12 +169,46 @@ function DrillBreadcrumb({
 }
 
 function EmptyState() {
+  const workspaces = useStore((s) => s.workspaces);
+  const workspacesLoading = useStore((s) => s.workspacesLoading);
+  const workspacesError = useStore((s) => s.workspacesError);
+  const totalSessions = useMemo(
+    () => workspaces.reduce((acc, w) => acc + w.sessionCount, 0),
+    [workspaces],
+  );
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-gray-400">
-      <div className="text-5xl opacity-40">⌬</div>
-      <div className="text-sm">
-        Select a session from the <span className="text-gray-500 font-medium">sidebar</span> to view its ChatFlow.
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-6 text-center">
+      <div className="text-6xl opacity-30 select-none">⌬</div>
+      <div className="space-y-1">
+        <div className="text-2xl font-semibold tracking-tight text-gray-700">
+          Loomscope
+        </div>
+        <div className="text-sm text-gray-500">
+          Claude Code session 可视化阅读器
+        </div>
       </div>
+      {workspacesLoading ? (
+        <div className="text-xs text-gray-400">扫描 ~/.claude/projects/…</div>
+      ) : workspacesError ? (
+        <div className="text-xs text-rose-600">
+          扫描失败：<code className="font-mono">{workspacesError}</code>
+        </div>
+      ) : workspaces.length === 0 ? (
+        <div className="space-y-1.5 text-xs text-gray-500">
+          <div>没有在 <code className="font-mono text-gray-600">~/.claude/projects/</code> 找到 session</div>
+          <div className="text-gray-400">用过 Claude Code 后这里会自动列出</div>
+        </div>
+      ) : (
+        <div className="space-y-1.5 text-xs text-gray-500">
+          <div>
+            扫到 <span className="font-medium text-gray-700">{workspaces.length}</span> 个 workspace ·{" "}
+            <span className="font-medium text-gray-700">{totalSessions}</span> 个 session
+          </div>
+          <div className="text-gray-400">
+            ← 从左侧 sidebar 展开 workspace 选一个 session
+          </div>
+        </div>
+      )}
     </div>
   );
 }
