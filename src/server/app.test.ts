@@ -122,6 +122,124 @@ describe("GET /api/sessions/:id", () => {
   });
 });
 
+describe("GET /api/sessions/:id — fork closure merge (v0.8 M2)", () => {
+  // Reuse the disk-resident fork-pair fixture so this exercises the
+  // exact code paths a real session would hit (file system scan +
+  // closure resolver + merge). The fixture lives in
+  // src/parse/__fixtures__/synthetic/fork-pair/ — copy it into
+  // tmpRoot's project subdir at test time so each test gets isolated
+  // tmpdir behavior consistent with other endpoint tests.
+  const ORIG_SID = "aaaaaaaa-1111-2222-3333-aaaaaaaaaaaa";
+  const FORK_SID = "bbbbbbbb-1111-2222-3333-bbbbbbbbbbbb";
+  const FIXTURE_DIR = path.resolve(
+    __dirname,
+    "..",
+    "parse",
+    "__fixtures__",
+    "synthetic",
+    "fork-pair",
+  );
+
+  async function copyForkPair(projectName: string): Promise<void> {
+    const projectDir = path.join(tmpRoot, projectName);
+    await fs.mkdir(projectDir, { recursive: true });
+    for (const file of [`${ORIG_SID}.jsonl`, `${FORK_SID}.jsonl`]) {
+      await fs.copyFile(
+        path.join(FIXTURE_DIR, file),
+        path.join(projectDir, file),
+      );
+    }
+  }
+
+  it("merges fork-pair into a single ChatFlow with sibling-fork sharing parent ChatNode", async () => {
+    await copyForkPair("-home-dev-example");
+    const res = await app.request(`/api/sessions/${FORK_SID}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      id: string;
+      chatNodes: Array<{ id: string; parentChatNodeId: string | null }>;
+      linkedSessions?: string[];
+      customTitle?: string;
+    };
+    // entry session id wins as the merged ChatFlow's id.
+    expect(body.id).toBe(FORK_SID);
+    // 4 ChatNodes: p1 + p2 + p3 (from original) + p4f (NEW in fork).
+    const ids = body.chatNodes.map((c) => c.id).sort();
+    expect(ids).toEqual(["p1", "p2", "p3", "p4f"]);
+    // Sibling fork: p2 has TWO children (p3 from original, p4f from
+    // fork), both sharing parentChatNodeId === "p2".
+    const p3 = body.chatNodes.find((c) => c.id === "p3");
+    const p4f = body.chatNodes.find((c) => c.id === "p4f");
+    expect(p3?.parentChatNodeId).toBe("p2");
+    expect(p4f?.parentChatNodeId).toBe("p2");
+    // linkedSessions records both closure members (BFS order, entry
+    // first — fork was the entry).
+    expect(body.linkedSessions).toEqual(
+      expect.arrayContaining([FORK_SID, ORIG_SID]),
+    );
+    expect(body.linkedSessions?.[0]).toBe(FORK_SID);
+    // customTitle from fork's `{type:"custom-title"}` record.
+    expect(body.customTitle).toBe("list files (Branch)");
+  });
+
+  it("loading the original session also returns the merged closure (descendant scan)", async () => {
+    await copyForkPair("-home-dev-example2");
+    const res = await app.request(`/api/sessions/${ORIG_SID}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      id: string;
+      chatNodes: Array<{ id: string }>;
+      linkedSessions?: string[];
+    };
+    // Same 4 ChatNodes regardless of which side the user enters from
+    // (consistent merged view per design choice 1A).
+    const ids = body.chatNodes.map((c) => c.id).sort();
+    expect(ids).toEqual(["p1", "p2", "p3", "p4f"]);
+    // Entry now is original; closure still contains both.
+    expect(body.id).toBe(ORIG_SID);
+    expect(body.linkedSessions?.[0]).toBe(ORIG_SID);
+  });
+
+  it("uuid dedup keeps the first occurrence (original wins for shared records)", async () => {
+    await copyForkPair("-home-dev-example3");
+    const res = await app.request(`/api/sessions/${ORIG_SID}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      chatNodes: Array<{
+        id: string;
+        forkedFrom?: { sessionId: string; messageUuid: string };
+      }>;
+    };
+    // p1 + p2 records exist in BOTH jsonls. When we enter from the
+    // ORIGINAL (closure order: orig first), the original's records win
+    // — they have NO forkedFrom marker, so the merged ChatNodes for p1
+    // / p2 have forkedFrom === undefined.
+    const p1 = body.chatNodes.find((c) => c.id === "p1");
+    const p2 = body.chatNodes.find((c) => c.id === "p2");
+    expect(p1?.forkedFrom).toBeUndefined();
+    expect(p2?.forkedFrom).toBeUndefined();
+  });
+
+  it("non-fork session: linkedSessions stays undefined (degenerates to v0.7 path)", async () => {
+    const projectDir = path.join(tmpRoot, "-home-user-Foo");
+    const sid = "55555555-5555-4000-8000-000000000020";
+    await writeJsonl(path.join(projectDir, `${sid}.jsonl`), [
+      {
+        type: "user",
+        uuid: "u-only",
+        sessionId: sid,
+        promptId: "p-only",
+        message: { role: "user", content: "alone" },
+        timestamp: "2026-05-04T00:00:00.000Z",
+      },
+    ]);
+    const res = await app.request(`/api/sessions/${sid}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { linkedSessions?: string[] };
+    expect(body.linkedSessions).toBeUndefined();
+  });
+});
+
 describe("GET /api/sessions/:id/tool-results/:refId", () => {
   // Minimum overflow file used across cases. We pick a size > the
   // 200 KB chunk threshold so tests can exercise both first-chunk +

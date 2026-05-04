@@ -10,13 +10,17 @@
 
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
+import { createReadStream } from "node:fs";
+import readline from "node:readline";
 
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 
-import { parseJsonlFile } from "@/parse/jsonl";
+import { buildChatFlow, parseJsonlFile } from "@/parse/jsonl";
+import { parseLine, type RawRecord } from "@/parse/raw-record";
 import { SidecarLoader, type AgentMetadata } from "@/parse/sidecar";
+import { findForkClosure, type ClosureMember } from "@/server/services/forkTree";
 import type { ChatFlow } from "@/data/types";
 
 export interface SessionsRouteOptions {
@@ -68,8 +72,23 @@ export function sessionsRouter(opts: SessionsRouteOptions) {
       const { id } = c.req.valid("param");
       const jsonlPath = await locateSessionJsonl(opts.rootDir, id);
       if (!jsonlPath) return c.json({ error: "session not found" }, 404);
-      const result = await parseJsonlFile(jsonlPath);
-      return c.json(result.chatFlow);
+      const projectDir = path.dirname(jsonlPath);
+      // v0.8: compute fork closure (entry + ancestors + descendants
+      // via forkedFrom chain), then merge all closure jsonls' records
+      // into a single ChatFlow. Closure size = 1 (just entry) when the
+      // session has no fork relations — the merge step then degenerates
+      // to identical behavior as v0.7's parseJsonlFile path. See
+      // design-data-model.md "Fork 机制" + handoff-v0.8.
+      const closure = await findForkClosure({
+        projectDir,
+        entrySessionId: id,
+      });
+      const chatFlow = await loadMergedChatFlow({
+        entryJsonlPath: jsonlPath,
+        entrySessionId: id,
+        closure,
+      });
+      return c.json(chatFlow);
     },
   );
 
@@ -250,6 +269,85 @@ async function locateSessionJsonl(rootDir: string, sessionId: string): Promise<s
     if (stat?.isFile()) return candidate;
   }
   return null;
+}
+
+// v0.8: load + merge a fork closure into a single ChatFlow.
+//
+// Strategy: read each closure jsonl's records, concatenate in BFS
+// closure order (= entry first, then BFS members), dedupe by `uuid`
+// keeping the FIRST occurrence — the entry session's records win when
+// the entry IS the original (its records have no forkedFrom marker);
+// when the entry is a fork session, its forkedFrom-marked copies win
+// over the original's plain records (per "first wins"). Either way
+// the merged ChatFlow keeps each uuid exactly once.
+//
+// CustomTitle policy: hoisted from the ENTRY session's parsed
+// chatFlow.customTitle — semantically "the title of the session you
+// clicked." linkedSessions = all closure sessionIds in BFS order.
+//
+// When closure is empty (= no fork relations, single jsonl), this
+// degenerates to v0.7's parseJsonlFile behavior with linkedSessions
+// kept undefined to signal "non-merged."
+async function loadMergedChatFlow(args: {
+  entryJsonlPath: string;
+  entrySessionId: string;
+  closure: ClosureMember[];
+}): Promise<ChatFlow> {
+  const { entryJsonlPath, entrySessionId, closure } = args;
+  // Single-session shortcut: closure either empty (entry not located by
+  // forkTree, shouldn't happen here since we just resolved the path)
+  // or exactly [entry] with no other members. Still go through merge
+  // path so linkedSessions / customTitle handling stays uniform.
+  if (closure.length <= 1) {
+    const result = await parseJsonlFile(entryJsonlPath);
+    // linkedSessions stays undefined when the session has no fork
+    // relations — signals "single-session, not a merge product."
+    return result.chatFlow;
+  }
+  // Read all closure jsonls' records in BFS order (entry first).
+  const recordsByMember: Array<{ sessionId: string; records: RawRecord[] }> = [];
+  for (const m of closure) {
+    const records = await readAllRecords(m.jsonlPath);
+    recordsByMember.push({ sessionId: m.sessionId, records });
+  }
+  // uuid-dedup, keep first occurrence — implicit by walking in order.
+  const seenUuids = new Set<string>();
+  const merged: RawRecord[] = [];
+  for (const { records } of recordsByMember) {
+    for (const r of records) {
+      if (r.uuid && seenUuids.has(r.uuid)) continue;
+      if (r.uuid) seenUuids.add(r.uuid);
+      merged.push(r);
+    }
+  }
+  const chatFlow = buildChatFlow(merged, entryJsonlPath);
+  // Override the parser's choices: the merge is keyed off the entry
+  // session, so:
+  //   - id stays as the entry sessionId (parser may have picked another
+  //     by accident if records are out of order)
+  //   - linkedSessions = closure BFS order
+  //   - customTitle stays as whatever parser found (first-wins on the
+  //     merged record stream — entry session's title wins when present)
+  chatFlow.id = entrySessionId;
+  chatFlow.linkedSessions = closure.map((m) => m.sessionId);
+  return chatFlow;
+}
+
+// Read every record from a jsonl as parsed RawRecord[]. Used by the
+// merge step instead of parseJsonlFile (which would invoke the parser
+// per-file then we'd need to re-merge ChatFlows — not faithful to
+// uuid-dedup semantics). Streaming avoids buffering the whole file in
+// memory at once.
+async function readAllRecords(jsonlPath: string): Promise<RawRecord[]> {
+  const records: RawRecord[] = [];
+  const stream = createReadStream(jsonlPath, { encoding: "utf8" });
+  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+  for await (const line of rl) {
+    if (!line) continue;
+    const r = parseLine(line);
+    if (r) records.push(r);
+  }
+  return records;
 }
 
 // Re-export the chunk byte size so frontend / tests share a single
