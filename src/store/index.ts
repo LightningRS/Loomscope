@@ -28,6 +28,8 @@ export const useStore = create<LoomscopeStore>()(
         drillPanelWidth: state.drillPanelWidth,
         drillPanelCollapsed: state.drillPanelCollapsed,
         drillPanelTab: state.drillPanelTab,
+        drillPanelFullscreen: state.drillPanelFullscreen,
+        prevDrillPanelWidth: state.prevDrillPanelWidth,
         pinnedWorkspaces: state.pinnedWorkspaces,
         hiddenWorkspaces: state.hiddenWorkspaces,
         focusedWorkspace: state.focusedWorkspace,

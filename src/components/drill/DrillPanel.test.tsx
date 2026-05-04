@@ -272,3 +272,52 @@ describe("DrillPanel TabStrip (v0.8.1 #1: collapse + breadcrumb folded into tabs
     expect(useStore.getState().drillPanelCollapsed).toBe(true);
   });
 });
+
+describe("DrillPanel fullscreen toggle (v0.8.1 #7)", () => {
+  it("renders the fullscreen button in tab strip with default data-active=false", () => {
+    const cf = chatFlow(SID, [chatNode("p1")]);
+    render(
+      <DrillPanel
+        sessionId={SID}
+        chatFlow={cf}
+        viewMode="chatflow"
+        drilledChatNode={null}
+      />,
+    );
+    const btn = screen.getByTestId("drill-panel-fullscreen");
+    expect(btn).toBeTruthy();
+    expect(btn.dataset.active).toBe("false");
+    expect(btn.title).toMatch(/Maximize/);
+  });
+
+  it("clicking fullscreen button enters fullscreen + flips title + sets aside data-fullscreen=true", () => {
+    const cf = chatFlow(SID, [chatNode("p1")]);
+    render(
+      <DrillPanel
+        sessionId={SID}
+        chatFlow={cf}
+        viewMode="chatflow"
+        drilledChatNode={null}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("drill-panel-fullscreen"));
+    expect(useStore.getState().drillPanelFullscreen).toBe(true);
+    const aside = screen.getByTestId("drill-panel");
+    expect(aside.dataset.fullscreen).toBe("true");
+    expect(screen.getByTestId("drill-panel-fullscreen").title).toMatch(/Restore/);
+  });
+
+  it("fullscreen mode hides the resize handle", () => {
+    useStore.setState({ drillPanelFullscreen: true });
+    const cf = chatFlow(SID, [chatNode("p1")]);
+    render(
+      <DrillPanel
+        sessionId={SID}
+        chatFlow={cf}
+        viewMode="chatflow"
+        drilledChatNode={null}
+      />,
+    );
+    expect(screen.queryByTestId("drill-panel-resize")).toBeNull();
+  });
+});

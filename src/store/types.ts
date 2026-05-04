@@ -24,6 +24,11 @@ export interface UISlice {
   // v0.8 M3: which tab is active in DrillPanel. "detail" preserves
   // v0.4-v0.7 single-view behaviour 1:1.
   drillPanelTab: DrillPanelTab;
+  // v0.8.1 #7: full-canvas drill panel. When true, panel covers the
+  // canvas area; sidebar still visible. prevDrillPanelWidth caches
+  // the pre-fullscreen width so toggling back restores it.
+  drillPanelFullscreen: boolean;
+  prevDrillPanelWidth: number | null;
   pinnedWorkspaces: string[];
   hiddenWorkspaces: string[];
   focusedWorkspace: string | null;
@@ -32,6 +37,7 @@ export interface UISlice {
   toggleSidebar: () => void;
   setDrillPanelWidth: (w: number) => void;
   toggleDrillPanel: () => void;
+  toggleDrillPanelFullscreen: () => void;
   setDrillPanelTab: (tab: DrillPanelTab) => void;
   pinWorkspace: (cwd: string) => void;
   unpinWorkspace: (cwd: string) => void;

@@ -28,6 +28,10 @@ import {
 export default function App() {
   const activeId = useStore((s) => s.activeSessionId);
   const session = useStore((s) => (activeId ? s.sessions.get(activeId) : null));
+  // v0.8.1 #7: when the drill panel is in fullscreen mode, <main>
+  // hides via display:none and the panel's flex:1 grows into the
+  // canvas track. Sidebar stays visible.
+  const drillPanelFullscreen = useStore((s) => s.drillPanelFullscreen);
 
   useEffect(() => {
     if (activeId && !session) {
@@ -63,7 +67,10 @@ export default function App() {
       <div className="flex flex-1 min-h-0">
         <Sidebar />
         <main
-          className="flex-1 min-w-0 relative bg-gray-100 overflow-hidden"
+          className={[
+            "flex-1 min-w-0 relative bg-gray-100 overflow-hidden",
+            drillPanelFullscreen ? "hidden" : "",
+          ].join(" ")}
           data-testid="canvas-host"
         >
           {!activeId && <EmptyState />}

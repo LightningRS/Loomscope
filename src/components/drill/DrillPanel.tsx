@@ -46,8 +46,10 @@ const COLLAPSED_WIDTH = 24;
 export function DrillPanel({ sessionId, chatFlow, viewMode, drilledChatNode }: Props) {
   const width = useStore((s) => s.drillPanelWidth);
   const collapsed = useStore((s) => s.drillPanelCollapsed);
+  const fullscreen = useStore((s) => s.drillPanelFullscreen);
   const setWidth = useStore((s) => s.setDrillPanelWidth);
   const toggle = useStore((s) => s.toggleDrillPanel);
+  const toggleFullscreen = useStore((s) => s.toggleDrillPanelFullscreen);
   const tab = useStore((s) => s.drillPanelTab);
   const setTab = useStore((s) => s.setDrillPanelTab);
 
@@ -60,19 +62,33 @@ export function DrillPanel({ sessionId, chatFlow, viewMode, drilledChatNode }: P
     );
   }
 
+  // v0.8.1 #7: in fullscreen, the panel takes flex: 1 instead of a
+  // pinned width. App.tsx hides <main> in this mode so flex-1 grows
+  // into the canvas area. Resize handle is hidden — there's nothing
+  // to resize against in fullscreen.
+  const sizingStyle = fullscreen
+    ? { flex: 1, minWidth: 0 }
+    : { width, minWidth: width, maxWidth: width };
+
   return (
     <aside
       data-testid="drill-panel"
-      className="relative flex h-full flex-col border-l border-gray-200 bg-gray-50"
-      style={{ width, minWidth: width, maxWidth: width }}
+      data-fullscreen={fullscreen ? "true" : "false"}
+      className={[
+        "relative flex h-full flex-col bg-gray-50",
+        fullscreen ? "" : "border-l border-gray-200",
+      ].join(" ")}
+      style={sizingStyle}
     >
-      <ResizeHandle width={width} setWidth={setWidth} />
+      {!fullscreen && <ResizeHandle width={width} setWidth={setWidth} />}
       <TabStrip
         activeTab={tab}
         onSelect={setTab}
         viewMode={viewMode}
         drilledChatNode={drilledChatNode}
         onCollapse={toggle}
+        fullscreen={fullscreen}
+        onToggleFullscreen={toggleFullscreen}
       />
       <div className="flex-1 min-h-0 overflow-y-auto p-3">
         {tab === "detail" && (
@@ -106,12 +122,16 @@ function TabStrip({
   viewMode,
   drilledChatNode,
   onCollapse,
+  fullscreen,
+  onToggleFullscreen,
 }: {
   activeTab: DrillPanelTab;
   onSelect: (tab: DrillPanelTab) => void;
   viewMode: "chatflow" | "workflow" | "sub-chatflow";
   drilledChatNode: ChatNode | null;
   onCollapse: () => void;
+  fullscreen: boolean;
+  onToggleFullscreen: () => void;
 }) {
   return (
     <div
@@ -134,8 +154,8 @@ function TabStrip({
         // Mode-following breadcrumb: keep parent ChatNode visible
         // even when the panel is rendering WorkNode detail (preserves
         // v0.4 design choice 2). Sits between tab buttons and the
-        // collapse button so it gets squeezed first when the panel
-        // is narrow — both tabs and collapse stay clickable.
+        // right-edge actions so it gets squeezed first when the panel
+        // is narrow — tabs + actions stay clickable.
         <span
           className="ml-2 inline-flex min-w-0 items-center gap-1 truncate text-[10px] text-gray-400 font-mono"
           title={drilledChatNode.id}
@@ -148,6 +168,18 @@ function TabStrip({
       <button
         type="button"
         className="ml-auto flex h-6 w-6 items-center justify-center rounded text-gray-400 hover:bg-gray-200 hover:text-gray-700 transition-colors"
+        onClick={onToggleFullscreen}
+        title={fullscreen ? "Restore panel size" : "Maximize panel (cover canvas)"}
+        data-testid="drill-panel-fullscreen"
+        data-active={fullscreen ? "true" : "false"}
+      >
+        {/* ⛶ Square Four Corners — standard maximize / fullscreen icon.
+            Same glyph for enter/exit; title attr distinguishes. */}
+        ⛶
+      </button>
+      <button
+        type="button"
+        className="flex h-6 w-6 items-center justify-center rounded text-gray-400 hover:bg-gray-200 hover:text-gray-700 transition-colors"
         onClick={onCollapse}
         title="Collapse panel"
         data-testid="drill-panel-collapse"

@@ -74,6 +74,43 @@ describe("UI slice", () => {
     useStore.getState().setFocusedWorkspace(null);
     expect(useStore.getState().focusedWorkspace).toBe(null);
   });
+
+  // v0.8.1 #7: drill panel width unbounded above; fullscreen toggle.
+  it("setDrillPanelWidth no longer clamps above (v0.8.1 #7 — user can drag panel to swallow canvas)", () => {
+    useStore.getState().setDrillPanelWidth(100);
+    expect(useStore.getState().drillPanelWidth).toBe(240); // min stays
+    useStore.getState().setDrillPanelWidth(99999);
+    expect(useStore.getState().drillPanelWidth).toBe(99999); // no upper clamp
+    useStore.getState().setDrillPanelWidth(380);
+    expect(useStore.getState().drillPanelWidth).toBe(380);
+  });
+
+  it("toggleDrillPanelFullscreen caches width on enter, restores on exit", () => {
+    useStore.getState().setDrillPanelWidth(420);
+    expect(useStore.getState().drillPanelFullscreen).toBe(false);
+    expect(useStore.getState().prevDrillPanelWidth).toBe(null);
+    // Enter fullscreen.
+    useStore.getState().toggleDrillPanelFullscreen();
+    expect(useStore.getState().drillPanelFullscreen).toBe(true);
+    expect(useStore.getState().prevDrillPanelWidth).toBe(420);
+    // Exit fullscreen — width restored.
+    useStore.getState().toggleDrillPanelFullscreen();
+    expect(useStore.getState().drillPanelFullscreen).toBe(false);
+    expect(useStore.getState().drillPanelWidth).toBe(420);
+    expect(useStore.getState().prevDrillPanelWidth).toBe(null);
+  });
+
+  it("toggleDrillPanel from fullscreen restores width AND exits fullscreen (no zombie state)", () => {
+    useStore.getState().setDrillPanelWidth(500);
+    useStore.getState().toggleDrillPanelFullscreen();
+    expect(useStore.getState().drillPanelFullscreen).toBe(true);
+    // Now collapse — should clear fullscreen + restore width.
+    useStore.getState().toggleDrillPanel();
+    expect(useStore.getState().drillPanelCollapsed).toBe(true);
+    expect(useStore.getState().drillPanelFullscreen).toBe(false);
+    expect(useStore.getState().drillPanelWidth).toBe(500);
+    expect(useStore.getState().prevDrillPanelWidth).toBe(null);
+  });
 });
 
 describe("Workspace slice", () => {
