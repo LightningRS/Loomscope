@@ -34,6 +34,10 @@ import { ChatFoldNodeCard } from "@/canvas/nodes/ChatFoldNodeCard";
 import { ChatNodeCard } from "@/canvas/nodes/ChatNodeCard";
 import { ContinuationArrowDefs, ContinuationEdge } from "@/canvas/edges/ContinuationEdge";
 import { LogicalArrowDefs, LogicalEdge } from "@/canvas/edges/LogicalEdge";
+import {
+  FoldAnchorContext,
+  type FoldAnchorAPI,
+} from "@/canvas/FoldAnchorContext";
 import { isChatFoldId } from "@/canvas/foldProjection";
 import type { ChatFlow } from "@/data/types";
 import { useStore } from "@/store/index";
@@ -182,13 +186,82 @@ function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasIn
     [setSelected, sessionId],
   );
 
+  const rf = useReactFlow();
+
+  // Viewport-anchored fold/unfold. See FoldAnchorContext.tsx for the
+  // why; the implementation here is a two-phase capture/apply:
+  //   1. Before the store mutation, read the host compact's CURRENT
+  //      absolute layout position via rf.getNode(...) and convert it
+  //      to screen-space using the current viewport. Stash {compactId,
+  //      screenX, screenY} in a ref.
+  //   2. After the next render commits (useEffect on [nodes]) — i.e.
+  //      after layoutChatFlow re-ran with the new fold set and React
+  //      Flow ingested the new node positions — read the host's NEW
+  //      absolute position, compute the delta in screen space, shift
+  //      the viewport by the delta. Clear the ref so subsequent
+  //      unrelated layout changes (e.g., cross-session switch) don't
+  //      try to re-anchor.
+  //
+  // The host compact ChatNode is the semantic anchor: it's visible
+  // both before and after every fold toggle that the user can trigger
+  // from the canvas (fold a compact → host stays and chatFold
+  // appears upstream; unfold from chatFold → host stays and chatFold
+  // disappears). When the host is absent in the new layout (rare
+  // cross-fold cases — outer fold absorbed it after a separate
+  // mutation), we silently abandon the anchor rather than guessing.
+  const toggleAction = useStore((s) => s.toggleCompactFold);
+  const foldAction = useStore((s) => s.foldCompact);
+  const unfoldAction = useStore((s) => s.unfoldCompact);
+  const anchorRef = useRef<{
+    compactId: string;
+    screenX: number;
+    screenY: number;
+  } | null>(null);
+
+  const captureAnchor = useCallback(
+    (compactId: string) => {
+      const node = rf.getNode(compactId);
+      if (!node) return;
+      const vp = rf.getViewport();
+      // Use ``positionAbsolute`` if available (= computed by RF after
+      // measurement); fall back to ``position`` (= our dagre-written
+      // layout coords) when measurement hasn't completed. Both match
+      // top-left corner so the screen-space conversion is consistent.
+      const ax = node.position.x;
+      const ay = node.position.y;
+      anchorRef.current = {
+        compactId,
+        screenX: ax * vp.zoom + vp.x,
+        screenY: ay * vp.zoom + vp.y,
+      };
+    },
+    [rf],
+  );
+
+  const foldAnchor = useMemo<FoldAnchorAPI>(
+    () => ({
+      toggle: (compactId: string) => {
+        captureAnchor(compactId);
+        toggleAction(sessionId, compactId);
+      },
+      fold: (compactId: string) => {
+        captureAnchor(compactId);
+        foldAction(sessionId, compactId);
+      },
+      unfold: (compactId: string) => {
+        captureAnchor(compactId);
+        unfoldAction(sessionId, compactId);
+      },
+    }),
+    [captureAnchor, sessionId, toggleAction, foldAction, unfoldAction],
+  );
+
   // No `decoratedNodes` indirection: ChatNodeCard subscribes to its own
   // selected boolean via `useIsChatNodeSelected(id)`. Wrapping nodes with
   // a fresh `{ ...n, selected: ... }` per click meant React Flow saw
   // 1500 new identities and reconciled the whole graph (458 ms on 256MB
   // session in v0.4). Per-card subscription cuts that to 2 re-renders.
 
-  const rf = useReactFlow();
   // We need to know when xyflow has actually measured the latest card
   // before firing fitView — without measurements `fitView({ nodes: [{
   // id }] })` reads an empty bbox and silently no-ops, which is what
@@ -244,7 +317,33 @@ function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasIn
     focusedSessionRef.current = chatFlow.id;
   }, [chatFlow.id, latestNodeId, latestNodeMeasured, rf]);
 
+  // Apply the captured fold anchor: after every layout commit (= nodes
+  // identity changed), if a fold/unfold has just stashed an anchor,
+  // shift the viewport so the host compact lands at its previous
+  // screen position. The ref is cleared after each application so an
+  // unrelated layout change (cross-session switch, etc.) doesn't
+  // re-anchor.
+  useEffect(() => {
+    const anchor = anchorRef.current;
+    if (!anchor) return;
+    const newNode = rf.getNode(anchor.compactId);
+    if (!newNode) {
+      anchorRef.current = null;
+      return;
+    }
+    const vp = rf.getViewport();
+    const newScreenX = newNode.position.x * vp.zoom + vp.x;
+    const newScreenY = newNode.position.y * vp.zoom + vp.y;
+    rf.setViewport({
+      x: vp.x + (anchor.screenX - newScreenX),
+      y: vp.y + (anchor.screenY - newScreenY),
+      zoom: vp.zoom,
+    });
+    anchorRef.current = null;
+  }, [nodes, rf]);
+
   return (
+    <FoldAnchorContext.Provider value={foldAnchor}>
     <ReactFlow
       nodes={nodes}
       edges={edges}
@@ -283,5 +382,6 @@ function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasIn
         }
       />
     </ReactFlow>
+    </FoldAnchorContext.Provider>
   );
 }

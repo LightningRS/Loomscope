@@ -18,6 +18,7 @@
 import { Handle, Position } from "@xyflow/react";
 import type { Node as RFNode, NodeProps } from "@xyflow/react";
 
+import { useFoldAnchor } from "@/canvas/FoldAnchorContext";
 import { formatTokensKM } from "@/canvas/layoutDag";
 import { useStore } from "@/store/index";
 
@@ -43,6 +44,10 @@ export type ChatFoldRFNode = RFNode<ChatFoldNodeData, "chatFold">;
 export function ChatFoldNodeCard({ data }: NodeProps<ChatFoldRFNode>) {
   const activeId = useStore((s) => s.activeSessionId);
   const unfold = useStore((s) => s.unfoldCompact);
+  // Route through FoldAnchorContext when present so the viewport
+  // stays anchored on the host compact across the layout swap. Tests
+  // that render the card standalone fall back to the raw store action.
+  const anchor = useFoldAnchor();
 
   const onClick = (e: React.MouseEvent) => {
     // React Flow normally selects the node on click; the chatFold
@@ -50,6 +55,10 @@ export function ChatFoldNodeCard({ data }: NodeProps<ChatFoldRFNode>) {
     // propagation so onNodeClick on the canvas doesn't get a turn
     // and call setSelected with a nonexistent ChatNode id.
     e.stopPropagation();
+    if (anchor) {
+      anchor.unfold(data.hostCompactId);
+      return;
+    }
     if (!activeId) return;
     unfold(activeId, data.hostCompactId);
   };

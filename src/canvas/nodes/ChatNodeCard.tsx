@@ -15,6 +15,7 @@
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
 
+import { useFoldAnchor } from "@/canvas/FoldAnchorContext";
 import { type ChatNodeRFNode } from "@/canvas/layoutDag";
 import { NodeIdLine } from "@/canvas/nodes/chrome/NodeIdLine";
 import { TokenBar } from "@/canvas/nodes/chrome/TokenBar";
@@ -422,6 +423,13 @@ function CompactFoldToggleButton({
 }) {
   const toggle = useStore((s) => s.toggleCompactFold);
   const activeId = useStore((s) => s.activeSessionId);
+  // FoldAnchorContext is provided by ChatFlowCanvas. When the button
+  // renders inside the canvas (= every real-app code path), we route
+  // toggles through the context so the viewport stays anchored on this
+  // compact host across the layout swap. In unit tests that render
+  // ChatNodeCard standalone (no canvas wrapper), the context is null
+  // and we fall back to the raw store action.
+  const anchor = useFoldAnchor();
   const isFolded = useStore((s) => {
     const sid = s.activeSessionId;
     if (!sid) return true;
@@ -453,8 +461,12 @@ function CompactFoldToggleButton({
       }`}
       onClick={(e) => {
         e.stopPropagation();
-        if (!activeId || !hasPreCompactRange) return;
-        toggle(activeId, chatNodeId);
+        if (!hasPreCompactRange) return;
+        if (anchor) {
+          anchor.toggle(chatNodeId);
+        } else if (activeId) {
+          toggle(activeId, chatNodeId);
+        }
       }}
       data-testid={`compact-foldtoggle-${chatNodeId}`}
       title={
