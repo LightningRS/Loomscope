@@ -8,6 +8,29 @@
 
 ## 2026-05-04
 
+### viewport-anchored fold toggle（commit `0e1ea63`）
+
+实测发现：fold/unfold 后 dagre 重排让所有节点位置变了，viewport 不动 → 用户看的位置乱飞（Agentloom 也没解决好这点）。两阶段 capture/apply：
+
+1. mutation 前 `rf.getNode(compactId)` + viewport 算 host compact 当前屏幕坐标，stash 进 ref
+2. store 变 → React 重渲染 → layout 重算 → useEffect on `[nodes]` 读 host 新坐标 → setViewport 偏移补齐 → 清 ref
+
+锚点选 **compact host** —— fold/unfold 它都不消失（fold 时 host stay + chatFold 出现在它上游；unfold 时 host stay + chatFold 消失），永远找得到。host 被外层 fold 吸收的极端 case 直接 abandon anchor 不猜。
+
+UI 层走 `FoldAnchorContext`（CanvasInner 提供，CompactFoldToggleButton + ChatFoldNodeCard 消费），context null 时 fallback 到裸 store action（unit test 不受影响，371/371 全过）。
+
+用户回开发机后实测 4 case 全过：compact 卡折叠 / chatFold click 展开 / 嵌套展开 / session 切换不被 anchor 干扰。
+
+### chatFold 是否合并到 compact 卡（2026-05-04 backlog）
+
+用户提过想法："多一个节点有点啰嗦，能否合并到 compact 卡里"。讨论后**决定先不做**，但留 backlog（用户保留改主意权利）。理由：
+
+1. 合并后 chatFold 的 fold-input handle 要挪到 compact 卡，跟 compact 自己的 incoming continuation handle 会抢位置
+2. 嵌套展开时多层 chatFold 同时存在的可读性会变差（合并形态的"折叠态徽章"叠在每层 compact 上，视觉信号弱化）
+3. 合并后 compact 卡变胖（多一行 "📦 N folded · X tokens" badge），canvas 整体密度反而下降
+
+如果实测大 session 觉得多一个节点确实碍眼，方案候选：compact 卡 header 多一行 "📦 N · ⊟ click to expand" 徽章 + 整张卡左侧 dashed accent 表示身后有 fold；展开后徽章消失，恢复普通 compact 卡。等用户提出再做。
+
 ### compact handling 重做：v0.7 drill mode → inline fold（commits `8f41ef7` → `59187c6`，3 milestone）
 
 v0.7 M3 当年用 "compact-original" DrillFrame 让用户从 compact ChatNode 进新视图看 pre-compact range。用户实测后反馈：**应该展开/折叠 inline，不是新建视图**；进一步：**生成 compact 时默认折叠**，主链上只看到最新 compact + 后续未压缩节点。也借此对超大 ChatFlow 加载做懒加载。Agentloom 同款 chatFold 合成节点 + per-session localStorage 持久化（不上 DB）。
