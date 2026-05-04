@@ -6,6 +6,51 @@
 
 ---
 
+## 2026-05-05 — v0.8.1 hand-tuning round（13 commits 浏览器实测打磨）
+
+agent ship 完 v0.8.1 polish batch 后，user 浏览器实测一轮发现的小问题/视觉调整，逐条手工打磨。13 commits 跨 4 个主题：
+
+**1) #2 panel collapse 滚动条溢出 — patch follow-up**（`f815626`）
+- DrillPanel scroll viewport `flex-1 min-h-0 overflow-y-auto p-3` 缺 `overflow-x-hidden + min-w-0`，长 markdown 内容把 panel 撑出水平滚动条。修了立竿见影；`<pre>` typography 自带 `overflow-x: auto` 能各管各的。table 没自带 overflow wrapper，狭窄 panel 时 table 右沿会被裁，权衡接受
+
+**2) Resize 拖动卡顿 — perf**（`a4cd704`）
+- user 反馈长 conversation 拖 panel 宽度卡。Lazy-load (#4) 限的是**总数**没限**重渲染成本**：60fps mousemove → store update → ConversationView re-render → visiblePath.map → 每个 MessageBubble 内 MarkdownView 重跑 remarkGfm + rehypeRaw + rehypeSanitize → CPU 拉满
+- 两层 memo：`MarkdownView` plugin arrays 提到 module 常量 + `React.memo` 包裹；`MessageBubble` `React.memo` + 父 `handleSelect` / `handleHoverDwell` 用 `useCallback` 稳定化；callback 签名改成 `(chatNodeId: string) => void`，bubble 内部 `useCallback` 组合自己 click handler
+
+**3) #11 复制按钮位置/形态多次微调**（`0f4645f` → `1d3c32d` → `2c50ddc` → `9a50948`）
+- 初版 agent 实现"📋 / ✓ icon hover 浮动右上角"，user 否决要"复制"文字左下角
+- 第 1 次：inline 文字 user bubble 内左下角 / assistant footer 行最左
+- 第 2 次：user 觉得 bubble 内挤，挪到 bubble 外**下方** + tone dark→light
+- 第 3 次：再挪到 bubble **左边**（横向，bottom-aligned 居底，gap-2）
+- 顺手修 user bubble 在 fullscreen 模式只占 panel 1/3 宽 — 根因 `prose` 默认 `max-width: 65ch`（≈540px），不是 wrapper 的 85%。给 user bubble prose div 加 `max-w-none` 释放上限，wrapper 从 `max-w-[85%]` 改 `max-w-[calc(100%-3rem)]` 只留 ~48px 给 copy 按钮
+
+**4) #10 typography 5 次反复**（`be2cf40` → `2780639` → `086f844` → `6d8cac4` → `a8038ae`）
+- 第 1 次：`@layer utilities` 加 `.prose code, .prose-sm code` `!important` —— 没解决
+- 第 2 次：换 `:not(pre) > code` 直接选择器 —— wrap 还是没生效
+- DevTools inspect 揭示**根因**：dev-server 的 CSS 里 `.prose-sm :where(code)` 只有 `font-size`，agent 在 `tailwind.config.js` `theme.extend.typography.sm.css.code` 写的 `background-color` / `padding` / `border-radius` 那一堆**没合并进去**。production build 是有的，dev mode 没有 —— Vite HMR 对 tailwind config 改动有时不彻底
+- 第 3 次：直接搬到 `index.css` plain CSS（`:not(pre) > code { bg-gray-100, color-gray-800, padding, border-radius, font-weight 500, font-size 0.85em }`），不再依赖 typography plugin 合并行为
+- 第 4 次：DevTools 又显示 chip 字色被 `prose :where(code) { color: var(--tw-prose-code) }` 抢走（`prose-invert` 下变白色 → 白字浅灰底看不见）+ 反引号还在显示。给 color 加 `!important` + 新规则 `:not(pre) > code::before, ::after { content: "" !important }` 清反引号
+- 第 5 次：user 觉得浅灰 chip 在蓝 bubble 上"刺眼"。新 `.prose-invert :not(pre) > code` 覆盖：半透明黑背景 (`rgba(0,0,0,0.2)`) + 白字 — 视觉"陷下去"而不是"贴上去"
+
+**5) Hover 视觉反馈**（`58c416e`）
+- conversation hover-pan 到 canvas 节点时，给该 node 卡加蓝色虚线 outline，让 user 能确认"这条消息对应的就是这个卡"
+- 实现：UI store 加 `conversationHoveredChatNodeId` + `setConversationHoveredChatNodeId`；新 hook `useIsConversationHovered(id)` 复用 v0.4 per-card 订阅 pattern；ChatNodeCard inline `style.outline: 2px dashed rgb(96 165 250)` + outlineOffset 2px。用 `outline` 不用 `border` 不影响布局也不跟 selected/scheduled/leaf border 调色板冲突
+
+**6) #9 per-node file-change chip 上卡片**（`696efda`）
+- user 验证 #9 算法对了（实测 2c01a178 节点 selfDelta = {index.css}，来自 Edit tool_use；selfSnap=parentSnap=71 不含 index.css —— CC 抓 snapshot 在 Edit 之前），但要求 count 也 surface 到 canvas 卡片 stats footer
+- `ChatNodeRFData` 加 `nodeOwnFileChangeCount`，`deriveCardData` 调 `nodeOwnFileChanges(cn, chatFlow)`。卡片 footer 加 ✏️ N chip 在 📁 N 左边
+- 顺手 rename 现有 📁 chip hover title 从 "本轮文件改动" 改成 "本轮累积文件改动"，跟 DrillPanel section 命名对齐
+
+**测试**：409/409 一直保持，每次改动都 typecheck + build 全清
+
+**设计决策 trail（重要）**：
+- `tailwind.config.js` `theme.extend.typography` 在 dev-mode 不可靠 → 关键 markdown 样式直接用 `index.css` plain CSS + `!important`，绕开 typography plugin 合并的不确定性
+- prose-invert 下的 inline code 用半透明黑而不是浅灰，跟蓝 bubble 视觉融合
+- conversation hover-pan 不走 `FoldAnchorContext`（user 之前定的契约：anchor 锁用户手动操作位置；自动化场景应该 slide 到 target，不应钉在原位）
+- copy button 位置反复改 4 次后定在"bubble 左边横向"，反映 user 偏好需要实际看才能确定
+
+---
+
 ## 2026-05-04（晚）— v0.8.1 polish batch ship（12 issue）
 
 按 `docs/handoff-v0.8.1-polish-batch.md` 实施。**371 → 409 unit tests (+38)**，typecheck + build 全清，13 hard constraints 全守住。8 个 commits 跨 5 个 milestone：
