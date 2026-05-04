@@ -20,6 +20,7 @@ import { z } from "zod";
 import { buildChatFlow, parseJsonlFile } from "@/parse/jsonl";
 import { parseLine, type RawRecord } from "@/parse/raw-record";
 import { SidecarLoader, type AgentMetadata } from "@/parse/sidecar";
+import { getOrLoad as getOrLoadCachedChatFlow } from "@/server/services/chatFlowCache";
 import { findForkClosure, type ClosureMember } from "@/server/services/forkTree";
 import type { ChatFlow } from "@/data/types";
 
@@ -83,10 +84,21 @@ export function sessionsRouter(opts: SessionsRouteOptions) {
         projectDir,
         entrySessionId: id,
       });
-      const chatFlow = await loadMergedChatFlow({
-        entryJsonlPath: jsonlPath,
-        entrySessionId: id,
+      // v0.10 polish: serve from LRU cache when (sessionId, closure
+      // mtimes) match a recent parse. Cache invalidates the moment any
+      // closure member's jsonl mtime changes — same signal v0.9
+      // file-tail will use, so cache stays correct under live updates
+      // once that lands.
+      const { chatFlow } = await getOrLoadCachedChatFlow({
+        sessionId: id,
         closure,
+        fallbackJsonlPath: jsonlPath,
+        loader: () =>
+          loadMergedChatFlow({
+            entryJsonlPath: jsonlPath,
+            entrySessionId: id,
+            closure,
+          }),
       });
       return c.json(chatFlow);
     },
