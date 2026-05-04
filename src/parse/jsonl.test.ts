@@ -742,3 +742,103 @@ describe("file-history-snapshot binding (v0.7)", () => {
     }
   });
 });
+
+describe("fork tracking — forkedFrom + custom-title (v0.8 M1)", () => {
+  // Helper: clone the synthetic fixture and stamp forkedFrom on every
+  // user/assistant record in p1 — mimics what CC `/branch` writes.
+  function withForkedRecords(
+    forkedFrom: { sessionId: string; messageUuid: string },
+    targetPromptIds: string[],
+  ): RawRecord[] {
+    const records = buildSyntheticRecords();
+    return records.map((r) => {
+      if (r.promptId && targetPromptIds.includes(r.promptId)) {
+        return { ...r, forkedFrom };
+      }
+      return r;
+    });
+  }
+
+  it("hoists forkedFrom from a bucket's records onto the ChatNode", () => {
+    const ff = {
+      sessionId: "original-session-aaaa-bbbb-cccc-dddddddddddd",
+      messageUuid: "src-msg-uuid-0001",
+    };
+    const records = withForkedRecords(ff, ["p1"]);
+    const cf = buildChatFlow(records, FIXTURE_PATH);
+    const cn1 = cf.chatNodes.find((c) => c.id === "p1");
+    expect(cn1?.forkedFrom).toEqual(ff);
+    // p2 / p3 unaffected (not stamped).
+    const cn2 = cf.chatNodes.find((c) => c.id === "p2");
+    expect(cn2?.forkedFrom).toBeUndefined();
+  });
+
+  it("hoists `customTitle` from `{type: 'custom-title'}` record to ChatFlow", () => {
+    const records = buildSyntheticRecords();
+    records.push({
+      type: "custom-title",
+      sessionId: SESSION_ID,
+      timestamp: "2026-04-10T03:11:00.000Z",
+      customTitle: "list all tsx files (Branch)",
+    } as RawRecord);
+    const cf = buildChatFlow(records, FIXTURE_PATH);
+    expect(cf.customTitle).toBe("list all tsx files (Branch)");
+  });
+
+  it("custom-title record does NOT enter orphans (skipped via SKIP_TYPES)", () => {
+    const records = buildSyntheticRecords();
+    records.push({
+      type: "custom-title",
+      sessionId: SESSION_ID,
+      uuid: "ct-uuid-1",
+      customTitle: "session-x (Branch 2)",
+    } as RawRecord);
+    const cf = buildChatFlow(records, FIXTURE_PATH);
+    expect(cf.orphans.find((o) => o.uuid === "ct-uuid-1")).toBeUndefined();
+    expect(cf.orphans.find((o) => o.type === "custom-title")).toBeUndefined();
+  });
+
+  it("warns + keeps the first when bucket records carry inconsistent forkedFrom", () => {
+    const records = buildSyntheticRecords();
+    const a = {
+      sessionId: "src-a-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      messageUuid: "msg-a",
+    };
+    const b = {
+      sessionId: "src-b-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+      messageUuid: "msg-b",
+    };
+    let stamped = 0;
+    const mutated = records.map((r) => {
+      if (r.promptId === "p1" && stamped < 2) {
+        const ff = stamped === 0 ? a : b;
+        stamped += 1;
+        return { ...r, forkedFrom: ff };
+      }
+      return r;
+    });
+    const warn = console.warn;
+    const calls: string[] = [];
+    console.warn = (msg: string) => calls.push(msg);
+    try {
+      const cf = buildChatFlow(mutated, FIXTURE_PATH);
+      const cn1 = cf.chatNodes.find((c) => c.id === "p1");
+      expect(cn1?.forkedFrom).toEqual(a); // first wins
+      expect(calls.some((m) => m.includes("inconsistent forkedFrom"))).toBe(true);
+    } finally {
+      console.warn = warn;
+    }
+  });
+
+  it("no forkedFrom anywhere → ChatNode.forkedFrom = undefined", () => {
+    const cf = buildChatFlow(buildSyntheticRecords(), FIXTURE_PATH);
+    for (const cn of cf.chatNodes) {
+      expect(cn.forkedFrom).toBeUndefined();
+    }
+  });
+
+  it("non-merged ChatFlow leaves linkedSessions undefined (server fills it in M2)", () => {
+    const cf = buildChatFlow(buildSyntheticRecords(), FIXTURE_PATH);
+    expect(cf.linkedSessions).toBeUndefined();
+  });
+});

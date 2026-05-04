@@ -43,6 +43,9 @@ const SKIP_TYPES = new Set([
   "messages_changed",
   "system_changed",
   "queue-operation", // timing detail; not on v0 canvas
+  // v0.8: hoisted to chatFlow.customTitle in the first-pass scan above;
+  // skip the bucketing step so it doesn't end up as an orphan.
+  "custom-title",
 ]);
 
 interface IndexedRecord {
@@ -139,6 +142,10 @@ export function buildChatFlow(
   let gitBranch: string | undefined;
   let createdAt: string | undefined;
   let lastUpdatedAt: string | undefined;
+  // v0.8: customTitle from `{type: "custom-title"}` records (CC `/branch`
+  // appends one per fork session). First-write wins — multiple in one
+  // file is malformed but we don't crash.
+  let customTitle: string | undefined;
 
   for (const r of records) {
     if (r.uuid) {
@@ -164,6 +171,13 @@ export function buildChatFlow(
       if (r.subtype === "compact_boundary" && r.uuid) boundariesByUuid.set(r.uuid, r);
       else if (r.subtype === "away_summary" && r.uuid) awaySummaryByUuid.set(r.uuid, r);
       else if (r.subtype === "scheduled_task_fire" && r.uuid) scheduledFireByUuid.set(r.uuid, r);
+    }
+    if (r.type === "custom-title" && customTitle === undefined) {
+      // CC `/branch` appends one custom-title record per fork session.
+      // The field name is `customTitle` per design-data-model.md "Fork
+      // 机制" §1 step 4. First-write wins; we don't crash on duplicates.
+      const title = (r as { customTitle?: unknown }).customTitle;
+      if (typeof title === "string" && title.length > 0) customTitle = title;
     }
     if (r.type === "assistant") {
       for (const b of blocksOf(r)) {
@@ -407,6 +421,11 @@ export function buildChatFlow(
     createdAt,
     lastUpdatedAt,
     trigger: "user", // cron-fired needs cross-session metadata; v0 default
+    customTitle, // v0.8: from `{type: "custom-title"}` record (CC `/branch`)
+    // v0.8: linkedSessions stays undefined for non-merged ChatFlows.
+    // The server (M2) will set this when forming a merge闭包 from
+    // multiple jsonl files; standalone parseJsonlFile / parseJsonlText
+    // never sets it.
     chatNodes,
     orphans,
     flowEvents,
@@ -556,6 +575,14 @@ function buildChatNode(
 
   const compactWorkNode = workflow.nodes.find((n) => n.kind === "compact");
   const slashCommand = detectSlashCommand(bucket.records);
+  // v0.8: hoist forkedFrom from any record in this bucket onto the
+  // ChatNode. CC `/branch` writes the same forkedFrom on every record
+  // copied into the new fork session, so all bucket records sharing one
+  // promptId carry the same value by construction. We take the first
+  // we see and warn (console.warn) if a later record disagrees — an
+  // inconsistent bucket would mean the source jsonl was hand-edited
+  // or written by a different tool than CC `/branch`.
+  const forkedFrom = detectForkedFrom(bucket);
   return {
     kind: "chat",
     id: bucket.promptId,
@@ -569,8 +596,41 @@ function buildChatNode(
     compactMetadata:
       compactWorkNode && compactWorkNode.kind === "compact" ? compactWorkNode : undefined,
     slashCommand,
+    forkedFrom,
     meta,
   };
+}
+
+function detectForkedFrom(
+  bucket: PromptBucket,
+): { sessionId: string; messageUuid: string } | undefined {
+  let chosen: { sessionId: string; messageUuid: string } | undefined;
+  for (const r of bucket.records) {
+    const ff = r.forkedFrom;
+    if (
+      !ff ||
+      typeof ff !== "object" ||
+      typeof ff.sessionId !== "string" ||
+      typeof ff.messageUuid !== "string"
+    ) {
+      continue;
+    }
+    if (!chosen) {
+      chosen = { sessionId: ff.sessionId, messageUuid: ff.messageUuid };
+      continue;
+    }
+    // Multiple records carrying inconsistent forkedFrom inside one
+    // bucket — log once per bucket and stick with the first value.
+    if (chosen.sessionId !== ff.sessionId || chosen.messageUuid !== ff.messageUuid) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[parser] inconsistent forkedFrom inside bucket ${bucket.promptId}: ` +
+          `${JSON.stringify(chosen)} vs ${JSON.stringify(ff)} — keeping the first`,
+      );
+      break;
+    }
+  }
+  return chosen;
 }
 
 // Detect a slash-command invocation by scanning the bucket's user records

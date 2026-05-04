@@ -93,6 +93,15 @@ export interface RawRecord {
   // file-history-snapshot
   snapshot?: unknown;
   durationMs?: number;
+  // v0.8 fork tracking — CC `/branch` writes this on every record
+  // copied into the new fork session (sessionId + messageUuid identify
+  // the source record across the original session). CC itself never
+  // reads the field; Loomscope uses it to merge the fork session jsonl
+  // back into the original ChatFlow.
+  forkedFrom?: { sessionId: string; messageUuid: string };
+  // v0.8 custom title — emitted as a top-level record by CC `/branch`
+  // (single record per fork session, type === "custom-title").
+  customTitle?: string;
   // Kitchen sink — open schema.
   [key: string]: unknown;
 }

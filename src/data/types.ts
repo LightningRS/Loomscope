@@ -270,6 +270,13 @@ export interface ChatNode extends NodeBase {
   /** When set: this ChatNode is a slash-command invocation, not a real
    * conversation turn. Render specially. */
   slashCommand?: SlashCommandInfo;
+  /** v0.8: cross-session fork pointer. CC `/branch` writes this on
+   * every record copied into the new fork session; parser hoists it to
+   * the ChatNode (multiple records inside one ChatNode share the same
+   * forkedFrom by construction — they all originate from the same
+   * source ChatNode in the original session). null when the ChatNode
+   * isn't part of a /branch-created fork session. */
+  forkedFrom?: { sessionId: string; messageUuid: string };
   meta: ChatNodeMeta;
 }
 
@@ -289,6 +296,16 @@ export interface ChatFlow {
     jsonlPath: string;
     sourceWorkNodeId: string;
   };
+  /** v0.8: customTitle from the `{type:"custom-title"}` record CC
+   * `/branch` appends to fork sessions (e.g. `"<原 firstPrompt> (Branch)"`).
+   * null when the session isn't a /branch fork. */
+  customTitle?: string;
+  /** v0.8: when this ChatFlow was produced by merging multiple jsonl
+   * files (fork closure), records the sessionIds in BFS order from
+   * the entry session. Single-element list (just the loaded
+   * sessionId) when the session has no fork relations. Server fills
+   * this in when computing the closure (M2). */
+  linkedSessions?: string[];
   chatNodes: ChatNode[];
   // Records that couldn't be placed into any ChatNode (no promptId, not a known
   // ChatFlow-level event). Kept for debugging / future passes.
