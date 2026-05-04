@@ -20,6 +20,7 @@ import { WorkFlowCanvas } from "@/canvas/WorkFlowCanvas";
 import { DrillPanel } from "@/components/drill/DrillPanel";
 import { Header } from "@/components/Header";
 import { Sidebar } from "@/components/Sidebar";
+import { useKeyboardNav } from "@/hooks/useKeyboardNav";
 import { useStore } from "@/store/index";
 import {
   resolveDrillView,
@@ -27,6 +28,7 @@ import {
 } from "@/store/sessionSlice";
 
 export default function App() {
+  useKeyboardNav();
   const activeId = useStore((s) => s.activeSessionId);
   const session = useStore((s) => (activeId ? s.sessions.get(activeId) : null));
   // v0.8.1 #7: when the drill panel is in fullscreen mode, <main>
