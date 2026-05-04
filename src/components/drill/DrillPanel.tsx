@@ -90,7 +90,16 @@ export function DrillPanel({ sessionId, chatFlow, viewMode, drilledChatNode }: P
         fullscreen={fullscreen}
         onToggleFullscreen={toggleFullscreen}
       />
-      <div className="flex-1 min-h-0 overflow-y-auto p-3">
+      {/* min-w-0 + overflow-x-hidden so panel resize doesn't expose
+          horizontal scrollbar when markdown content (wide tables, long
+          pre code lines) exceeds the narrower panel width. Each block
+          inside (typography pre, table) handles its own x-overflow
+          locally; the panel itself stays clean — never scroll
+          horizontally. Re-verify on @tailwindcss/typography upgrades:
+          if typography stops setting `pre { overflow-x: auto }` this
+          would start clipping code blocks instead of letting them
+          scroll within. */}
+      <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-3">
         {tab === "detail" && (
           <DetailTabContent
             sessionId={sessionId}
