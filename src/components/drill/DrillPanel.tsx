@@ -36,7 +36,12 @@ interface Props {
   drilledChatNode: ChatNode | null;
 }
 
-const COLLAPSED_WIDTH = 12;
+// v0.8.1 #2: bump from 12 → 24 so the collapsed strip mirrors the
+// Sidebar's collapsed pattern (div wrapper + button child) and the
+// click target is wide enough to feel intentional. The narrower 12px
+// wasn't the root cause of the overflow but a 12px hit target was
+// also bad UX — fix both at once.
+const COLLAPSED_WIDTH = 24;
 
 export function DrillPanel({ sessionId, chatFlow, viewMode, drilledChatNode }: Props) {
   const width = useStore((s) => s.drillPanelWidth);
@@ -237,6 +242,14 @@ function DetailTabContent({
   );
 }
 
+// v0.8.1 #2: wrap the click target in a div with explicit width
+// pinning (mirrors Sidebar's collapsed pattern). The previous version
+// returned the <button> directly into the App's flex row — buttons
+// have intrinsic content sizing that can leak past `width: 12px` if
+// the icon font glyph metrics push wider, and once that happens main
+// (flex-1 min-w-0) doesn't shrink because there's no overflow-hidden
+// on it. Real fix in two parts: this wrapper + overflow-hidden on
+// <main> in App.tsx.
 function CollapsedStrip({
   width,
   onExpand,
@@ -245,16 +258,20 @@ function CollapsedStrip({
   onExpand: () => void;
 }) {
   return (
-    <button
-      type="button"
-      className="h-full border-l border-gray-200 bg-gray-100 hover:bg-blue-50 transition-colors flex items-center justify-center text-gray-400 hover:text-blue-600 cursor-pointer"
+    <div
+      className="border-l border-gray-200 bg-gray-100 flex items-center justify-center flex-shrink-0"
       style={{ width, minWidth: width }}
-      onClick={onExpand}
-      title="Expand drill panel"
-      data-testid="drill-panel-expand"
     >
-      ◀
-    </button>
+      <button
+        type="button"
+        className="flex h-7 w-7 items-center justify-center rounded text-gray-400 hover:bg-blue-50 hover:text-blue-600 transition-colors cursor-pointer"
+        onClick={onExpand}
+        title="Expand drill panel"
+        data-testid="drill-panel-expand"
+      >
+        ◀
+      </button>
+    </div>
   );
 }
 

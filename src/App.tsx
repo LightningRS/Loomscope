@@ -62,7 +62,10 @@ export default function App() {
       <Header />
       <div className="flex flex-1 min-h-0">
         <Sidebar />
-        <main className="flex-1 min-w-0 relative bg-gray-100" data-testid="canvas-host">
+        <main
+          className="flex-1 min-w-0 relative bg-gray-100 overflow-hidden"
+          data-testid="canvas-host"
+        >
           {!activeId && <EmptyState />}
           {activeId && session?.isLoading && <LoadingState />}
           {activeId && session?.error && <ErrorState message={session.error} />}
