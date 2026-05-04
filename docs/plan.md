@@ -17,6 +17,7 @@
 | **v0.7** | compact handling | 处理 isCompactSummary 节点 + logicalParentUuid 边 + file-history-snapshot 绑定（基于 v0.6 统一 Node）| ✅ commits `fbcc4bb` → `2e2033f`（284/284 + 4 e2e；snapshot 100% 命中；compact 三色 dashed + compact-original drill + logical 弱边 + compact_file_reference 精装；解析 1860ms） |
 | **v0.7.1** | compact inline fold（重做 M3）| 把 v0.7 M3 的 `compact-original` drill mode 换成 inline fold + chatFold 合成节点 + per-session localStorage + 默认折叠 | ✅ commits `8f41ef7` → `59187c6`（371/371；computeCompactRange 走 root 修语义；largest-first 嵌套 attribution；256MB shape stress < 50ms） |
 | **v0.8** | fork 浏览 | parser 读 `forkedFrom` + `custom-title` / server merge fork 树 / **DrillPanel 2-tab（Detail + Conversation）** / ConversationView + branchMemory（在 Conversation tab 内）/ canvas fork ⑂ N indicator | ✅ shipped 2026-05-04 commits `c1e9e74` → M6 |
+| **v0.8.1** | 12 issue polish batch | DrillPanel chrome / Conversation 滚动+lazy load+复制+灰化 / hover-pan+auto-unfold / typography theme.extend / panel fullscreen / 文件改动语义拆分 / logical edge 视觉删除 / fold handle 条件渲染 | ✅ shipped 2026-05-04 晚 commits `dc5f20a` → `6413420`（409/409，+38；handoff `handoff-v0.8.1-polish-batch.md`）|
 | **v0.9** | file-tail mode | 监听 jsonl mtime 增量更新 canvas | |
 | **v0.10** | polish & 性能 | 大 session 性能验证（256MB session 30s 内首屏） | |
 | **v1.0** | ship | README / 截图 / 一键启动指令 | |
@@ -384,6 +385,43 @@ CC 自己有两套 fork 机制（详见 `design-data-model.md` 的 "Fork 机制"
 ### 跟 v∞.3 的关系
 
 v0.8 是**浏览侧**：把已有 jsonl 文件里的 fork 关系正确显示出来。v∞.3 是**编辑侧**：让 Loomscope 主动从任意节点起 fork。两者共享 ConversationView + branchMemory + 数据模型；v0.8 不实现写入，v∞.3 在 v0.8 基础上加 composer。
+
+## v0.8.1 — polish batch ✅ shipped 2026-05-04 晚
+
+12 个用户实测发现的 polish issue 一批清。详见 `docs/handoff-v0.8.1-polish-batch.md` + `docs/devlog.md` 同日 entry。
+
+| # | 内容 | commit | milestone |
+|---|---|---|---|
+| 1 | DrillPanel "DETAIL" header 删 / collapse + breadcrumb 进 tab strip | `dc5f20a` | M1 |
+| 6 | 删 compact 横向虚线（logical edge 视觉），数据保留 | `9d8a376` | M1 |
+| 8 | chatFold 节点 incoming handle 条件渲染 | `e44d6a7` | M1 |
+| 2 | collapse panel 后右侧滚动条溢出修复 | `d93c13f` | M2 |
+| 7 | drill panel max-width 取消 + 全屏切换 | `a153076` | M2 |
+| 12 | conversation 选中下游灰化（不截断 path） | `024ec04` | M3 |
+| 3 | conversation 默认滚到底（含 selectedNodeId 切换） | `024ec04` | M3 |
+| 4 | conversation 贪心背包懒加载（50K 初始 / 30K 扩窗） | `024ec04` | M3 |
+| 11 | conversation 消息复制按钮（user bubble 内 / assistant footer） | `024ec04` | M3 |
+| 10 | markdown typography theme.extend 微调（含 inline-code overflow-wrap 防溢出）| `024ec04` | M3 |
+| 5 | hover 250ms → 自动逐级展开 fold + canvas pan（CanvasPanContext） | `6a7673e` | M4 |
+| 9 | 文件改动 拆"本节点 / 本轮累积"两节 + selfDelta 算法 | `6413420` | M5 |
+
+**测试**：371 → 409 (+38)。typecheck + build 全清，13 hard constraints 全守住（`enterCompactOriginal` 没回归 / per-card subscription 没动 / chatFold 仍独立挂上游 / localStorage fold key 不变 / logical 数据保留 / etc.）。
+
+**关键架构新增**：
+
+- `src/canvas/CanvasPanContext.tsx` —— #5 跨树 pan API。ChatFlow canvas 在 CanvasInner 注册 `panToNode` impl 进 ref，ConversationView shim 通过 ref at fire time 读取。理由：rf 实例只在 ReactFlowProvider 下，不能 lift 到 App
+- **#5 自动化 unfold 不走 FoldAnchorContext**：anchor 契约是"保留用户手动操作的视角"；自动化场景应 slide 到 target 而不是钉在旧位置
+- **#7 fullscreen state machine**：`drillPanelFullscreen` + `prevDrillPanelWidth` 两字段；`toggleDrillPanel` 从 fullscreen 退出时清 fullscreen 并 restore 宽，避免 zombie state
+- **#9 selfDelta 算法**：`(selfSnap \ parentSnap) ∪ tool_use`；rollback 边 case 走 ∪ 分支保证 tool_use 仍出现；nearestAncestor 跳过空 snapshot 节点
+- **#12 path 不截断**：`pathUtils.resolvePath` 改成始终走到 leaf，新增 `selectedIndex` 字段；ConversationView 用 `idx > selectedIndex` 加 opacity-40 灰化
+
+**遗留 backlog**（明确 defer）：
+
+1. #4 lazy load 改 IntersectionObserver（当前 scroll listener + 200px 阈值，简单可靠）
+2. #5 hover 触发 lazy load 扩窗（一期不做，假设 hover 在已渲染范围）
+3. #10 typography 视觉 ≥ 90% Agentloom 相似度（按 spec 调，最终视觉验证留用户实测后微调）
+4. e2e 跑全套（用户上线前手动验证 8/8 spec）
+5. localStorage GC（v0.10 polish）
 
 ## v0.9 — file-tail
 

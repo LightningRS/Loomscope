@@ -6,11 +6,33 @@
 
 ---
 
-## 2026-05-04（晚）— v0.8.1 polish batch M3（conversation 5 项）
+## 2026-05-04（晚）— v0.8.1 polish batch ship（12 issue）
 
-`ConversationView` 5 个并联改动 (#12 灰化 + #3 滚到底 + #4 lazy load + #11 复制 + #10 typography) 同 commit。
+按 `docs/handoff-v0.8.1-polish-batch.md` 实施。**371 → 409 unit tests (+38)**，typecheck + build 全清，13 hard constraints 全守住。8 个 commits 跨 5 个 milestone：
 
-- **#10 typography**：`tailwind.config.js` `theme.extend.typography.sm` override —— 段落 / 列表 / 标题 margin 收紧 30-40%，table cell padding 减半，inline code 加 `overflow-wrap: anywhere` + `word-break: break-word`，行高从 typography 默认 ~leading-7 收到 1.55。**为什么改**：typography 默认 spacing 是给 spacious blog 用的，狭窄 DrillPanel 里行距过宽 + inline code 长 token (e.g. `userTier`) 撑爆右边沿。**升级时要复检**：`@tailwindcss/typography` major 升级可能改 default class 名 / nesting；inline-code overflow-wrap override 是窄 panel 必需，丢失会立刻触发右溢出 bug。配置文件里有内联注释做钉子。
+| commit | 内容 |
+|---|---|
+| `dc5f20a` | M1 #1 DETAIL header 删 / collapse + breadcrumb 进 tab strip |
+| `9d8a376` | M1 #6 logical edge 视觉删除（数据保留：`compactMetadata.logicalParentChatNodeId` + parser backfill + `computeCompactRange` 起跳点都在）|
+| `e44d6a7` | M1 #8 chatFold 节点 incoming handle 条件渲染 |
+| `d93c13f` | M2 #2 collapse panel 后右侧滚动条溢出修复 |
+| `a153076` | M2 #7 drill panel max-width cap 取消 + 全屏切换 |
+| `024ec04` | M3 #12+#3+#4+#11+#10 conversation 5 项一锅炖 |
+| `6a7673e` | M4 #5 hover 250ms → 自动逐级展开 fold + canvas pan |
+| `6413420` | M5 #9 "本轮文件改动" 拆"本节点 / 本轮累积"两节 |
+
+**几个关键设计抉择**：
+
+- **#5 跨树 pan 通信**：新建 `src/canvas/CanvasPanContext.tsx` —— ref-shaped 注册（CanvasInner 注册 `panToNode` impl 进 ref，ConversationView shim 通过 ref at fire time 读）。理由：rf 实例只在 `ReactFlowProvider` 下，不能 lift 到 App
+- **#5 自动化 unfold 不走 `FoldAnchorContext`**：anchor 契约是"保留用户手动操作的视角"，自动化场景应该 slide 到 target，不应钉在 host 旧位置。这条我之前在 `viewport-anchored fold toggle` 那条 entry 里隐含承认过 —— 现在显式坐实
+- **#7 fullscreen state machine**：`drillPanelFullscreen: boolean` + `prevDrillPanelWidth: number | null` 两字段；`toggleDrillPanel` 从 fullscreen 退出时清 fullscreen 并 restore 宽，避免 zombie state（fullscreen 模式下又 collapse 然后 restore 会丢 width）
+- **#9 selfDelta 算法**：`(selfSnap \ parentSnap) ∪ tool_use`；nearestAncestor 跳过空 snapshot 节点；rollback 边 case 走 ∪ 分支保证 tool_use 仍出现（用户回滚某些文件 → selfSnap ⊊ parentSnap → delta 可能空）
+- **#12 path 不截断**：`pathUtils.resolvePath` 改成始终走到 leaf，新增 `selectedIndex` 字段；ConversationView 用 `idx > selectedIndex` 加 `opacity-40 hover:opacity-80` 灰化。既有"fork-at-end"测试改成"latest-child active"
+- **#3 滚到底 vs 内部点击保位**：`skipNextScrollRef` 区分内部 bubble 点击（保留位置）vs 外部 setSelected（滚到底）；BranchSelector pickBranch 不设 skip → 切分支自动滚到 leaf
+
+**#10 typography**：`tailwind.config.js` `theme.extend.typography.sm` override —— 段落 / 列表 / 标题 margin 收紧 30-40%，table cell padding 减半，inline code 加 `overflow-wrap: anywhere` + `word-break: break-word`，行高从 typography 默认 ~leading-7 收到 1.55。**为什么改**：typography 默认 spacing 是给 spacious blog 用的，狭窄 DrillPanel 里行距过宽 + inline code 长 token (e.g. `userTier`) 撑爆右边沿。**升级时要复检**：`@tailwindcss/typography` major 升级可能改 default class 名 / nesting；inline-code overflow-wrap override 是窄 panel 必需，丢失会立刻触发右溢出 bug。配置文件里有内联注释做钉子。
+
+**遗留 backlog**：lazy load 改 IO / hover 触发扩窗 / typography 90% 视觉对齐 / e2e 跑全套 / localStorage GC —— 跟 plan.md v0.8.1 节同步。
 
 ---
 
