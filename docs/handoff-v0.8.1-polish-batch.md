@@ -201,6 +201,7 @@ selfDelta = (selfSnap \ parentSnap)  ∪  distinctToolUseFiles(cn)
 - 段落 / 列表 / 标题 margin-y 收紧 30-40%
 - table cell padding 减半
 - inline code 背景从 `prose` 默认的 light gray 调成 `bg-gray-100/60` + 字号 0.85em
+- **inline code 加 `overflow-wrap: anywhere`**（或 `word-break: break-all`）—— typography 默认 inline code 是 nowrap-ish chip，长 token 到行尾会溢出窗口右边沿（Agentloom 也有这个问题，用户实测确认）。狭窄 panel 必修
 - 行高从 `leading-7` 类 → `leading-6`（保留可读性）
 - 标题 h1/h2/h3 字号 vs 段落 ratio 不动（保持视觉层级）
 - 不要改颜色 palette（保持 prose 默认的 gray-900 / gray-700 文字）
