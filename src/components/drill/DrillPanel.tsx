@@ -15,11 +15,29 @@
 // panel body — extracted into DetailTabContent subcomponent purely so
 // the JSX of the wrapper reads cleanly with the new tab strip.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { ChatNodeDetail } from "@/components/drill/ChatNodeDetail";
-import { ConversationView } from "@/components/drill/ConversationView";
-import { WorkNodeDetail } from "@/components/drill/WorkNodeDetail";
+// v0.10 polish #6B: lazy-load the heavy detail / conversation
+// components. All three pull in the markdown stack (react-markdown +
+// remark-gfm + rehype-raw + rehype-sanitize + rehype-highlight +
+// highlight.js with its language pack), totalling ~300KB / ~80KB gz.
+// Until the user clicks a session and the panel renders content,
+// none of that needs to be in the initial bundle.
+const ChatNodeDetail = lazy(() =>
+  import("@/components/drill/ChatNodeDetail").then((m) => ({
+    default: m.ChatNodeDetail,
+  })),
+);
+const ConversationView = lazy(() =>
+  import("@/components/drill/ConversationView").then((m) => ({
+    default: m.ConversationView,
+  })),
+);
+const WorkNodeDetail = lazy(() =>
+  import("@/components/drill/WorkNodeDetail").then((m) => ({
+    default: m.WorkNodeDetail,
+  })),
+);
 import { useStore } from "@/store/index";
 import type { ChatFlow, ChatNode, WorkNode } from "@/data/types";
 import type { DrillPanelTab } from "@/store/types";
@@ -120,19 +138,39 @@ export function DrillPanel({ sessionId, chatFlow, viewMode, drilledChatNode }: P
           would start clipping code blocks instead of letting them
           scroll within. */}
       <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-3">
-        {tab === "detail" && (
-          <DetailTabContent
-            sessionId={sessionId}
-            chatFlow={chatFlow}
-            viewMode={viewMode}
-            drilledChatNode={drilledChatNode}
-          />
-        )}
-        {tab === "conversation" && (
-          <ConversationView sessionId={sessionId} chatFlow={chatFlow} />
-        )}
+        {/* Suspense fallback covers the first-render fetch of the
+            lazy markdown chunk (~80KB gz). Subsequent tab switches
+            are cached. */}
+        <Suspense fallback={<LazyFallback />}>
+          {tab === "detail" && (
+            <DetailTabContent
+              sessionId={sessionId}
+              chatFlow={chatFlow}
+              viewMode={viewMode}
+              drilledChatNode={drilledChatNode}
+            />
+          )}
+          {tab === "conversation" && (
+            <ConversationView sessionId={sessionId} chatFlow={chatFlow} />
+          )}
+        </Suspense>
       </div>
     </aside>
+  );
+}
+
+// Suspense fallback while the lazy panel-content chunk loads. Light
+// touch — Loomscope's network is local so the fetch is sub-100ms;
+// flashing a heavy spinner would be more distracting than the small
+// pause itself.
+function LazyFallback() {
+  return (
+    <div
+      data-testid="drill-panel-loading"
+      className="text-[11px] text-gray-400 italic"
+    >
+      Loading…
+    </div>
   );
 }
 
