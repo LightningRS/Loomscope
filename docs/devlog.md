@@ -6,6 +6,14 @@
 
 ---
 
+## 2026-05-04（晚）— v0.8.1 polish batch M3（conversation 5 项）
+
+`ConversationView` 5 个并联改动 (#12 灰化 + #3 滚到底 + #4 lazy load + #11 复制 + #10 typography) 同 commit。
+
+- **#10 typography**：`tailwind.config.js` `theme.extend.typography.sm` override —— 段落 / 列表 / 标题 margin 收紧 30-40%，table cell padding 减半，inline code 加 `overflow-wrap: anywhere` + `word-break: break-word`，行高从 typography 默认 ~leading-7 收到 1.55。**为什么改**：typography 默认 spacing 是给 spacious blog 用的，狭窄 DrillPanel 里行距过宽 + inline code 长 token (e.g. `userTier`) 撑爆右边沿。**升级时要复检**：`@tailwindcss/typography` major 升级可能改 default class 名 / nesting；inline-code overflow-wrap override 是窄 panel 必需，丢失会立刻触发右溢出 bug。配置文件里有内联注释做钉子。
+
+---
+
 ## 2026-05-04
 
 ### viewport-anchored fold toggle（commit `0e1ea63`）

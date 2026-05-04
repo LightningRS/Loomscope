@@ -32,13 +32,21 @@ export interface ResolvedPath {
   path: string[];
   /** One ForkInfo per fork point traversed, in path order. */
   forks: ForkInfo[];
+  /** Index of `selectedChatNodeId` within `path`, or `path.length-1`
+   * when no selection / selection sits at the leaf. v0.8.1 #12: lets
+   * ConversationView dim messages strictly past the selection rather
+   * than truncate the path at it. */
+  selectedIndex: number;
 }
 
 /**
  * Resolve the root → endpoint path through `chatFlow`.
  *
- * - When `selectedChatNodeId` matches a ChatNode, walk parentChatNodeId
- *   back to a root from there.
+ * - When `selectedChatNodeId` matches a ChatNode, walk
+ *   always-latest-child from there to a leaf, then walk
+ *   parentChatNodeId back to a root. The selection sits *inside*
+ *   the path at `selectedIndex`; messages past it are emitted (the
+ *   caller dims them).
  * - Otherwise, default to the latest leaf (start at the first root by
  *   timestamp, then always take the latest child until a leaf).
  *
@@ -51,19 +59,21 @@ export function resolvePath(
   selectedChatNodeId: string | null,
 ): ResolvedPath {
   if (!chatFlow || chatFlow.chatNodes.length === 0) {
-    return { path: [], forks: [] };
+    return { path: [], forks: [], selectedIndex: -1 };
   }
   const byId = new Map(chatFlow.chatNodes.map((c) => [c.id, c]));
   const childrenOf = buildChildrenMap(chatFlow.chatNodes);
 
-  // Endpoint resolution.
+  // Endpoint resolution: when a selection is present, walk it forward
+  // to a leaf (#12 — Conversation no longer truncates at selection).
   let endpoint: ChatNode | undefined;
   if (selectedChatNodeId && byId.has(selectedChatNodeId)) {
-    endpoint = byId.get(selectedChatNodeId);
+    const leafId = walkToLatestLeaf(selectedChatNodeId, byId, childrenOf);
+    endpoint = byId.get(leafId);
   } else {
     endpoint = defaultLatestLeaf(chatFlow.chatNodes, childrenOf);
   }
-  if (!endpoint) return { path: [], forks: [] };
+  if (!endpoint) return { path: [], forks: [], selectedIndex: -1 };
 
   // Walk parentChatNodeId from endpoint back to a root.
   const path: string[] = [];
@@ -86,7 +96,37 @@ export function resolvePath(
       forks.push({ nodeId: nid, childIds: children, chosenChildId: chosen });
     }
   }
-  return { path, forks };
+
+  // selectedIndex: where the active selection sits in the path. When
+  // there's no selection or it's not in the resolved path (race), we
+  // anchor at the leaf so nothing dims.
+  const selectedIndex = selectedChatNodeId
+    ? path.indexOf(selectedChatNodeId)
+    : path.length - 1;
+  return {
+    path,
+    forks,
+    selectedIndex: selectedIndex === -1 ? path.length - 1 : selectedIndex,
+  };
+}
+
+function walkToLatestLeaf(
+  startId: string,
+  byId: Map<string, ChatNode>,
+  childrenOf: Map<string, string[]>,
+): string {
+  const visited = new Set<string>();
+  let cursor: ChatNode | undefined = byId.get(startId);
+  while (cursor && !visited.has(cursor.id)) {
+    visited.add(cursor.id);
+    const children = childrenOf.get(cursor.id) ?? [];
+    if (children.length === 0) return cursor.id;
+    const latestId = children[children.length - 1];
+    const next = byId.get(latestId);
+    if (!next) return cursor.id;
+    cursor = next;
+  }
+  return cursor?.id ?? startId;
 }
 
 /** Default-walk leaf id (no selection, always-latest-child). Used to

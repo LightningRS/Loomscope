@@ -21,7 +21,7 @@
 // which both flips selectedNodeId AND persists the leaf for next
 // re-entry.
 
-import { Fragment, useMemo } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { MarkdownView } from "@/components/MarkdownView";
 import {
@@ -44,6 +44,15 @@ interface Props {
 // working." Using a stable singleton avoids the loop.
 const EMPTY_BRANCH_MEMORY: Record<string, string> = Object.freeze({});
 
+// v0.8.1 #4: lazy-pack budget. Conversation renders [startIdx, endIdx)
+// where endIdx = path.length. startIdx is packed back from leaf until
+// roughly TOKEN_BUDGET_INITIAL tokens are reached; scrolling near the
+// top extends startIdx by another TOKEN_BUDGET_EXTEND-budget batch.
+// Token approx = chars / 4 (no tiktoken dep).
+const TOKEN_BUDGET_INITIAL = 50_000;
+const TOKEN_BUDGET_EXTEND = 30_000;
+const SCROLL_TOP_THRESHOLD = 200;
+
 export function ConversationView({ sessionId, chatFlow }: Props) {
   const selectedId = useStore(
     (s) => s.sessions.get(sessionId)?.selectedNodeId ?? null,
@@ -54,7 +63,7 @@ export function ConversationView({ sessionId, chatFlow }: Props) {
   const setSelected = useStore((s) => s.setSelected);
   const pickBranch = useStore((s) => s.pickBranch);
 
-  const { path, forks } = useMemo(
+  const { path, forks, selectedIndex } = useMemo(
     () => resolvePath(chatFlow, selectedId),
     [chatFlow, selectedId],
   );
@@ -66,6 +75,70 @@ export function ConversationView({ sessionId, chatFlow }: Props) {
         : new Map<string, ChatNode>(),
     [chatFlow],
   );
+
+  // v0.8.1 #3: auto-scroll to bottom on tab mount + when selection
+  // changes from outside (canvas click). Internal bubble clicks skip
+  // the scroll — clicking a message means "focus here", not "jump
+  // away to the leaf". `scrollRoot` here is the bubble container; the
+  // actual scroll viewport is the closest ancestor with overflow-auto
+  // (DrillPanel wraps Conversation in one).
+  const bottomMarkerRef = useRef<HTMLDivElement | null>(null);
+  const topMarkerRef = useRef<HTMLDivElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const skipNextScrollRef = useRef(false);
+  useEffect(() => {
+    if (skipNextScrollRef.current) {
+      skipNextScrollRef.current = false;
+      return;
+    }
+    const el = bottomMarkerRef.current;
+    if (!el) return;
+    el.scrollIntoView({ block: "end", behavior: "auto" });
+  }, [selectedId, chatFlow?.id]);
+
+  // v0.8.1 #4: lazy-pack window. Recompute initial startIdx on path
+  // identity change.
+  const [startIdx, setStartIdx] = useState(0);
+  useEffect(() => {
+    setStartIdx(packStartIdx(path, byId, path.length, TOKEN_BUDGET_INITIAL));
+  }, [path, byId]);
+
+  // Extend leftward when the user scrolls near the top of the
+  // conversation viewport.
+  const extendUp = useCallback(() => {
+    setStartIdx((cur) => {
+      if (cur <= 0) return cur;
+      const scrollEl = findScrollParent(containerRef.current);
+      const beforeHeight = scrollEl?.scrollHeight ?? 0;
+      const beforeTop = scrollEl?.scrollTop ?? 0;
+      const next = packStartIdx(path, byId, cur, TOKEN_BUDGET_EXTEND);
+      // Visual-stability hack: after the new bubbles render at the
+      // top, restore scrollTop so the user's view stays anchored.
+      if (scrollEl) {
+        requestAnimationFrame(() => {
+          const grown = scrollEl.scrollHeight - beforeHeight;
+          scrollEl.scrollTop = beforeTop + grown;
+        });
+      }
+      return next;
+    });
+  }, [path, byId]);
+
+  useEffect(() => {
+    const scrollEl = findScrollParent(containerRef.current);
+    if (!scrollEl) return;
+    const handler = () => {
+      if (scrollEl.scrollTop < SCROLL_TOP_THRESHOLD) extendUp();
+    };
+    scrollEl.addEventListener("scroll", handler, { passive: true });
+    return () => scrollEl.removeEventListener("scroll", handler);
+  }, [extendUp]);
+
+  const visiblePath = useMemo(
+    () => path.slice(startIdx),
+    [path, startIdx],
+  );
+  const hasMoreAbove = startIdx > 0;
 
   if (!chatFlow || path.length === 0) {
     return (
@@ -79,17 +152,36 @@ export function ConversationView({ sessionId, chatFlow }: Props) {
   }
 
   return (
-    <div data-testid="conversation-view" className="flex flex-col gap-3">
-      {path.map((nid) => {
+    <div
+      ref={containerRef}
+      data-testid="conversation-view"
+      className="flex flex-col gap-3"
+    >
+      <div ref={topMarkerRef} data-testid="conversation-top-marker" />
+      {hasMoreAbove && (
+        <div
+          data-testid="conversation-load-more"
+          className="text-center text-[11px] text-gray-400 italic py-1"
+        >
+          继续向上滚动加载更多…（已截 {startIdx} 条）
+        </div>
+      )}
+      {visiblePath.map((nid, sliceIdx) => {
+        const idx = sliceIdx + startIdx;
         const cn = byId.get(nid);
         if (!cn) return null;
         const fork = forkAt.get(nid);
+        const isDimmed = idx > selectedIndex;
         return (
           <Fragment key={nid}>
             <MessageBubble
               chatNode={cn}
               isSelected={nid === selectedId}
-              onSelect={() => setSelected(sessionId, nid)}
+              isDimmed={isDimmed}
+              onSelect={() => {
+                skipNextScrollRef.current = true;
+                setSelected(sessionId, nid);
+              }}
             />
             {fork && (
               <BranchSelector
@@ -112,6 +204,8 @@ export function ConversationView({ sessionId, chatFlow }: Props) {
           </Fragment>
         );
       })}
+      {/* v0.8.1 #3: scroll-to-bottom anchor. */}
+      <div ref={bottomMarkerRef} data-testid="conversation-bottom-marker" />
     </div>
   );
 }
@@ -123,10 +217,12 @@ export function ConversationView({ sessionId, chatFlow }: Props) {
 function MessageBubble({
   chatNode,
   isSelected,
+  isDimmed,
   onSelect,
 }: {
   chatNode: ChatNode;
   isSelected: boolean;
+  isDimmed: boolean;
   onSelect: () => void;
 }) {
   const userText = useMemo(() => extractText(chatNode.userMessage.content), [chatNode]);
@@ -135,24 +231,44 @@ function MessageBubble({
     <div
       data-testid={`conversation-bubble-${chatNode.id}`}
       data-selected={isSelected ? "true" : "false"}
+      data-dimmed={isDimmed ? "true" : "false"}
       onClick={onSelect}
       className={[
-        "group relative cursor-pointer pl-3 transition-colors",
+        "group relative cursor-pointer pl-3 transition-all",
         isSelected
           ? "border-l-2 border-blue-400"
           : "border-l-2 border-transparent hover:border-gray-200",
+        isDimmed ? "opacity-40 hover:opacity-80" : "",
       ].join(" ")}
     >
       {userText && (
         <div className="mb-2 flex items-end justify-end gap-1">
-          <div className="prose prose-sm prose-invert max-w-[85%] rounded-2xl bg-blue-500 px-3 py-2 text-[13px] text-white break-words">
-            <MarkdownView>{userText}</MarkdownView>
+          <div className="group/user relative max-w-[85%]">
+            <div className="prose prose-sm prose-invert rounded-2xl bg-blue-500 px-3 py-2 text-[13px] text-white break-words">
+              <MarkdownView>{userText}</MarkdownView>
+            </div>
+            <CopyButton
+              text={userText}
+              role="user"
+              chatNodeId={chatNode.id}
+              tone="dark"
+              parentHover="group-hover/user:opacity-100"
+            />
           </div>
         </div>
       )}
       {assistantText && (
-        <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-gray-800 break-words">
-          <MarkdownView>{assistantText}</MarkdownView>
+        <div className="group/asst relative">
+          <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-gray-800 break-words">
+            <MarkdownView>{assistantText}</MarkdownView>
+          </div>
+          <CopyButton
+            text={assistantText}
+            role="assistant"
+            chatNodeId={chatNode.id}
+            tone="light"
+            parentHover="group-hover/asst:opacity-100"
+          />
         </div>
       )}
       {!userText && !assistantText && (
@@ -160,6 +276,51 @@ function MessageBubble({
       )}
       <MessageMeta chatNode={chatNode} />
     </div>
+  );
+}
+
+// v0.8.1 #11: floating copy button shown on hover of the parent
+// bubble. Copies markdown source as-is (so paste targets that
+// re-render markdown stay correct). Falls back silently if
+// clipboard API is unavailable (older browsers / insecure context).
+function CopyButton({
+  text,
+  role,
+  chatNodeId,
+  tone,
+  parentHover,
+}: {
+  text: string;
+  role: "user" | "assistant";
+  chatNodeId: string;
+  tone: "light" | "dark";
+  parentHover: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      aria-label="复制消息"
+      data-testid={`copy-msg-${role}-${chatNodeId}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        const cb = navigator.clipboard;
+        if (cb && typeof cb.writeText === "function") {
+          void cb.writeText(text);
+        }
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      }}
+      className={[
+        "absolute -top-2 right-1 rounded px-1.5 py-0.5 text-[10px] font-mono opacity-0 transition-opacity",
+        parentHover,
+        tone === "dark"
+          ? "bg-blue-600 text-white hover:bg-blue-700"
+          : "bg-white text-gray-500 border border-gray-200 hover:text-gray-700 hover:border-gray-300",
+      ].join(" ")}
+    >
+      {copied ? "✓" : "📋"}
+    </button>
   );
 }
 
@@ -226,6 +387,45 @@ function BranchSelector({
       })}
     </div>
   );
+}
+
+// v0.8.1 #4: walk path right→left from `endIdx` and pack ChatNodes
+// until adding the next one would exceed `budget` tokens. Always
+// returns ≥0 (clamped) and ≤endIdx. Token estimate = chars/4.
+export function packStartIdx(
+  path: string[],
+  byId: Map<string, ChatNode>,
+  endIdx: number,
+  budget: number,
+): number {
+  let used = 0;
+  let i = endIdx;
+  while (i > 0) {
+    const cn = byId.get(path[i - 1]);
+    const tokens = cn ? estimateTokens(cn) : 0;
+    // Always include at least one ChatNode even if it busts budget;
+    // otherwise an oversized leaf would render an empty viewport.
+    if (i < endIdx && used + tokens > budget) break;
+    used += tokens;
+    i -= 1;
+  }
+  return i;
+}
+
+function estimateTokens(cn: ChatNode): number {
+  const u = extractText(cn.userMessage.content) ?? "";
+  const a = lastAssistantText(cn) ?? "";
+  return Math.ceil((u.length + a.length) / 4);
+}
+
+function findScrollParent(el: HTMLElement | null): HTMLElement | null {
+  let cur: HTMLElement | null = el?.parentElement ?? null;
+  while (cur) {
+    const style = window.getComputedStyle(cur);
+    if (/(auto|scroll)/.test(style.overflowY)) return cur;
+    cur = cur.parentElement;
+  }
+  return null;
 }
 
 function previewFor(cn: ChatNode | undefined): string {

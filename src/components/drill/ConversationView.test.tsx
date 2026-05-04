@@ -1,9 +1,9 @@
 // v0.8 M4 — ConversationView render + branchMemory + selection sync.
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 
-import { ConversationView } from "@/components/drill/ConversationView";
+import { ConversationView, packStartIdx } from "@/components/drill/ConversationView";
 import { useStore } from "@/store/index";
 import type { ChatFlow, ChatNode } from "@/data/types";
 
@@ -191,13 +191,207 @@ describe("ConversationView — fork + BranchSelector", () => {
     expect(useStore.getState().sessions.get(SID)?.selectedNodeId).toBe("e");
   });
 
-  it("fork at the path's terminal node (selected IS the fork) marks no chip active", () => {
-    const cf = flow([cn("a", null), cn("b", "a"), cn("c1", "b"), cn("c2", "b")]);
+  it("v0.8.1 #12: selecting a fork node still marks the latest-child chip active (path walks forward)", () => {
+    // Pre-#12 selecting the fork left both chips inactive because the
+    // path truncated at the fork. v0.8.1 #12 walks to leaf so the
+    // latest-child chip is the chosen branch.
+    const cf = flow([
+      cn("a", null),
+      cn("b", "a"),
+      cn("c1", "b", "msg1", "rep1", "2026-04-10T00:00:03.000Z"),
+      cn("c2", "b", "msg2", "rep2", "2026-04-10T00:00:04.000Z"),
+    ]);
     seed(cf, "b");
     render(<ConversationView sessionId={SID} chatFlow={cf} />);
     expect(screen.getByTestId("branch-selector-b")).toBeTruthy();
     expect(screen.getByTestId("branch-option-c1").dataset.active).toBe("false");
-    expect(screen.getByTestId("branch-option-c2").dataset.active).toBe("false");
+    expect(screen.getByTestId("branch-option-c2").dataset.active).toBe("true");
+  });
+});
+
+describe("ConversationView — v0.8.1 #12 selection dimming (no truncation)", () => {
+  it("renders messages past selection but marks them data-dimmed=true", () => {
+    const cf = flow([cn("a", null), cn("b", "a"), cn("c", "b"), cn("d", "c")]);
+    seed(cf, "b");
+    render(<ConversationView sessionId={SID} chatFlow={cf} />);
+    // All 4 bubbles render (path went through to the leaf).
+    expect(screen.getByTestId("conversation-bubble-a")).toBeTruthy();
+    expect(screen.getByTestId("conversation-bubble-b")).toBeTruthy();
+    expect(screen.getByTestId("conversation-bubble-c")).toBeTruthy();
+    expect(screen.getByTestId("conversation-bubble-d")).toBeTruthy();
+    // a + b are at-or-before selection (idx 0, 1) → not dimmed.
+    expect(screen.getByTestId("conversation-bubble-a").dataset.dimmed).toBe("false");
+    expect(screen.getByTestId("conversation-bubble-b").dataset.dimmed).toBe("false");
+    // c + d are after selection → dimmed.
+    expect(screen.getByTestId("conversation-bubble-c").dataset.dimmed).toBe("true");
+    expect(screen.getByTestId("conversation-bubble-d").dataset.dimmed).toBe("true");
+  });
+
+  it("clicking a dimmed message updates selection so the dim range collapses to its tail", () => {
+    const cf = flow([cn("a", null), cn("b", "a"), cn("c", "b"), cn("d", "c")]);
+    seed(cf, "a");
+    render(<ConversationView sessionId={SID} chatFlow={cf} />);
+    // Click the dimmed `c` bubble.
+    fireEvent.click(screen.getByTestId("conversation-bubble-c"));
+    expect(useStore.getState().sessions.get(SID)?.selectedNodeId).toBe("c");
+    // a + b + c are now at-or-before selection; only d dims.
+    expect(screen.getByTestId("conversation-bubble-a").dataset.dimmed).toBe("false");
+    expect(screen.getByTestId("conversation-bubble-c").dataset.dimmed).toBe("false");
+    expect(screen.getByTestId("conversation-bubble-d").dataset.dimmed).toBe("true");
+  });
+
+  it("selectedId at leaf → no message dims (selectedIndex = path.length-1)", () => {
+    const cf = flow([cn("a", null), cn("b", "a"), cn("c", "b")]);
+    seed(cf, "c");
+    render(<ConversationView sessionId={SID} chatFlow={cf} />);
+    expect(screen.getByTestId("conversation-bubble-a").dataset.dimmed).toBe("false");
+    expect(screen.getByTestId("conversation-bubble-b").dataset.dimmed).toBe("false");
+    expect(screen.getByTestId("conversation-bubble-c").dataset.dimmed).toBe("false");
+  });
+});
+
+describe("ConversationView — v0.8.1 #3 scroll-to-bottom", () => {
+  it("calls scrollIntoView on the bottom marker on mount", () => {
+    const spy = vi.fn();
+    Element.prototype.scrollIntoView = spy as unknown as typeof Element.prototype.scrollIntoView;
+    const cf = flow([cn("a", null), cn("b", "a")]);
+    seed(cf, "b");
+    render(<ConversationView sessionId={SID} chatFlow={cf} />);
+    expect(spy).toHaveBeenCalled();
+  });
+
+  it("re-scrolls to bottom when selection changes from outside (canvas click)", () => {
+    const spy = vi.fn();
+    Element.prototype.scrollIntoView = spy as unknown as typeof Element.prototype.scrollIntoView;
+    const cf = flow([cn("a", null), cn("b", "a"), cn("c", "b")]);
+    seed(cf, "a");
+    render(<ConversationView sessionId={SID} chatFlow={cf} />);
+    spy.mockClear();
+    // Simulate external (non-bubble-click) selection change: hit the
+    // store directly, just like canvas onNodeClick does. Wrap in
+    // act() so React flushes the resulting effect synchronously.
+    act(() => {
+      useStore.getState().setSelected(SID, "b");
+    });
+    expect(spy).toHaveBeenCalled();
+  });
+
+  it("clicking a bubble inside ConversationView does NOT trigger a scroll-to-bottom", () => {
+    const spy = vi.fn();
+    Element.prototype.scrollIntoView = spy as unknown as typeof Element.prototype.scrollIntoView;
+    const cf = flow([cn("a", null), cn("b", "a"), cn("c", "b")]);
+    seed(cf, "c");
+    render(<ConversationView sessionId={SID} chatFlow={cf} />);
+    spy.mockClear();
+    fireEvent.click(screen.getByTestId("conversation-bubble-a"));
+    // Selection updated to "a" but scroll was suppressed.
+    expect(useStore.getState().sessions.get(SID)?.selectedNodeId).toBe("a");
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe("packStartIdx — v0.8.1 #4 token-budget lazy pack", () => {
+  function mkChatNode(id: string, charCount: number) {
+    const text = "x".repeat(charCount);
+    return {
+      kind: "chat" as const,
+      id,
+      parentChatNodeId: null,
+      rootUserUuid: `u-${id}`,
+      userMessage: { uuid: `u-${id}`, content: text, attachments: [] },
+      workflow: {
+        nodes: [
+          {
+            id: `l-${id}`,
+            kind: "llm_call" as const,
+            parentUuid: null,
+            text: "",
+            thinking: [],
+          },
+        ],
+        edges: [],
+      },
+      trigger: "user" as const,
+      isCompactSummary: false,
+      meta: {},
+    };
+  }
+
+  it("packs back from endIdx until budget would be exceeded; always includes at least one ChatNode", () => {
+    // 5 ChatNodes × 4000 chars = 1000 tokens each.
+    const ids = ["a", "b", "c", "d", "e"];
+    const byId = new Map(ids.map((id) => [id, mkChatNode(id, 4000)]));
+    // budget = 2500 → fits 2 ChatNodes (2000 tokens) but not 3 (3000).
+    expect(packStartIdx(ids, byId, ids.length, 2500)).toBe(3);
+  });
+
+  it("oversized leaf still renders (always include at least one)", () => {
+    const ids = ["a", "b"];
+    const byId = new Map([
+      ["a", mkChatNode("a", 4000)],
+      ["b", mkChatNode("b", 1_000_000)], // 250K tokens — way over budget
+    ]);
+    // Even though `b` busts the budget, include it (oversized-leaf
+    // guarantee) and stop expanding upward.
+    expect(packStartIdx(ids, byId, ids.length, 50_000)).toBe(1);
+  });
+
+  it("returns 0 when full path fits inside budget", () => {
+    const ids = ["a", "b", "c"];
+    const byId = new Map(ids.map((id) => [id, mkChatNode(id, 100)]));
+    expect(packStartIdx(ids, byId, ids.length, 50_000)).toBe(0);
+  });
+});
+
+describe("ConversationView — v0.8.1 #4 lazy slice render", () => {
+  it("hides 'load more' hint when path fits inside the initial budget", () => {
+    const cf = flow([cn("a", null), cn("b", "a"), cn("c", "b")]);
+    seed(cf, "c");
+    render(<ConversationView sessionId={SID} chatFlow={cf} />);
+    expect(screen.queryByTestId("conversation-load-more")).toBeNull();
+    // All bubbles still render.
+    expect(screen.getByTestId("conversation-bubble-a")).toBeTruthy();
+    expect(screen.getByTestId("conversation-bubble-c")).toBeTruthy();
+  });
+});
+
+describe("ConversationView — v0.8.1 #11 copy buttons", () => {
+  it("renders user + assistant copy buttons per bubble", () => {
+    const cf = flow([cn("a", null, "user prompt", "assistant reply")]);
+    seed(cf, "a");
+    render(<ConversationView sessionId={SID} chatFlow={cf} />);
+    expect(screen.getByTestId("copy-msg-user-a")).toBeTruthy();
+    expect(screen.getByTestId("copy-msg-assistant-a")).toBeTruthy();
+  });
+
+  it("clicking copy writes the raw markdown source to clipboard + flips icon to ✓", () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    const cf = flow([cn("a", null, "**bold** prompt", "*italic* reply")]);
+    seed(cf, "a");
+    render(<ConversationView sessionId={SID} chatFlow={cf} />);
+    const btn = screen.getByTestId("copy-msg-user-a");
+    expect(btn.textContent).toBe("📋");
+    fireEvent.click(btn);
+    expect(writeText).toHaveBeenCalledWith("**bold** prompt");
+    expect(btn.textContent).toBe("✓");
+  });
+
+  it("clicking copy stops propagation so the bubble underneath doesn't re-select", () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    const cf = flow([cn("a", null), cn("b", "a")]);
+    seed(cf, "b");
+    render(<ConversationView sessionId={SID} chatFlow={cf} />);
+    fireEvent.click(screen.getByTestId("copy-msg-user-a"));
+    // Selection should still be `b`, not `a` — bubble click was suppressed.
+    expect(useStore.getState().sessions.get(SID)?.selectedNodeId).toBe("b");
   });
 });
 

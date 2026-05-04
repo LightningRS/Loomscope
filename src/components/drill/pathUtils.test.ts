@@ -40,10 +40,13 @@ function flow(nodes: ChatNode[]): ChatFlow {
 }
 
 describe("resolvePath — linear chain", () => {
-  it("walks parentChatNodeId from selected back to root", () => {
+  it("v0.8.1 #12: with selectedId mid-chain walks forward to leaf, not stops at selection", () => {
     const cf = flow([cn("a", null), cn("b", "a"), cn("c", "b"), cn("d", "c")]);
     const r = resolvePath(cf, "c");
-    expect(r.path).toEqual(["a", "b", "c"]);
+    // Path now extends past selection to the leaf — caller dims the
+    // post-selection messages (selectedIndex tells where to start).
+    expect(r.path).toEqual(["a", "b", "c", "d"]);
+    expect(r.selectedIndex).toBe(2);
     expect(r.forks).toEqual([]);
   });
 
@@ -51,17 +54,27 @@ describe("resolvePath — linear chain", () => {
     const cf = flow([cn("a", null), cn("b", "a"), cn("c", "b")]);
     const r = resolvePath(cf, null);
     expect(r.path).toEqual(["a", "b", "c"]);
+    // No selection → selectedIndex anchors at leaf, nothing dims.
+    expect(r.selectedIndex).toBe(2);
+  });
+
+  it("selectedId at leaf → selectedIndex = path.length-1, no dimming", () => {
+    const cf = flow([cn("a", null), cn("b", "a"), cn("c", "b")]);
+    const r = resolvePath(cf, "c");
+    expect(r.path).toEqual(["a", "b", "c"]);
+    expect(r.selectedIndex).toBe(2);
   });
 
   it("falls back to latest leaf when selectedId points at a non-existent ChatNode", () => {
     const cf = flow([cn("a", null), cn("b", "a")]);
     const r = resolvePath(cf, "ghost-id");
     expect(r.path).toEqual(["a", "b"]);
+    expect(r.selectedIndex).toBe(1);
   });
 
   it("returns empty path when ChatFlow is null or has no chatNodes", () => {
-    expect(resolvePath(null, null)).toEqual({ path: [], forks: [] });
-    expect(resolvePath(flow([]), null)).toEqual({ path: [], forks: [] });
+    expect(resolvePath(null, null)).toEqual({ path: [], forks: [], selectedIndex: -1 });
+    expect(resolvePath(flow([]), null)).toEqual({ path: [], forks: [], selectedIndex: -1 });
   });
 });
 
@@ -82,7 +95,7 @@ describe("resolvePath — fork detection", () => {
     ]);
   });
 
-  it("fork-at-end: selected IS the fork node → chosenChildId = null", () => {
+  it("v0.8.1 #12: selecting a fork node walks forward into latest branch (chosenChildId is the latest child, not null)", () => {
     const cf = flow([
       cn("a", null),
       cn("b", "a"),
@@ -90,9 +103,11 @@ describe("resolvePath — fork detection", () => {
       cn("c2", "b"),
     ]);
     const r = resolvePath(cf, "b");
-    expect(r.path).toEqual(["a", "b"]);
+    // Walk to leaf via latest-child = c2.
+    expect(r.path).toEqual(["a", "b", "c2"]);
+    expect(r.selectedIndex).toBe(1);
     expect(r.forks).toEqual([
-      { nodeId: "b", childIds: expect.arrayContaining(["c1", "c2"]), chosenChildId: null },
+      { nodeId: "b", childIds: ["c1", "c2"], chosenChildId: "c2" },
     ]);
   });
 
