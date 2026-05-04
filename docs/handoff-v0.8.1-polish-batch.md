@@ -2,11 +2,11 @@
 
 ## 任务一句话
 
-修 9 个用户实测发现的 polish issue，主要集中在 **DrillPanel 布局 / Conversation 体验 / Canvas 视觉简化 / 文件改动语义**。每条独立，可并行 / 串行；下面给出建议 milestone 分组 + 依赖。
+修 12 个用户实测发现的 polish issue，主要集中在 **DrillPanel 布局 / Conversation 体验 / Canvas 视觉简化 / Markdown typography / 文件改动语义**。每条独立，可并行 / 串行；下面给出建议 milestone 分组 + 依赖。
 
 ## 现状
 
-v0.7.1 compact inline fold 刚 ship（commit `0e1ea63` 含 viewport-anchor patch）+ v0.8 fork 浏览（`80bbe41`）已稳定。371/371 unit tests pass。用户回开发机后浏览器实测发现 9 个 polish issue，统一打包修。
+v0.7.1 compact inline fold 刚 ship（commits `8f41ef7` → `dd30723` + viewport-anchor `0e1ea63`）+ v0.8 fork 浏览（`80bbe41`）+ tailwind typography 插件激活（`c6adb54`）已稳定。371/371 unit tests pass。用户回开发机后浏览器实测发现 12 个 polish issue，统一打包修。
 
 工作目录：`/home/usingnamespacestc/Loomscope` —— 已是 main，89+ commits ahead of origin。
 
@@ -367,7 +367,7 @@ npx vite build             # 必须干净（warning 可接受，error 不行）
 5. **设计抉择 trail**：每个 issue 实施时遇到的小决策 + 你拍的方向 + 理由（实测推翻假设的尤其要记）
 6. **未触及的 hard constraint** 单独 list（守住的不必赘述）
 7. **遗留 backlog**：实测发现但本批次没修的小毛病
-8. **跟用户的 9 条原话对照**：每条对应实施 vs deferred vs N/A 表
+8. **跟用户的 12 条原话对照**：每条对应实施 vs deferred vs N/A 表
 
 ---
 
