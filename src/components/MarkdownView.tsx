@@ -17,6 +17,8 @@
  * text — running the full markdown pipeline on 1500+ ChatNode cards
  * would cost more than it surfaces.
  */
+import { memo } from "react";
+
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
@@ -36,18 +38,29 @@ const sanitizeSchema = {
   ],
 };
 
+// Plugin arrays must be module-level constants. Inlining them inside
+// the component body would re-create the array on every render, and
+// react-markdown's internal change-detection sees the new array
+// reference, re-runs the entire AST pipeline, and cascades the cost
+// to every render even when `children` is unchanged. Hot path:
+// DrillPanel resize → 60 fps store updates → ConversationView re-renders
+// → every visible bubble's MarkdownView re-parsed. Stable arrays let
+// react-markdown skip the work.
+const REMARK_PLUGINS = [remarkGfm];
+const REHYPE_PLUGINS = [rehypeRaw, [rehypeSanitize, sanitizeSchema]] as never;
+
 interface Props {
   children: string;
   components?: Components;
   className?: string;
 }
 
-export function MarkdownView({ children, components, className }: Props) {
+function MarkdownViewImpl({ children, components, className }: Props) {
   return (
     <div className={className}>
       <Markdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}
+        remarkPlugins={REMARK_PLUGINS}
+        rehypePlugins={REHYPE_PLUGINS}
         components={components}
       >
         {children}
@@ -55,3 +68,11 @@ export function MarkdownView({ children, components, className }: Props) {
     </div>
   );
 }
+
+// Wrap in React.memo so that conversation-bubble parents that re-render
+// for non-content reasons (DrillPanel width change during resize-drag,
+// selectedNodeId flip, etc.) don't force the markdown pipeline to
+// re-parse every visible message. Default shallow compare is correct:
+// children is a string (cheap to compare by ref + value), components
+// and className are typically stable.
+export const MarkdownView = memo(MarkdownViewImpl);

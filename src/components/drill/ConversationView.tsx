@@ -21,7 +21,7 @@
 // which both flips selectedNodeId AND persists the leaf for next
 // re-entry.
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useCanvasPanShim } from "@/canvas/CanvasPanContext";
 import { MarkdownView } from "@/components/MarkdownView";
@@ -147,6 +147,26 @@ export function ConversationView({ sessionId, chatFlow }: Props) {
   );
   const hasMoreAbove = startIdx > 0;
 
+  // Stable callbacks for MessageBubble props. Without these, every
+  // re-render of ConversationView creates fresh arrow functions in the
+  // map(), defeating React.memo on MessageBubble. Bubble re-renders
+  // mean MarkdownView re-parses, which becomes the dominant resize-lag
+  // cost on long conversations. Pass primitives (chatNodeId) to the
+  // bubble; bubble composes its own click handler internally.
+  const handleSelect = useCallback(
+    (nid: string) => {
+      skipNextScrollRef.current = true;
+      setSelected(sessionId, nid);
+    },
+    [sessionId, setSelected],
+  );
+  const handleHoverDwell = useCallback(
+    (nid: string) => {
+      panToChatNode(nid);
+    },
+    [panToChatNode],
+  );
+
   if (!chatFlow || path.length === 0) {
     return (
       <div
@@ -185,11 +205,8 @@ export function ConversationView({ sessionId, chatFlow }: Props) {
               chatNode={cn}
               isSelected={nid === selectedId}
               isDimmed={isDimmed}
-              onSelect={() => {
-                skipNextScrollRef.current = true;
-                setSelected(sessionId, nid);
-              }}
-              onHoverDwell={() => panToChatNode(nid)}
+              onSelect={handleSelect}
+              onHoverDwell={handleHoverDwell}
             />
             {fork && (
               <BranchSelector
@@ -222,7 +239,15 @@ export function ConversationView({ sessionId, chatFlow }: Props) {
 // reply). Compact / slash-command ChatNodes use their summary /
 // command preview as the assistant text — keeps the conversation
 // readable without cluttering with implementation noise.
-function MessageBubble({
+//
+// Wrapped in React.memo (export below) so DrillPanel resize-drag
+// (60 fps store updates) doesn't force every visible bubble's
+// MarkdownView to re-parse. With stable parent callbacks
+// (handleSelect / handleHoverDwell — useCallback'd in
+// ConversationView), default shallow compare on chatNode +
+// isSelected + isDimmed + onSelect + onHoverDwell holds across
+// resize, keeping the markdown pipeline cold.
+function MessageBubbleImpl({
   chatNode,
   isSelected,
   isDimmed,
@@ -232,8 +257,8 @@ function MessageBubble({
   chatNode: ChatNode;
   isSelected: boolean;
   isDimmed: boolean;
-  onSelect: () => void;
-  onHoverDwell: () => void;
+  onSelect: (chatNodeId: string) => void;
+  onHoverDwell: (chatNodeId: string) => void;
 }) {
   const userText = useMemo(() => extractText(chatNode.userMessage.content), [chatNode]);
   const assistantText = useMemo(() => lastAssistantText(chatNode), [chatNode]);
@@ -247,22 +272,23 @@ function MessageBubble({
     }
     hoverTimerRef.current = window.setTimeout(() => {
       hoverTimerRef.current = null;
-      onHoverDwell();
+      onHoverDwell(chatNode.id);
     }, HOVER_PAN_DELAY_MS);
-  }, [onHoverDwell]);
+  }, [onHoverDwell, chatNode.id]);
   const cancelDwell = useCallback(() => {
     if (hoverTimerRef.current !== null) {
       window.clearTimeout(hoverTimerRef.current);
       hoverTimerRef.current = null;
     }
   }, []);
+  const handleClick = useCallback(() => onSelect(chatNode.id), [onSelect, chatNode.id]);
   useEffect(() => () => cancelDwell(), [cancelDwell]);
   return (
     <div
       data-testid={`conversation-bubble-${chatNode.id}`}
       data-selected={isSelected ? "true" : "false"}
       data-dimmed={isDimmed ? "true" : "false"}
-      onClick={onSelect}
+      onClick={handleClick}
       onMouseEnter={startDwell}
       onMouseLeave={cancelDwell}
       className={[
@@ -310,6 +336,8 @@ function MessageBubble({
     </div>
   );
 }
+
+const MessageBubble = memo(MessageBubbleImpl);
 
 // v0.8.1 #11: floating copy button shown on hover of the parent
 // bubble. Copies markdown source as-is (so paste targets that
