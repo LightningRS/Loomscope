@@ -490,8 +490,49 @@ function MessageBubbleImpl({
   }, [onHoverEnd]);
   const handleClick = useCallback(() => onSelect(chatNode.id), [onSelect, chatNode.id]);
   useEffect(() => () => cancelDwell(), [cancelDwell]);
+  // EN: live-append auto-scroll. follow-on-leaf catches NEW
+  // ChatNodes (= new user message / new turn boundary), but agent
+  // responses (additional llm_call rounds + tool_call WorkNodes)
+  // grow the EXISTING focused ChatNode's workflow without creating
+  // a new ChatNode — they wouldn't trigger any selectedId change.
+  // This effect watches the bubble's workflow content and scrolls
+  // the latest round element into view when (a) we're the running
+  // bubble (= session live + this is the chronologically latest
+  // ChatNode), so we don't yank scroll for static history bubbles,
+  // and (b) content actually grew since last render.
+  // 中: agent 一条一条输出新 round / tool_call 时，没有产生新 ChatNode
+  // 触发不了 follow-on-leaf；本 effect 监听 workflow 增长，把最新内
+  // 容滚到视口。仅在"我是 running bubble"时 fire，避免历史 bubble
+  // 因为偶发刷新而被强制滚到底部。
+  const bubbleRef = useRef<HTMLDivElement | null>(null);
+  const prevContentSizeRef = useRef(0);
+  useEffect(() => {
+    const totalEntries = rounds.reduce(
+      (sum, r) => sum + (r.text ? 1 : 0) + r.tools.length,
+      0,
+    );
+    const prev = prevContentSizeRef.current;
+    prevContentSizeRef.current = totalEntries;
+    if (!isRunning) return;
+    if (totalEntries <= prev) return; // first paint OR shrink — skip
+    const root = bubbleRef.current;
+    if (!root) return;
+    // Anchor on the LAST direct child of the rounds container — that's
+    // the most-recently-appended round/tool. block:'end' keeps the
+    // bottom of new content at the viewport bottom (= reading-order
+    // continuation), behavior:'smooth' avoids hard jumps when CC's
+    // bursts arrive in tight succession.
+    const lastEntry = root.querySelector(
+      `[data-round-index="${rounds.length - 1}"]`,
+    );
+    (lastEntry ?? root).scrollIntoView({
+      block: "end",
+      behavior: "smooth",
+    });
+  }, [rounds, isRunning]);
   return (
     <div
+      ref={bubbleRef}
       data-testid={`conversation-bubble-${chatNode.id}`}
       data-selected={isSelected ? "true" : "false"}
       data-dimmed={isDimmed ? "true" : "false"}
