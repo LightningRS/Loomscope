@@ -177,9 +177,15 @@ export function ChatNodeCard({ id, data }: NodeProps<ChatNodeRFNode>) {
           so the button is hidden for them. We also hide for ChatNodes
           with empty WorkFlow (slash-command paths handled separately
           above; this catches edge cases like compact-summary-only). */}
-      {!compact && cn.workflow.nodes.length > 0 && (
-        <DrillButton chatNodeId={cn.id} />
-      )}
+      {/* v0.10 lazy ChatFlow B3: read counts from summary instead of
+          workflow.nodes.length. Server populates summary at parse
+          time; lite ChatFlow ships it inline. The condition matches
+          previous behaviour: drill button visible when any WorkNode
+          exists in the turn. */}
+      {!compact &&
+        ((data.llmCount ?? 0) + (data.toolCount ?? 0) > 0) && (
+          <DrillButton chatNodeId={cn.id} />
+        )}
 
       {/* Token bar */}
       {data.contextTokens > 0 && (
@@ -354,7 +360,14 @@ function CompactCard({
                the slice + action wiring; M4 turns the label into a
                two-state toggle so users can re-fold from the canvas
                without right-clicking. */}
-      {cn.workflow.nodes.some((n) => n.kind === "llm_call") && (
+      {/* v0.10 lazy ChatFlow B3: read llm_call count from summary
+          (server-computed, ships in lite ChatFlow). Same condition
+          as before — drill button visible when this compact carries
+          post-compact assistant continuation (128/131 do). Falls
+          back to walking workflow.nodes for hand-built test fixtures
+          without summary. */}
+      {(cn.workflow.summary?.llmCount ??
+        cn.workflow.nodes.filter((n) => n.kind === "llm_call").length) > 0 && (
         <DrillButton chatNodeId={cn.id} />
       )}
       <CompactFoldToggleButton

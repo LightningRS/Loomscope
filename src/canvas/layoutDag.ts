@@ -313,7 +313,13 @@ function isRealLlmCall(n: { model?: string; errors?: unknown[] }): boolean {
 // Last *real* llm_call's model in a ChatNode (skipping <synthetic> +
 // errored calls), or undefined when there's no real llm_call (slash
 // commands, compact-summary-only ChatNodes, fully-rate-limited turn).
+//
+// v0.10 lazy ChatFlow B3: prefer workflow.summary.lastModel (server-
+// computed once at parse time); fall back to walking workflow.nodes
+// when summary is absent (test fixtures, hand-built flows). Keeping
+// the fallback means tests don't all need to construct summaries.
 function lastModelOf(cn: ChatNode): string | undefined {
+  if (cn.workflow.summary) return cn.workflow.summary.lastModel;
   const llms = cn.workflow.nodes.filter(
     (n): n is Extract<typeof n, { kind: "llm_call" }> =>
       n.kind === "llm_call" && isRealLlmCall(n),
@@ -338,8 +344,14 @@ function deriveContextTokens(cn: ChatNode): {
   contextTokens: number;
   maxContextTokens: number;
 } {
-  // Mirrors lastModelOf — skip <synthetic> / errored calls so a
-  // rate-limit (429) tail record doesn't pin the bar to 0.
+  // v0.10 lazy ChatFlow B3: prefer summary; fall back to walking
+  // workflow.nodes when summary absent (tests).
+  if (cn.workflow.summary) {
+    return {
+      contextTokens: cn.workflow.summary.contextTokens,
+      maxContextTokens: cn.workflow.summary.maxContextTokens,
+    };
+  }
   const llms = cn.workflow.nodes.filter(
     (n): n is Extract<typeof n, { kind: "llm_call" }> =>
       n.kind === "llm_call" && isRealLlmCall(n),
@@ -360,18 +372,29 @@ function deriveCardData(
   chatFlow: ChatFlow,
 ): ChatNodeRFData {
   const { contextTokens, maxContextTokens } = deriveContextTokens(cn);
+  // v0.10 lazy ChatFlow B3: counts come from the server-computed
+  // summary so the canvas card never depends on workflow.nodes
+  // having loaded. ``s`` shorthand for the summary path; fall back
+  // to deriving from nodes for test fixtures without summary.
+  const s = cn.workflow.summary;
   return {
     chatNode: cn,
     userPreview: previewUserContent(cn.userMessage.content),
     assistantPreview: lastAssistantPreview(cn),
-    toolCount: cn.workflow.nodes.filter(
-      (n) => n.kind === "tool_call" || n.kind === "delegate",
-    ).length,
-    llmCount: cn.workflow.nodes.filter((n) => n.kind === "llm_call").length,
-    totalThinkingChars: cn.workflow.nodes.reduce((acc, n) => {
-      if (n.kind !== "llm_call") return acc;
-      return acc + n.thinking.reduce((a, t) => a + (t.text?.length ?? 0), 0);
-    }, 0),
+    toolCount:
+      s?.toolCount ??
+      cn.workflow.nodes.filter(
+        (n) => n.kind === "tool_call" || n.kind === "delegate",
+      ).length,
+    llmCount:
+      s?.llmCount ??
+      cn.workflow.nodes.filter((n) => n.kind === "llm_call").length,
+    totalThinkingChars:
+      s?.totalThinkingChars ??
+      cn.workflow.nodes.reduce((acc, n) => {
+        if (n.kind !== "llm_call") return acc;
+        return acc + n.thinking.reduce((a, t) => a + (t.text?.length ?? 0), 0);
+      }, 0),
     isCompactSummary: cn.isCompactSummary,
     fileTouchCount: distinctTouchedFiles(cn).size,
     nodeOwnFileChangeCount: nodeOwnFileChanges(cn, chatFlow).size,
@@ -412,6 +435,15 @@ export function distinctTouchedFiles(cn: ChatNode): Set<string> {
 //   alongside automatic side-effect classification.
 export function distinctToolUseFiles(cn: ChatNode): Set<string> {
   const out = new Set<string>();
+  // v0.10 lazy ChatFlow B3: prefer summary.toolUseFilePaths
+  // (server-computed at parse time, ships in lite ChatFlow). Falls
+  // back to walking workflow.nodes when summary absent (test fixtures
+  // built without the parser). Both branches return the same value
+  // for normal session loads.
+  if (cn.workflow.summary) {
+    for (const p of cn.workflow.summary.toolUseFilePaths) out.add(p);
+    return out;
+  }
   for (const n of cn.workflow.nodes) {
     if (n.kind !== "tool_call") continue;
     const input = n.input as Record<string, unknown> | undefined;
@@ -518,9 +550,12 @@ export function previewUserContent(content: unknown): string {
 }
 
 export function lastAssistantPreview(cn: ChatNode): string {
+  // v0.10 lazy ChatFlow B3: prefer summary.assistantPreview
+  // (server-computed once, ships in lite ChatFlow). The truncation
+  // length is identical (80 chars) on both sides.
+  if (cn.workflow.summary) return cn.workflow.summary.assistantPreview;
   const llms = cn.workflow.nodes.filter((n) => n.kind === "llm_call");
   if (llms.length === 0) return "";
-  // Prefer the *last* llm_call's text (the agent's final reply this turn).
   for (let i = llms.length - 1; i >= 0; i -= 1) {
     const n = llms[i];
     if (n.kind === "llm_call" && n.text?.trim()) {

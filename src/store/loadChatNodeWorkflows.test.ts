@@ -110,7 +110,11 @@ describe("loadChatNodeWorkflows", () => {
     const cache = useStore.getState().sessions.get(SID)!.workflowCache;
     expect(cache.get("a")?.status).toBe("ready");
     expect(cache.get("b")?.status).toBe("ready");
-    expect(cache.get("a")?.workflow?.nodes[0].text).toBe("hi-a");
+    const firstNode = cache.get("a")?.workflow?.nodes[0];
+    expect(firstNode?.kind).toBe("llm_call");
+    if (firstNode?.kind === "llm_call") {
+      expect(firstNode.text).toBe("hi-a");
+    }
     expect(fetchMock.mock.calls.length).toBe(1);
     // URL carries comma-joined ids
     const url = (fetchMock.mock.calls[0] as unknown as [string])[0];
