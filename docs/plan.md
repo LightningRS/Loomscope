@@ -19,7 +19,7 @@
 | **v0.8** | fork 浏览 | parser 读 `forkedFrom` + `custom-title` / server merge fork 树 / **DrillPanel 2-tab（Detail + Conversation）** / ConversationView + branchMemory（在 Conversation tab 内）/ canvas fork ⑂ N indicator | ✅ shipped 2026-05-04 commits `c1e9e74` → M6 |
 | **v0.8.1** | 12 issue polish batch + 浏览器实测 hand-tuning | DrillPanel chrome / Conversation 滚动+lazy load+复制+灰化 / hover-pan+auto-unfold / typography theme.extend / panel fullscreen / 文件改动语义拆分 / logical edge 视觉删除 / fold handle 条件渲染 + 之后 13 commits 实测打磨（resize lag perf / typography fallback / 复制按钮位置 / chip 颜色 / hover 视觉反馈 / 卡片 ✏️ chip）| ✅ shipped 2026-05-04 晚 commits `dc5f20a` → `6413420` + 2026-05-05 hand-tuning `f815626` → `696efda`（409/409；handoff `handoff-v0.8.1-polish-batch.md`）|
 | **v0.9** | file-tail mode | 监听 jsonl mtime 增量更新 canvas | |
-| **v0.10** | polish & 性能 | 大 session 性能验证（256MB session 30s 内首屏） | |
+| **v0.10** | polish & 性能 | empty state UI / syntax highlight / 快捷键 / audit fix / bundle code-split / LRU 缓存 / lazy ChatFlow（lite endpoint + per-cn workflow batch + summary）| 🚧 进行中 commits `0ed4a89` → `6635a5a`（458/458；session 打开 340ms→26ms / 87% bytes 减；canvas + DrillPanel + WorkFlowCanvas 已切到 lazy；ConversationView B5 待做）|
 | **v1.0** | ship | README / 截图 / 一键启动指令 | |
 | **v∞.0** | live read-only | 文件监听 + settings.json hooks push，浏览器实时观察终端 CC | |
 | **v∞.1** | 启动新 session | 从 Loomscope 起 CC（subprocess 或 Agent SDK） | |
@@ -448,16 +448,46 @@ agent ship 完后 user 浏览器实测发现的小问题逐条手工打磨。每
 
 [TODO 作者]：浏览器原生没有 fs.watch。这一步要么用 Tauri 包壳要么走 node + WebSocket 桥。先思考清楚 form factor。
 
-## v0.10 — polish
+## v0.10 — polish 🚧 进行中
 
-- 性能：256MB session 首屏 < 30s（用 web worker 做 parse？）
-- ~~**Selection 切换性能**~~ —— ✅ 提前到 v0.4 后做完（commit `df65051`）：每张卡用 Zustand selector 自己订阅 `selectedNodeId === ownId`，1498 张 false→false 不 re-render；canvas wrapper 不再 `decoratedNodes = nodes.map(...)` 重 prop。Playwright 实测 1522-ChatNode session：458ms avg → 78.9ms avg（5.8×）
-- Code syntax highlight（shiki / prism / highlight.js 三选一；考虑 bundle size）
-- Bundle code-split（v0.4 markdown 全家桶把 bundle 从 410KB 推到 755KB，按 panel lazy chunk 切）
-- Audit fix：vite / happy-dom 等 dev deps 预存漏洞清理
-- 错误处理：损坏 JSONL 行 graceful skip
-- Empty state UI：还没选 jsonl 时给个文件选择器
-- 快捷键：j/k 上下导航 ChatNode、enter 进入 WorkFlow、esc 退出
+按性价比依次实施。详见 `docs/devlog.md` 2026-05-04 / 2026-05-05 entries。
+
+| # | 内容 | 状态 |
+|---|---|---|
+| 1 | Empty state UI | ✅ `0ed4a89` |
+| 2 | Graceful JSONL skip | ✅ 早已实现（parser 层 `parseLine` 返 null）|
+| 3 | Markdown syntax highlight（rehype-highlight + highlight.js + github-dark）| ✅ `0ed4a89` |
+| 4 | 快捷键 ←/→/Enter/Esc 导航 | ✅ `fcb6a26` + `a565bc7`（用户反馈把 j/k 换成 ←/→）|
+| 5 | Audit fix（vite 5→8 / vitest 3→4 / happy-dom 14→20）| ✅ `17bdf55`（0 vulnerabilities；后续 vite 8 兼容修在 `6635a5a`）|
+| 6 | Bundle code-split（B 方案：DrillPanel content lazy）| ✅ `c9238d5`（初始 296KB gz → 132KB gz，-55%）|
+| 7 | Sidebar fork 树状缩进 | ⏭ defer 到 v∞.3 fork 编辑侧一并做 |
+| 8 | session 打开 < 100ms（实测 25MB session）| ✅ 两步走：LRU 缓存 `a544af4`（warm 340ms→132ms）+ lazy ChatFlow B1-B4（cold 340ms→**26ms**，bytes 22.47MB→2.83MB，**-87%**）|
+
+### v0.10 重头戏：lazy ChatFlow（B 系列）
+
+把"打开 session 不瞬开"从架构层解决。Server 默认返 lite ChatFlow（`workflow.nodes/edges` 空 + summary 内联），客户端按需 batch lazy fetch workflow。
+
+| Milestone | commit | 内容 |
+|---|---|---|
+| **B1 server** | `37e82ba` | `WorkflowSummary` type + `src/data/modelContext.ts` + `src/parse/workflow-summary.ts` + `GET /:id` 默认 lite（`?full=true` opt-in）+ `GET /:id/chatnodes/workflows?ids=` batch endpoint。LRU 缓存内部存 full ChatFlow，两端点是同一对象的不同视图（per-cn fetch 是 dict-lookup 0 parse 成本） |
+| **B2 store** | `c06ae18` | `WorkflowCacheEntry { status, workflow, error }` + `loadChatNodeWorkflows` action（dedupe in-flight / skip ready/pending / retry error / 100-id chunk / network-fail mark-all） |
+| **B3 canvas** | `9ec9dfc` | `lastModelOf` / `deriveContextTokens` / `lastAssistantPreview` / `distinctToolUseFiles` / `deriveCardData` 全切到读 `summary.*`，fallback 走 nodes 兼容 test fixture |
+| **B4 DrillPanel + WorkFlowCanvas** | `2157861` | `useChatNodeWorkflow(sessionId, cn)` hook 单点封装（区分 lite vs inline / 触发 lazy load / 返 `{ workflow, status, error, isLazy }`）。ChatNodeDetail / WorkFlowCanvas / DrillPanel.DetailTabContent 全部经 hook 解析；pending / error 各自有 UI 反馈 |
+| **B5 ConversationView** | 待做 | `lastAssistantText` 还在读 `workflow.nodes`。需要：visible slice 触发批量 lazy load、pending 用 `summary.assistantPreview` 占位、ready 后 swap 完整 markdown、scroll 时新进入的 ChatNode 排队 fetch |
+
+**实测 25MB session（176 ChatNode）**：
+- 冷启动：22.47MB / 340ms → **2.83MB / 26ms**（13× 加速 / 87% bytes 减）
+- 切回缓存命中：26ms 不变（store 缓存 + LRU 双重命中）
+- 用户实测 cards 首次 load 正常（vite 8 兼容修复后 CSS @import 正常加载、plugin-react@6.x 消除 jsx 警告）
+
+**架构产物**：`useChatNodeWorkflow` hook 是 component-level 抽象，未来 v0.9 file-tail / v∞.0 live update 触发 cache 失效时 hook 自动 refetch。LRU + lite 视图模式让未来"按字段聚合 / 跨 cn batch"等新查询 0 成本加。
+
+### 仍未做（defer 到 v0.11+ 或 backlog）
+
+- 性能：256MB 大 session 首屏 < 30s（按 lazy 收益线性外推 200MB session 约 ~28MB lite + 0.3s parse；够用）
+- WorkFlow viewport state 持久化
+- Sidebar fork 树状缩进（v0.8 deferred → v∞.3）
+- localStorage GC（session 删除时清 fold 条目）
 
 ## v1.0 — ship
 

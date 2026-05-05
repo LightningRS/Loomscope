@@ -6,6 +6,70 @@
 
 ---
 
+## 2026-05-05 — v0.10 lazy ChatFlow B1-B4 ship（4 milestone 重构 + vite 8 compat）
+
+把"打开 session 不瞬开"的根因——23MB JSON 全量传输——从架构层面解决：服务端默认返 lite ChatFlow（86% bytes 减负），workflow.nodes 按需 batch lazy fetch。1 GET 端点 → 2 端点（lite + batch workflow）+ 客户端三层迁移。
+
+实测 25MB session：22.47MB / 340ms → 2.83MB / **26ms**（13× 加速 / 87% 减负）。
+
+**B1 server lite endpoint + workflow batch + summary**（`37e82ba`）
+- 新类型 `WorkflowSummary`（assistantPreview / llmCount / toolCount / totalThinkingChars / contextTokens / maxContextTokens / lastModel / toolUseFilePaths），server pre-compute 一次塞进 `WorkFlow.summary`
+- 新文件 `src/data/modelContext.ts` 把 maxContextForModel + MODEL_CONTEXT_WINDOW 从 layoutDag 提到共享层，让 parser 不依赖 canvas
+- 新文件 `src/parse/workflow-summary.ts` `computeWorkflowSummary(nodes, edges)`，jsonl.ts buildChatFlow 后调
+- `GET /api/sessions/:id` 默认返 lite（`stripChatFlowToLite` 把 workflow.nodes/edges → 空数组）；`?full=true` opts 回老 shape
+- `GET /api/sessions/:id/chatnodes/workflows?ids=a,b,c` batch 取 workflow，从 LRU 缓存的 full ChatFlow 里 dict-lookup（0 parse 成本）
+- 5 server tests（lite shape / full opt-in / batch happy / unknown-id 默默 omit / 空 ids 400）
+
+**B2 client store 懒加载 action**（`c06ae18`）
+- `WorkflowCacheEntry { status: pending|ready|error, workflow, error }` per-ChatNode 状态机
+- `SessionState.workflowCache: Map<chatNodeId, entry>`
+- `loadChatNodeWorkflows(sessionId, ids)` 批量 fetch，dedupe in-flight + skip ready/pending + retry error，network failure 把所有 requested ids 标 error
+- 100 ids 一 chunk（server 上限 200 留 headroom）
+- 9 个 test 文件 fixture 加 `workflowCache: new Map()` 字段
+- 10 unit tests 覆盖 happy path / summary back-fill / cache-hit dedupe / error retry / 并发 dedupe / unknown-id-omit / network-fail / empty-input no-op / unknown-session no-op / 100-chunk 切分
+
+**B3 canvas 读 summary**（`9ec9dfc`）
+- `lastModelOf` / `deriveContextTokens` / `lastAssistantPreview` / `distinctToolUseFiles` 全部 prefer `workflow.summary.*`，fallback 走 nodes（保留 test fixture 兼容）
+- `deriveCardData` 的 toolCount / llmCount / totalThinkingChars 改读 summary
+- ChatNodeCard 两处 `workflow.nodes` 引用（DrillButton 显隐）改读 `data.llmCount` / `data.toolCount`
+- 实测 25MB session ChatNode 2c01a178：lite 后 nodes:[] 但 summary 完整（llmCount=5, contextTokens=552736, lastModel=opus-4-7, ✏️ index.css），canvas 卡片显示跟 full 模式一致
+
+**B4 DrillPanel + WorkFlowCanvas 懒加载 hook**（`2157861`）
+- 新文件 `src/store/workflowHooks.ts` `useChatNodeWorkflow(sessionId, cn)` 单点封装：
+  - 区分 inline-loaded（sub-agent / 测试 / `?full=true`）vs lite-needs-lazy（top-level 默认）
+  - 通过 useEffect 触发 `loadChatNodeWorkflows`，dedupe 并发 hooks 到同一个网络
+  - 解析优先级：cached → inline → 空 turn 直接返 ready
+  - 返回 `{ workflow, status: ready|pending|error, error, isLazy }` 统一形态
+- ChatNodeDetail 加 `sessionId` prop + 调 hook，counts 走 summary（不阻塞 lazy），AssistantReply 段视 status 显 加载中/失败/markdown
+- WorkFlowCanvas 包 hook，pending → 加载 overlay，error → error overlay，ready → 正常 layoutWorkFlow
+- DrillPanel.DetailTabContent 订阅 drilledChatNode 的 workflowCache 来 resolve selectedWorkId（lazy 落地后才能找到 WorkNode）
+- 15 个 details.test.tsx ChatNodeDetail 用法补 `sessionId="test-sid"` prop
+- 6 unit tests for the hook
+
+**vite 8 compat fix**（`6635a5a`）
+- 浏览器实测后两个警告：
+  1. CSS `@import "highlight.js/styles/github-dark.css"` 在 `@tailwind` 之后被 Rolldown（vite 8）严格拒绝（CSS spec 要求 @import 必须在所有规则前面，vite 5 lenient）→ 挪到 index.css 顶部
+  2. `Invalid key: jsx` + `vite:react-babel` 警告：`@vitejs/plugin-react@4.x` 跑在 vite 8 上不兼容 → 升到 6.x（peer `vite ^8.0.0`）。`@vitejs/plugin-react-oxc` 是 rolldown-native 替代但 peer 卡 vite 7，等它 vite 8 兼容再换
+
+**测试 + 性能**：
+- 426 → 458 unit tests (+32)，typecheck + build 全清
+- bundle code-split：main 130KB gz / MarkdownView lazy chunk 151KB gz 不变（B 系列不影响）
+- 用户实测：cards 首次 load 现在正常，lazy fetch 缓存正确，drill in/out 体验丝滑
+
+**已知：**Conversation tab 现在打开是空的（`lastAssistantText` 还在读 workflow.nodes，lite 后是空的）—— B5 修
+
+**架构产物 / 长期价值**：
+- `useChatNodeWorkflow` hook 是一个 component-level 抽象，未来 v0.9 file-tail / v∞.0 live update 都可以通过它接入（cache 失效一次重新触发 hook）
+- LRU cache 内部存 full ChatFlow，两个 endpoint 是同一对象的不同视图。新 endpoint（partial fields / 跨 chatNode 聚合查询等）以后都是 zero-cost 加视图
+- 类型层 `WorkFlow.summary?` 是 optional 让现有 ~20 处 test fixture 不破，但 server / parser 始终填；B 系列稳定后可以考虑改成 required 强契约
+
+**为什么 worker thread 不在这里**：
+- Server 单请求 wall-time 不会因 worker 加速（CPU 还是顺序跑）
+- Browser worker 对 client parse 才有价值，但 Loomscope 现在 0 client-side parse
+- 真正需要的是减少传输量 + 缓存复用，B1-B4 命中两个
+
+---
+
 ## 2026-05-05 — v0.8.1 hand-tuning round（13 commits 浏览器实测打磨）
 
 agent ship 完 v0.8.1 polish batch 后，user 浏览器实测一轮发现的小问题/视觉调整，逐条手工打磨。13 commits 跨 4 个主题：
