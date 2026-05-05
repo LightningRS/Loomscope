@@ -6,6 +6,50 @@
 
 ---
 
+## 2026-05-05 深夜 — v0.9 file-tail spike + Agent SDK API 验证
+
+### v0.9 spike（commit `3153381`）
+
+把 v0.9 file-tail 从设计纸面推到端到端跑通。Form factor 选定 **node 后端 + SSE 推送**（不要 Tauri；远程访问通过 SSH tunnel 转发），理由是 Loomscope 已经是 node + browser 形态，加个 SSE 端点几乎零额外架构成本，远程访问不强制公网暴露。
+
+落地：
+- `src/server/services/sseHub.ts` — per-session subscribe/broadcast，hello / invalidate / 25s ping 三种事件
+- `src/server/services/sessionWatcher.ts` — chokidar 单例 + refcount per-path（fork 闭包共享路径不重复 watch）
+- `src/server/services/chatFlowCache.ts` — `invalidateSession(id)` 按前缀清缓存
+- `src/server/routes/sessions.ts` — `GET /:id/events` 调 hono `streamSSE`
+- `src/store/sessionSlice.ts` — `refreshSession(id)` 不翻 isLoading、保留 selection/viewport/drillStack/branchMemory，清 workflowCache 让 lazy hook 自动 refetch
+- `src/App.tsx` — activeSession 切换时开 EventSource，invalidate → refreshSession
+- `src/App.test.tsx` — stub EventSource 防 happy-dom 真连 localhost:3000
+
+实测：
+- curl SSE 收到 hello 帧；append → ~80ms 内收到 invalidate
+- LRU 缓存：warm 9.5ms / append 后 cache miss 重新 parse 107ms（25MB session）
+- 浏览器实测：用户 append 后新 ChatNode 自动出现，无需手动刷新
+- 458/458 测试绿
+
+明确**不做**（v0.9.1 backlog，spike 留下的 4 个口子）：
+1. 真正的增量 parser（现在还是 full reparse；25MB 100ms 可接受，200MB 800ms 会卡）
+2. Sidecar / sub-agent jsonl 监听（drill 进 sub-agent 不会 live update）
+3. 新 session 文件发现（workspace scanner 不订阅 chokidar）
+4. Live-indicator UI（用户看不到 SSE 连上 / 断开）
+
+### Agent SDK API 验证（为 v∞ 路线确定形态）
+
+委托 claude-code-guide subagent 查 `@anthropic-ai/claude-code` 与 `@anthropic-ai/claude-agent-sdk` 的当前 API 表面。两个**意外**发现修正了 plan.md：
+
+1. **包名错了** —— v∞ 集成要用 `@anthropic-ai/claude-agent-sdk`（SDK，3.9MB），**不是** `@anthropic-ai/claude-code`（那是 CLI 工具，132KB）。两者同步版本号但分包。
+2. **中段 fork 直接被 SDK 支持** —— `query({ resume:sid, resumeSessionAt:messageId, prompt })` 是文档里的官方选项。之前以为 v∞.3 要 Loomscope 自己截 JSONL 再 resume，**实际上 SDK 直接给了 messageId 翻译**。v∞.3 的工程量从"hand-rolled truncation"降到"canvas 节点 id → SDK messageId 翻译 + 调 SDK"，工作量 -60%。
+
+其他确认点：
+- 17+ hook 名（PreToolUse / PostToolUse / SubagentStart / Stop / PreCompact / SessionStart / TaskCompleted / PermissionRequest...）
+- SDK callback 和 `settings.json` shell hooks **是两套独立系统**，但共享 JSON schema
+- **SDK 不提供文件锁**：两个 CC 进程同时写同一 jsonl = last-writer-wins 损坏。冲突检测必须 Loomscope 自己做（mtime + advisory lock 文件）
+- 事件流：`AsyncGenerator<SDKMessage>`，含 `system/init` / `user` / `assistant` / `stream_event` / `result`(终态带 cost+usage)
+
+→ plan.md v∞ 章节、阶段总览、v∞.1/2/3 实现方向都同步更新。冲突检测**必须排在 v∞.2 之前**（leaf 续接是最容易撞用户终端 CC 的场景）。
+
+---
+
 ## 2026-05-05 晚 — v0.10 lazy ChatFlow B5 + 三个 perf 修复
 
 B5 完成 ConversationView 懒加载（`8c6b8e3`）后，浏览器实测发现两个性能洞，加上 B5 自身的批量观察，一共 3 个 perf 修复：
