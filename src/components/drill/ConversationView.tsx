@@ -32,7 +32,14 @@ import {
 } from "@/components/drill/pathUtils";
 import { useStore } from "@/store/index";
 import { useChatNodeWorkflow } from "@/store/workflowHooks";
-import type { ChatFlow, ChatNode, LlmCallNode, WorkFlow } from "@/data/types";
+import type {
+  ChatFlow,
+  ChatNode,
+  DelegateNode,
+  LlmCallNode,
+  ToolCallNode,
+  WorkFlow,
+} from "@/data/types";
 
 interface Props {
   sessionId: string;
@@ -297,18 +304,33 @@ function MessageBubbleImpl({
   // flips to ready. Failure → fall back to the preview + show error
   // chip in the meta row.
   const access = useChatNodeWorkflow(sessionId, chatNode);
-  const assistantTexts = useMemo(
-    () => assistantTextsForChatNode(access.workflow, chatNode),
-    [access.workflow, chatNode],
+  const rounds = useMemo(
+    () => buildConversationRounds(access.workflow),
+    [access.workflow],
   );
+  // Fallback text used when workflow hasn't loaded OR ChatNode's
+  // entire content lives outside the workflow (compact summary,
+  // slash command stdout, lite-mode preview).
+  const fallbackText = useMemo(() => {
+    if (rounds.some((r) => r.text || r.tools.length > 0)) return null;
+    if (chatNode.compactMetadata?.summaryText)
+      return chatNode.compactMetadata.summaryText;
+    if (chatNode.slashCommand?.stdout) return chatNode.slashCommand.stdout;
+    if (chatNode.workflow.summary?.assistantPreview)
+      return chatNode.workflow.summary.assistantPreview;
+    return null;
+  }, [rounds, chatNode]);
   const isAssistantPlaceholder =
     access.status === "pending" &&
     !!chatNode.workflow.summary?.assistantPreview;
   // For copy / meta resolution we still want the LAST round's text.
-  const lastAssistantText =
-    assistantTexts.length > 0
-      ? assistantTexts[assistantTexts.length - 1]
-      : null;
+  const lastAssistantText = useMemo(() => {
+    for (let i = rounds.length - 1; i >= 0; i -= 1) {
+      if (rounds[i].text) return rounds[i].text;
+    }
+    return fallbackText;
+  }, [rounds, fallbackText]);
+  const hasContent = rounds.length > 0 || !!fallbackText;
   // v0.8.1 #5: 250ms hover dwell timer. mouseenter starts it,
   // mouseleave clears it. Clearing on unmount is automatic via the
   // ref-cleanup pattern (we only carry one timer per bubble).
@@ -377,30 +399,58 @@ function MessageBubbleImpl({
           </div>
         </div>
       )}
-      {/* v0.9.1: render EVERY assistant round (each llm_call.text)
-          stacked top-down. One ChatNode often spans multiple rounds
-          when the assistant calls tools mid-turn; previously only the
-          LAST round showed and intermediate reasoning was lost. */}
-      {assistantTexts.length > 0 && (
-        <div className="space-y-2">
-          {assistantTexts.map((text, i) => (
-            <div
-              key={i}
-              className={[
-                "prose prose-sm max-w-none text-[13px] leading-relaxed break-words",
-                isAssistantPlaceholder
-                  ? "text-gray-400 italic"
-                  : "text-gray-800",
-              ].join(" ")}
-              data-loading={isAssistantPlaceholder ? "true" : "false"}
-              data-round-index={i}
-            >
-              <MarkdownView>{text}</MarkdownView>
+      {/* v0.9.1 round 2: render EVERY assistant round (each
+          llm_call.text) + the tool calls each round invoked (Claude
+          Desktop-style collapsible pills). Tools indent under their
+          owning llm_call via a left border so the parent-child link
+          is visually obvious. */}
+      {rounds.length > 0 && (
+        <div className="space-y-3">
+          {rounds.map((round, i) => (
+            <div key={i} data-round-index={i}>
+              {round.text && (
+                <div
+                  className={[
+                    "prose prose-sm max-w-none text-[13px] leading-relaxed break-words",
+                    isAssistantPlaceholder
+                      ? "text-gray-400 italic"
+                      : "text-gray-800",
+                  ].join(" ")}
+                  data-loading={isAssistantPlaceholder ? "true" : "false"}
+                >
+                  <MarkdownView>{round.text}</MarkdownView>
+                </div>
+              )}
+              {round.tools.length > 0 && (
+                <div className="mt-1.5 ml-2 border-l-2 border-gray-200 pl-2.5 space-y-1">
+                  {round.tools.map((tool) => (
+                    <ToolPill
+                      key={tool.id}
+                      node={tool}
+                      sessionId={sessionId}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>
       )}
-      {access.status === "error" && assistantTexts.length === 0 && (
+      {/* Fallback text (compact summary / slashCommand stdout / lite
+          preview) — rendered when the workflow path produced no
+          rounds at all. */}
+      {rounds.length === 0 && fallbackText && (
+        <div
+          className={[
+            "prose prose-sm max-w-none text-[13px] leading-relaxed break-words",
+            isAssistantPlaceholder ? "text-gray-400 italic" : "text-gray-800",
+          ].join(" ")}
+          data-loading={isAssistantPlaceholder ? "true" : "false"}
+        >
+          <MarkdownView>{fallbackText}</MarkdownView>
+        </div>
+      )}
+      {access.status === "error" && !hasContent && (
         <div
           data-testid={`conversation-bubble-error-${chatNode.id}`}
           className="text-[12px] italic text-rose-600"
@@ -408,7 +458,7 @@ function MessageBubbleImpl({
           ⚠ workflow 加载失败：{access.error}
         </div>
       )}
-      {!userText && assistantTexts.length === 0 && access.status !== "error" && (
+      {!userText && !hasContent && access.status !== "error" && (
         <div className="text-[12px] italic text-gray-400">—</div>
       )}
       {/* Assistant "复制" rides in MessageMeta as the leftmost item,
@@ -428,6 +478,337 @@ function MessageBubbleImpl({
 }
 
 const MessageBubble = memo(MessageBubbleImpl);
+
+// v0.9.1 round 2: bundle a ChatNode's WorkFlow into a list of
+// "rounds" — one per llm_call. Each round owns the tool_call /
+// delegate WorkNodes that follow it (until the next llm_call).
+//
+// Walk in array order: parser appends nodes as records arrive in
+// the JSONL stream, which is topological turn order. A round
+// without text but with tools still emits (assistant invoked tools
+// without commentary); a round with text but no tools emits a
+// pure prose block.
+//
+// Empty rounds (no text, no tools) are skipped so users don't see
+// pointless empty-bubble rows from compact placeholders or
+// degenerate llm_call records.
+interface ConversationRound {
+  llmIndex: number;
+  text: string;
+  tools: Array<ToolCallNode | DelegateNode>;
+}
+
+function buildConversationRounds(
+  workflow: WorkFlow | null,
+): ConversationRound[] {
+  if (!workflow) return [];
+  const rounds: ConversationRound[] = [];
+  let cur: ConversationRound | null = null;
+  for (const n of workflow.nodes) {
+    if (n.kind === "llm_call") {
+      if (cur) rounds.push(cur);
+      cur = {
+        llmIndex: rounds.length,
+        text: (n as LlmCallNode).text ?? "",
+        tools: [],
+      };
+    } else if (n.kind === "tool_call" || n.kind === "delegate") {
+      if (!cur) {
+        // Tool without a preceding llm_call (rare — orphan tool_use).
+        // Still emit so the user sees the call; gets its own anchor
+        // round with empty text.
+        cur = { llmIndex: rounds.length, text: "", tools: [] };
+      }
+      cur.tools.push(n as ToolCallNode | DelegateNode);
+    }
+    // compact / attachment kinds: skip in conversation view (compact
+    // surfaces via the canvas chatFold, not inline).
+  }
+  if (cur) rounds.push(cur);
+  // Drop empty rounds (no text + no tools).
+  return rounds.filter(
+    (r) => (r.text && r.text.trim().length > 0) || r.tools.length > 0,
+  );
+}
+
+// v0.9.1 round 2: Claude Desktop-style collapsible tool action.
+// Default closed (one-line header); click to expand the body. The
+// body shows tool input as compact JSON + tool result text, capped
+// at max-h to prevent one chatty bash output from dominating the
+// reading flow. Delegate variant adds a 进入子工作流 button so the
+// user can drill into the sub-agent canvas without leaving the
+// Conversation tab to right-click on the ChatFlow card.
+function ToolPill({
+  node,
+  sessionId,
+}: {
+  node: ToolCallNode | DelegateNode;
+  sessionId: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const enterSubWorkflow = useStore((s) => s.enterSubWorkflow);
+  const isDelegate = node.kind === "delegate";
+  const header = useMemo(() => toolPillHeader(node), [node]);
+  const resultText = useMemo(() => extractToolResultText(node), [node]);
+  const isError = node.isError === true;
+  return (
+    <div
+      data-testid={`tool-pill-${node.id}`}
+      data-tool-name={isDelegate ? "Task" : (node as ToolCallNode).toolName}
+      className={[
+        "rounded border text-[12px]",
+        isError
+          ? "border-rose-200 bg-rose-50/40"
+          : isDelegate
+            ? "border-purple-200 bg-purple-50/40"
+            : "border-gray-200 bg-gray-50/40",
+      ].join(" ")}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={[
+          "flex w-full items-center gap-1.5 px-2 py-1 text-left transition-colors",
+          isError
+            ? "text-rose-800 hover:bg-rose-100/50"
+            : isDelegate
+              ? "text-purple-800 hover:bg-purple-100/50"
+              : "text-gray-700 hover:bg-gray-100/60",
+        ].join(" ")}
+      >
+        <span className="font-mono text-[10px] text-gray-400 select-none">
+          {open ? "▾" : "▸"}
+        </span>
+        <span className="text-[11px] flex-shrink-0">{header.icon}</span>
+        <span className="font-medium text-[11px] flex-shrink-0">
+          {header.label}
+        </span>
+        <span className="text-[11px] text-gray-500 truncate font-mono">
+          {header.summary}
+        </span>
+        {isError && (
+          <span className="ml-auto text-[10px] text-rose-600 font-semibold">
+            ✗ failed
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="border-t border-gray-200 px-2 py-1.5 space-y-1.5">
+          {isDelegate ? (
+            <DelegateBody
+              node={node as DelegateNode}
+              onDrillIn={() => enterSubWorkflow(sessionId, node.id)}
+            />
+          ) : (
+            <>
+              {(node as ToolCallNode).input != null && (
+                <DisclosureBlock label="Input">
+                  <pre className="text-[11px] font-mono text-gray-700 whitespace-pre-wrap break-words max-h-40 overflow-auto">
+                    {compactJson((node as ToolCallNode).input)}
+                  </pre>
+                </DisclosureBlock>
+              )}
+              {resultText && (
+                <DisclosureBlock label="Output">
+                  <pre className="text-[11px] font-mono text-gray-700 whitespace-pre-wrap break-words max-h-60 overflow-auto">
+                    {resultText}
+                  </pre>
+                </DisclosureBlock>
+              )}
+              {!resultText && (node as ToolCallNode).resultBlock == null && (
+                <div className="text-[11px] italic text-gray-400">
+                  (no result captured)
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DelegateBody({
+  node,
+  onDrillIn,
+}: {
+  node: DelegateNode;
+  onDrillIn: () => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      {node.description && (
+        <div className="text-[12px] text-gray-800">{node.description}</div>
+      )}
+      {node.prompt && (
+        <DisclosureBlock label="Prompt">
+          <pre className="text-[11px] font-mono text-gray-700 whitespace-pre-wrap break-words max-h-40 overflow-auto">
+            {node.prompt}
+          </pre>
+        </DisclosureBlock>
+      )}
+      {node.content && (
+        <DisclosureBlock label="Result">
+          <pre className="text-[11px] font-mono text-gray-700 whitespace-pre-wrap break-words max-h-60 overflow-auto">
+            {node.content}
+          </pre>
+        </DisclosureBlock>
+      )}
+      {node.agentId && (
+        <button
+          type="button"
+          onClick={onDrillIn}
+          className="mt-1 inline-flex items-center gap-1 rounded border border-purple-300 bg-purple-100 px-2 py-1 text-[11px] text-purple-800 hover:bg-purple-200 transition-colors"
+        >
+          ⤢ 进入子工作流
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Inline disclosure (always-open mini-section title). Used to label
+// Input / Output / Prompt / Result blocks inside an expanded pill so
+// users can scan multiple sub-fields at once instead of nesting yet
+// more click-to-expand levels.
+function DisclosureBlock({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wide text-gray-500 font-medium mb-0.5">
+        {label}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// One-line header for a tool pill. Aligns with Claude Desktop App's
+// inline tool affordances: small emoji icon + tool name + a brief
+// arg summary (path / pattern / first command word). Long summaries
+// truncate via the parent's `truncate` class — we don't pre-truncate
+// here so the title attribute (handled higher up if needed) keeps
+// the full info accessible.
+interface ToolHeader {
+  icon: string;
+  label: string;
+  summary: string;
+}
+
+function toolPillHeader(node: ToolCallNode | DelegateNode): ToolHeader {
+  if (node.kind === "delegate") {
+    const d = node as DelegateNode;
+    const label = d.agentType ? `Task (${d.agentType})` : "Task";
+    return {
+      icon: "🤖",
+      label,
+      summary: d.description ?? "",
+    };
+  }
+  const tn = node as ToolCallNode;
+  const name = tn.toolName ?? "Tool";
+  const input = tn.input as Record<string, unknown> | null | undefined;
+  const get = (k: string): string => {
+    const v = input?.[k];
+    return typeof v === "string" ? v : "";
+  };
+  switch (name) {
+    case "Read":
+      return { icon: "📖", label: "Read", summary: get("file_path") };
+    case "Write":
+      return { icon: "✏️", label: "Write", summary: get("file_path") };
+    case "Edit":
+      return { icon: "✏️", label: "Edit", summary: get("file_path") };
+    case "MultiEdit":
+      return { icon: "✏️", label: "MultiEdit", summary: get("file_path") };
+    case "NotebookEdit":
+      return {
+        icon: "📓",
+        label: "NotebookEdit",
+        summary: get("notebook_path"),
+      };
+    case "Bash": {
+      const cmd = get("command");
+      const desc = get("description");
+      return {
+        icon: "⚡",
+        label: "Bash",
+        summary: desc || cmd,
+      };
+    }
+    case "Grep":
+      return {
+        icon: "🔍",
+        label: "Grep",
+        summary: get("pattern"),
+      };
+    case "Glob":
+      return { icon: "🔍", label: "Glob", summary: get("pattern") };
+    case "WebFetch":
+      return { icon: "🌐", label: "WebFetch", summary: get("url") };
+    case "WebSearch":
+      return { icon: "🔎", label: "WebSearch", summary: get("query") };
+    case "TodoWrite": {
+      const todos = (input?.["todos"] as unknown[] | undefined) ?? [];
+      return {
+        icon: "📋",
+        label: "TodoWrite",
+        summary: `${todos.length} todo${todos.length === 1 ? "" : "s"}`,
+      };
+    }
+    default:
+      return { icon: "🔧", label: name, summary: "" };
+  }
+}
+
+// Best-effort string extraction from a tool_result block. CC's
+// resultBlock can be a string (cheap path) or an array of content
+// parts (each {type:"text", text}). For everything else we fall
+// through to the JSON serialisation of toolUseResult — gives the
+// user *something* to read instead of a blank body.
+function extractToolResultText(node: ToolCallNode | DelegateNode): string {
+  if (node.kind === "delegate") return ""; // delegates use DelegateBody
+  const block = (node as ToolCallNode).resultBlock as
+    | { content?: unknown }
+    | string
+    | null
+    | undefined;
+  if (typeof block === "string") return block;
+  const content = (block as { content?: unknown } | null | undefined)?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const b of content) {
+      if (b && typeof b === "object") {
+        const bb = b as { type?: string; text?: unknown };
+        if (bb.type === "text" && typeof bb.text === "string") {
+          parts.push(bb.text);
+        }
+      }
+    }
+    if (parts.length > 0) return parts.join("\n\n");
+  }
+  // Fall through to toolUseResult JSON for the more exotic shapes
+  // (Read returns content via toolUseResult, e.g. { type:'text', file:{...} }).
+  if ((node as ToolCallNode).toolUseResult != null) {
+    return compactJson((node as ToolCallNode).toolUseResult);
+  }
+  return "";
+}
+
+function compactJson(v: unknown): string {
+  try {
+    return JSON.stringify(v, null, 2);
+  } catch {
+    return String(v);
+  }
+}
 
 // v0.8.1 #11 (refined per user spec): inline "复制" / "✓ 已复制" text
 // label at the bottom-left of each message. NOT a floating icon; user
