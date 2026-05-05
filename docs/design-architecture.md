@@ -1069,6 +1069,56 @@ key 命名跟 Agentloom 对齐（方便日后 Agentloom 之间 share copy）：
 
 ⚠ v0.2 当前所有面向用户字符串都是 zh-CN 硬编码，待 i18n phase 一次性抽到 bundle。
 
+## Hover-preview / click-persist 模式（release pattern）
+
+UI 里凡是"hover 触发的视图切换"——比如鼠标停留在右侧 conversation bubble 上 canvas 自动 pan 过去、或在 canvas 卡片上停留 conversation 自动滚到对应消息——**默认走临时预览语义而不是持久切换**。否则一次误触就把用户的视图永久换走，重新定位很烦。
+
+### 协议
+
+跨子树通信的 mediator（如 `CanvasPanContext` / `ConversationScrollContext`）的 callable 接收 `mode: "click" | "hover"` 参数：
+
+- **`mode: "click"`**：持久应用，调用方不需要做清理。
+- **`mode: "hover"`**：返回一个 `release: () => void` 回调。调用方**必须**在鼠标离开时调它恢复原状。否则跟 click 一样持久，hover-preview 语义就失效了。
+
+```ts
+type Mediator = (target: string, mode?: "click" | "hover") => Release | void;
+```
+
+### 实现 release 时要 stash 什么
+
+接收侧（mediator 实现）需要在 `mode === "hover"` 时**先 stash 所有会被改动的状态**，再 apply 预览效果，并把 release 闭包到 stash 上：
+
+| 切换类型 | stash | apply | release 时还原 |
+|---|---|---|---|
+| Canvas pan | `rf.getViewport()` | 设新 viewport + 自动 unfold 被遮挡的 compact 链（`persist:false`）| `rf.setViewport(stashed)` + 重新 fold 那条链（`persist:false`）|
+| Conversation scroll | scroll 容器的 `scrollTop` | `bubble.scrollIntoView({block:"center"})` | `scrollEl.scrollTo({top: stashed, behavior:"smooth"})` |
+
+### 调用侧的 ref 模式
+
+调用侧（如 ConversationView 的 MessageBubble、ChatFlowCanvas 的 onNodeMouseEnter）持有一个 `releaseRef`：
+
+- `onHoverDwell`（250ms 停留触发）：先调 `releaseRef.current?.()` 释放上一个未释放的 preview，再调 mediator 拿新 release 存到 ref。
+- `onMouseLeave`：调 `releaseRef.current?.()` 然后清空 ref。
+- `onClick`（持久路径）：清空 ref 但**不调** release（让 click 的持久 apply 生效，不被 leave 顺手撤销），再调 mediator with `mode:"click"`。
+
+### 关键纪律
+
+- **release 必须幂等**——`released = true` 标记后第二次调用 no-op，避免 leave 触发两次时重复执行。
+- **Persist 操作（写 storage）必须 opt-out**：mediator 在 hover 路径里走的所有 store action 都得带 `{persist: false}` 让它跳过 localStorage 写入。否则 cursor 路过的所有状态都会被悄悄持久化（v0.9.1 之前的 hover-pan 自动 unfold 就踩了这个坑——`loomscope:unfold:` 被 cursor 路径污染，"默认折叠"看似失效）。
+- **新增 store action 默认应该 accept `opts.persist?: boolean`**：foldCompact / unfoldCompact 都已加；以后任何"用户能 hover 触发 + 同时影响持久状态"的 action 都要带这个开关。
+
+### 已落地的位置（2026-05-06）
+
+| 路径 | 文件 | mode 用法 |
+|---|---|---|
+| Conversation hover → Canvas pan | `CanvasPanContext.tsx` + `ChatFlowCanvas.tsx` panCtx handler + `ConversationView.tsx` MessageBubble dwell | hover stash viewport + chain；release 还原 |
+| Canvas hover → Conversation scroll | `ConversationScrollContext.tsx` + `ConversationView.tsx` scrollToBubble + `ChatFlowCanvas.tsx` onNodeMouseEnter | hover stash scrollTop；release smooth-scroll 回原位置 |
+
+### 不适用的场景
+
+- **drill in/out**（点击 "进入工作流" → 切换 canvas 视图）是显式动作，不走 release 模式。
+- **Conversation hover 直接到 click**：hover preview 应用了 → 用户立刻 click，应该把 hover release 丢弃（不还原），让 click 的持久 apply 生效。代码里通过"click 路径开始时清 releaseRef 但不调它"实现。
+
 ## 开放问题
 
 1. ~~**State 库选不选**~~ — 已决定：**Zustand 5.0** 显式 dep + slice 模式（UI / Session / LiveEvent / Workspace 四 slice）+ `persist` middleware。决策详见下方"前端状态管理"章节。
