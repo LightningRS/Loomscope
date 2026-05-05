@@ -198,6 +198,48 @@ export function ConversationView({ sessionId, chatFlow }: Props) {
     scrollToBubble(selectedId, { smooth: false });
   }, [selectedId, chatFlow?.id, scrollToBubble]);
 
+  // EN: stick-to-bottom pattern (chat app convention). On session
+  // open, all bubbles render with text from summary.assistantText
+  // (v0.9.2 a) but tool pills lazy-load → bubble heights grow over
+  // ~100-200ms. Without this, the initial bottomMarker scroll is
+  // based on heights AT THAT MOMENT; when bubbles grow, the bottom
+  // moves further down and content gets pushed below the viewport.
+  // Track whether the user is currently "at bottom" (within 50px),
+  // and on every layout change (ResizeObserver fires when any
+  // bubble grows), re-snap to bottom IF still at bottom. User
+  // scrolling up flips the flag and disables auto-snap until they
+  // scroll back to bottom (= manually return to "live tail" mode).
+  // 中: stick-to-bottom：用户在底部时 bubble 增长就跟着贴回底部，
+  // 滚走则放弃跟随。解决"打开 session 滚到底了，但工具懒加载让
+  // bubble 变高，底部又被推出 viewport"。
+  const isAtBottomRef = useRef(true);
+  useEffect(() => {
+    const scrollEl = findScrollParent(containerRef.current);
+    if (!scrollEl) return;
+    const onScroll = () => {
+      const distance =
+        scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
+      isAtBottomRef.current = distance < 50;
+    };
+    onScroll(); // seed initial value
+    scrollEl.addEventListener("scroll", onScroll, { passive: true });
+    return () => scrollEl.removeEventListener("scroll", onScroll);
+  }, []);
+  useEffect(() => {
+    const container = containerRef.current;
+    const scrollEl = findScrollParent(container);
+    if (!container || !scrollEl) return;
+    const ro = new ResizeObserver(() => {
+      if (!isAtBottomRef.current) return;
+      // Hard-set scrollTop instead of scrollIntoView so consecutive
+      // ResizeObserver fires (one per bubble growth) don't queue
+      // multiple smooth-scroll animations.
+      scrollEl.scrollTop = scrollEl.scrollHeight;
+    });
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, []);
+
   // v0.8.1 #4: lazy-pack window. Recompute initial startIdx on path
   // identity change.
   const [startIdx, setStartIdx] = useState(0);
