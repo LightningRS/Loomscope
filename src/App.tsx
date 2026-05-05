@@ -21,6 +21,7 @@ import { ChatFlowCanvas } from "@/canvas/ChatFlowCanvas";
 import { WorkFlowCanvas } from "@/canvas/WorkFlowCanvas";
 import { DrillPanel } from "@/components/drill/DrillPanel";
 import { Header } from "@/components/Header";
+import { HookOnboardingModal } from "@/components/HookOnboardingModal";
 import { PermissionBanner } from "@/components/PermissionBanner";
 import { Sidebar } from "@/components/Sidebar";
 import { useKeyboardNav } from "@/hooks/useKeyboardNav";
@@ -222,6 +223,7 @@ export default function App() {
     <ConversationScrollProvider>
     <div className="h-screen w-screen flex flex-col bg-gray-50 text-gray-900">
       <Header />
+      <HookOnboardingModal />
       <div className="flex flex-1 min-h-0">
         <Sidebar />
         <main

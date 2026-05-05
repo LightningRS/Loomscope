@@ -7,6 +7,7 @@ import { Hono } from "hono";
 import { corsMiddleware } from "@/server/middleware/cors";
 import { csrfMiddleware } from "@/server/middleware/csrf";
 import { ccHookRouter } from "@/server/routes/ccHook";
+import { ccHookOnboardingRouter } from "@/server/routes/ccHookOnboarding";
 import { sessionsRouter } from "@/server/routes/sessions";
 import { workspacesRouter } from "@/server/routes/workspaces";
 import { initHookSseForwarder } from "@/server/services/hookSseForwarder";
@@ -38,6 +39,16 @@ export function createApp(opts: AppOptions) {
   app.route("/api/workspaces", workspacesRouter({ rootDir: opts.rootDir }));
   app.route("/api/sessions", sessionsRouter({ rootDir: opts.rootDir }));
   app.route("/api/cc-hook", ccHookRouter({ secret: opts.hookSecret }));
+  // v∞.0 PR 3: parse allowedOrigin to recover the listening port —
+  // settings.json hook URLs are constructed against that port. If
+  // the URL is malformed (custom deploys), fall back to 5174 which
+  // matches our default; the patcher is harmless in that case
+  // because users won't be running on a port mismatch by accident.
+  const port = parsePortFromOrigin(opts.allowedOrigin) ?? 5174;
+  app.route(
+    "/api/cc-hook-onboarding",
+    ccHookOnboardingRouter({ port, hookSecret: opts.hookSecret }),
+  );
 
   app.notFound((c) => c.json({ error: "not found" }, 404));
   app.onError((err, c) => {
@@ -46,4 +57,14 @@ export function createApp(opts: AppOptions) {
   });
 
   return app;
+}
+
+function parsePortFromOrigin(origin: string): number | null {
+  try {
+    const u = new URL(origin);
+    if (u.port) return Number(u.port);
+    return u.protocol === "https:" ? 443 : 80;
+  } catch {
+    return null;
+  }
 }

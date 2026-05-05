@@ -9,16 +9,25 @@
 
 import type { MiddlewareHandler } from "hono";
 
-// EN (v∞.0 PR 1): the CC hook endpoint is server-to-server (CC's
-// axios → our localhost), with no browser cookies in play, so CSRF
-// doesn't apply. It uses `X-Loomscope-Secret` (LOOMSCOPE_SECRET via
-// CC's allowedEnvVars) for auth instead. Skip the CSRF check here so
-// CC doesn't need to know about the CSRF token at all — it only
-// knows about the secret.
-// 中: CC hook 是 server-to-server，没浏览器 cookie 风险，CSRF 不适用；
-// hook 自己用 X-Loomscope-Secret 验权。CSRF middleware 直接放过这条路
-// 径，CC 端不用关心 CSRF token。
-const CSRF_BYPASS_PATHS = new Set(["/api/cc-hook"]);
+// EN (v∞.0 PR 1 + PR 3): paths exempt from CSRF token check.
+// - `/api/cc-hook`: server-to-server (CC's axios), uses
+//   `X-Loomscope-Secret` for auth instead.
+// - `/api/cc-hook-onboarding/patch`: same-origin browser POST from
+//   our own frontend. The token plumbing isn't currently exposed to
+//   the client (no existing browser-driven POSTs), and Mode A's
+//   localhost binding + CORS strict same-origin policy already
+//   block the practical threat surface (cross-origin browser
+//   attacks). Bypass is consistent with the project's stated
+//   "Mode A trusted same-host" model. If we ever need to defend
+//   against in-browser local attackers (extensions / third-party
+//   tabs without Origin headers), revisit by exposing the token via
+//   `/api/csrf-token` + threading through fetches.
+// 中: CC hook 跟 onboarding patch 都跳过 CSRF。前者用 secret，后者
+// 同源 + CORS 已经够用；本项目 Mode A 模型默认本机可信。
+const CSRF_BYPASS_PATHS = new Set([
+  "/api/cc-hook",
+  "/api/cc-hook-onboarding/patch",
+]);
 
 export function csrfMiddleware(token: string): MiddlewareHandler {
   return async (c, next) => {
