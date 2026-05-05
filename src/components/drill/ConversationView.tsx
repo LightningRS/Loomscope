@@ -29,7 +29,7 @@ import {
   useLatestChatNodeId,
   useSessionLiveness,
 } from "@/store/livenessHooks";
-import { MarkdownView } from "@/components/MarkdownView";
+import { LazyMarkdownView } from "@/components/MarkdownView";
 import {
   findLatestLeafInSubtree,
   resolvePath,
@@ -784,7 +784,7 @@ function MessageBubbleImpl({
               its preferred width follows the bubble's max-content. */}
           <div className="max-w-[calc(100%-3rem)]">
             <div className="prose prose-sm prose-invert max-w-none rounded-2xl bg-blue-500 px-3 py-2 text-[13px] text-white break-words">
-              <MarkdownView>{userText}</MarkdownView>
+              <LazyMarkdownView>{userText}</LazyMarkdownView>
             </div>
           </div>
         </div>
@@ -802,7 +802,7 @@ function MessageBubbleImpl({
                 <div
                   className="prose prose-sm max-w-none text-[13px] leading-relaxed break-words text-gray-800"
                 >
-                  <MarkdownView>{round.text}</MarkdownView>
+                  <LazyMarkdownView>{round.text}</LazyMarkdownView>
                 </div>
               )}
               {round.tools.length > 0 && (
@@ -823,7 +823,7 @@ function MessageBubbleImpl({
       {/* Fallback text (compact summary / slashCommand stdout). */}
       {rounds.length === 0 && fallbackText && (
         <div className="prose prose-sm max-w-none text-[13px] leading-relaxed break-words text-gray-800">
-          <MarkdownView>{fallbackText}</MarkdownView>
+          <LazyMarkdownView>{fallbackText}</LazyMarkdownView>
         </div>
       )}
       {/* EN: skeleton during the lazy-load fetch window. Replaces

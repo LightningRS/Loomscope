@@ -17,7 +17,7 @@
  * text — running the full markdown pipeline on 1500+ ChatNode cards
  * would cost more than it surfaces.
  */
-import { memo } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 
 import rehypeHighlight from "rehype-highlight";
 import rehypeRaw from "rehype-raw";
@@ -106,3 +106,91 @@ function MarkdownViewImpl({ children, components, className }: Props) {
 // children is a string (cheap to compare by ref + value), components
 // and className are typically stable.
 export const MarkdownView = memo(MarkdownViewImpl);
+
+// EN (v0.10 收尾 / v0.11 prep): viewport-gated MarkdownView. The
+// remark + rehype pipeline (especially rehype-highlight's auto
+// language detection) costs ~50-200 ms per bubble on real assistant
+// output; with N visible bubbles the cumulative initial render is
+// 5-6 s on long conversations — user's "37 MB session waits 6 s
+// before conversation appears" repro. Drop-in for ConversationView's
+// per-round / per-fallback bubble text: render plain-text-with-
+// newlines as a placeholder until the bubble enters viewport (with
+// 1000 px lookahead margin), then swap to the real Markdown render.
+//
+// Why not just use IntersectionObserver inside MarkdownView itself:
+// callers like ChatNodeDetail / WorkNodeDetail show ONE node at a
+// time so the eager pipeline cost is bounded — no point gating
+// those. Two named exports keep the choice at the call site.
+//
+// Test escape hatch: happy-dom ships an IntersectionObserver stub
+// whose callbacks never fire, so a viewport-gated component would
+// render only the plain-text placeholder forever and break any
+// markdown-element assertion (`<strong>` / `<code>` etc.). Test
+// setup sets `globalThis.__LOOMSCOPE_EAGER_MARKDOWN__ = true` to
+// short-circuit the gate — eager render in tests, lazy in production.
+//
+// 中: 视口门控的 MarkdownView。markdown pipeline 单条 50-200ms，长
+// 会话累积 5-6 秒 = 用户报的"37MB session 等 6 秒右侧才出"。仅给
+// ConversationView 的 bubble text 用；drill detail 一次只渲染一个节点
+// 不需要懒。测试环境 happy-dom 的 IntersectionObserver callback 不触发，
+// 所以 setup.ts 设 `__LOOMSCOPE_EAGER_MARKDOWN__=true` 让测试走 eager
+// 路径不破坏现有断言。生产环境无此标志，正常走视口门控。
+function shouldStartEager(): boolean {
+  if (typeof IntersectionObserver === "undefined") return true;
+  if (
+    typeof globalThis !== "undefined" &&
+    (globalThis as { __LOOMSCOPE_EAGER_MARKDOWN__?: boolean })
+      .__LOOMSCOPE_EAGER_MARKDOWN__ === true
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function LazyMarkdownViewImpl({ children, components, className }: Props) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  // First-render decision: eager in tests / SSR; viewport-gated in
+  // production. Locked in at first render so subsequent re-renders
+  // never toggle this — flipping mid-life would re-mount MarkdownView
+  // and lose any internal state (none today, but defensive).
+  const eagerOnMount = useRef(shouldStartEager());
+  const [visible, setVisible] = useState(eagerOnMount.current);
+
+  useEffect(() => {
+    if (visible) return;
+    const el = ref.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setVisible(true);
+          obs.disconnect();
+        }
+      },
+      { rootMargin: "1000px 0px 1000px 0px" },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [visible]);
+
+  if (visible) {
+    return (
+      <MarkdownView className={className} components={components}>
+        {children}
+      </MarkdownView>
+    );
+  }
+  // Plain-text placeholder. Same outer wrapper shape (className) so
+  // the swap to MarkdownView keeps layout in place. `whitespace-pre-
+  // wrap` preserves \n; `break-words` matches the real markdown's
+  // long-line behaviour. Visual: code fences / headers show as raw
+  // `# heading` / ` ``` ` markup briefly — acceptable for a placeholder
+  // the user only sees when scrolling fast.
+  return (
+    <div ref={ref} className={className} data-loomscope-lazy-md="pending">
+      <div className="whitespace-pre-wrap break-words">{children}</div>
+    </div>
+  );
+}
+
+export const LazyMarkdownView = memo(LazyMarkdownViewImpl);

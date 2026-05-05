@@ -21,6 +21,19 @@ import i18n, { i18nReady } from "@/i18n";
 await i18nReady;
 await i18n.changeLanguage("zh-CN");
 
+// EN: short-circuit LazyMarkdownView's viewport gate so existing
+// tests asserting `<strong>` / `<code>` / etc. inside bubble text
+// keep working. Production behaviour is viewport-gated; tests get
+// eager render via this global flag (see MarkdownView.tsx
+// `shouldStartEager`). Individual tests that want to exercise the
+// lazy path can flip it off in their own beforeEach.
+// 中: 让 LazyMarkdownView 在测试环境直接 eager，避免 happy-dom 的
+// IntersectionObserver stub 让测试断言（<strong> 等）拿不到 markdown
+// 元素。生产环境无此标志，正常走视口门控。
+(
+  globalThis as { __LOOMSCOPE_EAGER_MARKDOWN__?: boolean }
+).__LOOMSCOPE_EAGER_MARKDOWN__ = true;
+
 beforeEach(async () => {
   if (i18n.language !== "zh-CN") {
     await i18n.changeLanguage("zh-CN");
