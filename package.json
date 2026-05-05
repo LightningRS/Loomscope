@@ -11,6 +11,7 @@
     "build": "tsc --noEmit && vite build",
     "build:server": "tsc --noEmit",
     "preview": "vite preview",
+    "start": "tsx src/server/cli.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

@@ -2,6 +2,8 @@
 // (eventually) the published `loomscope-server` bin.
 
 import * as crypto from "node:crypto";
+import { existsSync } from "node:fs";
+import * as path from "node:path";
 
 import { serve } from "@hono/node-server";
 
@@ -24,17 +26,37 @@ async function main(): Promise<void> {
   // for graceful-degradation semantics.
   const hookSecret = await getOrCreateSecret();
 
+  // v1.0 ship prep: detect a built frontend bundle. If `dist/` exists
+  // next to the cwd, serve it (production mode = single process for
+  // backend + frontend). Otherwise leave undefined so dev mode keeps
+  // working — Vite at 5175 owns the frontend and proxies /api.
+  // Override path via LOOMSCOPE_STATIC_DIR for non-standard layouts.
+  const staticDirOverride = process.env.LOOMSCOPE_STATIC_DIR;
+  const candidate =
+    staticDirOverride ?? path.resolve(process.cwd(), "dist");
+  const staticDir = existsSync(path.join(candidate, "index.html"))
+    ? candidate
+    : undefined;
+
   const app = createApp({
     rootDir: cli.rootDir,
     csrfToken,
     allowedOrigin,
     hookSecret,
+    staticDir,
   });
 
   serve({ fetch: app.fetch, port: cli.port, hostname: cli.bind }, (info) => {
     console.log(
       `[loomscope] backend listening at http://${info.address}:${info.port}  (rootDir=${cli.rootDir})`,
     );
+    if (staticDir) {
+      console.log(`[loomscope] serving frontend bundle from ${staticDir}`);
+    } else {
+      console.log(
+        `[loomscope] frontend bundle not found at ${candidate}; expecting Vite dev server (npm run dev:client)`,
+      );
+    }
   });
 }
 

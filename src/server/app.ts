@@ -3,6 +3,7 @@
 // fixture without booting a real listener.
 
 import { Hono } from "hono";
+import { serveStatic } from "@hono/node-server/serve-static";
 
 import { corsMiddleware } from "@/server/middleware/cors";
 import { csrfMiddleware } from "@/server/middleware/csrf";
@@ -21,6 +22,14 @@ export interface AppOptions {
   // `getOrCreateSecret()`. Required because the CSRF bypass for the
   // hook path leaves it unauthenticated otherwise.
   hookSecret: string;
+  // v1.0 ship prep: when set, Hono serves a production frontend
+  // bundle from this directory at the root path. `index.html` is
+  // returned for any non-API path so the SPA router (if we ever
+  // add one) handles client-side navigation. Leave undefined in
+  // dev mode where Vite at port 5175 serves the frontend +
+  // proxies /api to us. Path is resolved relative to process.cwd
+  // by the caller — the cli.ts boot script handles that.
+  staticDir?: string;
 }
 
 export function createApp(opts: AppOptions) {
@@ -49,6 +58,19 @@ export function createApp(opts: AppOptions) {
     "/api/cc-hook-onboarding",
     ccHookOnboardingRouter({ port, hookSecret: opts.hookSecret }),
   );
+
+  // v1.0 ship prep: production-mode static frontend serving. Mount
+  // AFTER the API routes so /api/* always reaches its handlers; the
+  // serveStatic middleware only fields requests that didn't match.
+  // Single-process serve makes the bin entry a one-liner — no Vite
+  // proxy + no separate static-server hop.
+  if (opts.staticDir) {
+    app.use("/*", serveStatic({ root: opts.staticDir }));
+    // SPA fallback for any non-API path that didn't resolve to a
+    // file on disk — return index.html so client-side routing (if
+    // we ever add it) handles navigation.
+    app.get("*", serveStatic({ path: "index.html", root: opts.staticDir }));
+  }
 
   app.notFound((c) => c.json({ error: "not found" }, 404));
   app.onError((err, c) => {
