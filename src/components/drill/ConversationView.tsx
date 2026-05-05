@@ -284,17 +284,43 @@ export function ConversationView({ sessionId, chatFlow }: Props) {
   );
   const hasMoreAbove = startIdx > 0;
 
-  // v0.10 lazy ChatFlow B5: batch-fetch workflows for the visible
-  // slice in one round-trip. Per-bubble `useChatNodeWorkflow` would
-  // dedupe fetches in the action layer, but each bubble would still
-  // fire its own `loadChatNodeWorkflows([myId])` call → N requests.
-  // Batching at the parent collapses to a single request that fills
-  // every visible-slice cache entry; bubble hooks then see ready /
-  // pending and skip their own fire.
+  // EN (v0.9.2 c): newest-first incremental fetch of visible-slice
+  // workflows. v0.10 originally batched all visible ids into ONE HTTP
+  // request — fast total but every bubble's tool pills appeared
+  // simultaneously after the response landed. User feedback: "feels
+  // like full-batch load even after summary.assistantText shows the
+  // bubble text immediately." Even though text is fast (lite payload),
+  // tool pills lagging together creates a wall-of-content moment.
+  //
+  // Strategy: split visiblePath into len(N) separate fetches, fired
+  // in REVERSE (latest first). setTimeout(0) staggers between calls
+  // so the microtask flush in `loadChatNodeWorkflows` runs ONCE per
+  // id, producing N independent requests + N independent store
+  // updates. Server's LRU cache makes all but the first request a
+  // dict-lookup (zero parse cost) so this is cheap on the wire.
+  // Visual effect: bubbles fill in tool pills bottom-to-top as the
+  // user reads downward — eye lands on latest first, by the time
+  // they scroll up older bubbles have caught up.
+  //
+  // 中: 把 visible slice 拆成 N 个独立 fetch 倒序发送（最新→最旧），
+  // setTimeout(0) 让 microtask flush 在每两个之间运行。每个 fetch
+  // 独立更新 store，bubble 由下到上依次填充工具 pill。server LRU
+  // 缓存让首个之外的请求是字典查找，几乎零成本。
   const loadWorkflows = useStore((s) => s.loadChatNodeWorkflows);
   useEffect(() => {
     if (visiblePath.length === 0) return;
-    void loadWorkflows(sessionId, visiblePath);
+    const ordered = [...visiblePath].reverse(); // newest first
+    const handles: number[] = [];
+    ordered.forEach((id, i) => {
+      handles.push(
+        window.setTimeout(() => {
+          void loadWorkflows(sessionId, [id]);
+        }, i * 0),
+      );
+    });
+    return () => {
+      for (const h of handles) window.clearTimeout(h);
+    };
   }, [sessionId, visiblePath, loadWorkflows]);
 
   // Stable callbacks for MessageBubble props. Without these, every
