@@ -1,24 +1,40 @@
-// Component-level workflow access hook. Centralises three concerns
-// that any DrillPanel / WorkFlowCanvas consumer would otherwise have
-// to repeat:
+// EN: Component-level workflow access hook. Centralises three things
+// any DrillPanel / WorkFlowCanvas consumer would otherwise repeat:
+//   (1) Distinguishing inline-loaded workflows (sub-agent ChatFlow,
+//       eager fixtures, ?full=true responses) from the lite shape
+//       served by the default endpoint.
+//   (2) Triggering `loadChatNodeWorkflows` for lite ChatNodes whose
+//       workflow hasn't been fetched yet — fire-and-forget; subscribers
+//       re-render when the cache entry flips to `ready`.
+//   (3) Returning a uniform `{ workflow, status, error, isLazy }`
+//       shape so every consumer shares one skeleton / ready / error
+//       state machine.
 //
-//   1. Distinguishing inline-loaded workflows (sub-agent ChatFlow,
-//      eager fixtures, ?full=true responses) from the lite shape that
-//      the default endpoint serves.
-//   2. Triggering `loadChatNodeWorkflows` when a lite ChatNode's
-//      workflow hasn't been fetched yet — fire-and-forget; subscribers
-//      re-render when the cache entry flips to `ready`.
-//   3. Returning a uniform `{ workflow, status, error }` shape so
-//      every consumer gets the same skeleton / ready / error state
-//      machine without duplicating lookup logic.
+// ⚠ IMPORTANT (v0.9.1 fix): inline workflow.nodes WINS over
+// workflowCache when populated. workflowCache is keyed by chatNode.id;
+// CC's Task delegation reuses the parent's user uuid as the sub-
+// agent jsonl's first user record uuid → top-level and sub-agent
+// ChatNodes routinely share id. Letting cache win for the collision
+// case rendered the WRONG WorkFlow (top-level's) when the consumer
+// asked for sub-agent's. The /subagents endpoint always returns
+// full-fat ChatFlows (inline non-empty), and lite top-level always
+// has empty inline — these two states are mutually exclusive, so
+// "inline non-empty ⇒ sub-agent path" is a reliable scope signal.
 //
-// Top-level vs sub-agent ChatNode discriminator: we don't need an
-// explicit flag. Top-level ChatNodes arrive via the lite endpoint,
-// so their `workflow.nodes` is `[]` while `workflow.summary` is
-// populated. Sub-agent ChatFlows ship through `loadSubAgent` which
-// returns full workflow.nodes inline. So `nodes.length > 0` ⇒
-// already-loaded; only the (length === 0 && summary indicates content)
-// case triggers lazy load.
+// 中: 组件层 workflow 读取 hook，封装三个共性逻辑：
+//   (1) 区分 inline-loaded（sub-agent / 测试 fixture）和 lite endpoint
+//       的精简响应；
+//   (2) lite ChatNode 第一次访问时 fire-and-forget 调
+//       `loadChatNodeWorkflows`；
+//   (3) 给所有消费者返回统一的 `{ workflow, status, error, isLazy }`。
+//
+// ⚠ v0.9.1 关键修复：inline workflow.nodes 优先于 cache。workflowCache
+// 用 chatNode.id 当 key，但 CC delegate 派发让 sub-agent 第一条
+// user record 复用 parent uuid → sub-agent 跟 parent ChatNode 共享 id。
+// 让 cache 赢的话，sub-agent 的 ChatNode 会拉到 top-level 的 cache 渲
+// 染错的 WorkFlow。`/subagents` 永远返 full-fat（inline 非空），lite
+// top-level 永远 inline 为空 —— 这两个状态互斥，"inline 非空 ⇒
+// sub-agent 路径"是可靠 signal。
 
 import { useEffect } from "react";
 

@@ -1,11 +1,13 @@
-// v0.9 file-tail: refcounted chokidar watcher for session JSONLs +
-// sidecar dirs.
+// EN: v0.9 file-tail — refcounted chokidar watcher for session
+// JSONLs + sidecar dirs. Single global chokidar instance; we track
+// `path → sessionIds` so fork-closure overlap (sibling forks
+// share most ancestor jsonls) doesn't multiply watch entries. One
+// fs event fans out to every interested session.
 //
-// Why a refcounted single watcher instead of one chokidar per session:
-// fork closures overlap (sibling forks share most ancestor jsonls), so
-// tracking watch by-path with a `path → sessionIds` reverse-map lets us
-// fire one event handler per fs change and fan out to every interested
-// session without redundant watchers.
+// 中: v0.9 file-tail 的引用计数 chokidar watcher。整个进程一个
+// chokidar 实例，按 `path → sessionIds` 反查表分发事件——fork 闭包
+// 共享祖先 jsonl 路径时不会重复监听。一次 fs change 同时通知所有
+// 关心这条路径的 session 订阅者。
 //
 // v0.9.1 extension: each watched main jsonl auto-extends to its sidecar
 // `subagents/` directory. chokidar recursive watch on the dir means new

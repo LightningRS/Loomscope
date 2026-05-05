@@ -1,12 +1,18 @@
-// v0.9.1: workspace-level chokidar watcher.
+// EN: v0.9.1 workspace-level chokidar watcher. Separate from
+// sessionWatcher because per-session watcher only sees fork closures
+// (= jsonls of sessions a client has SSE-subscribed to). New session
+// jsonls appearing in the projects root would never trigger any
+// per-session subscription. To make the sidebar live-update, we
+// watch the projects root globally for `*.jsonl` add / unlink at
+// depth 2 (rootDir/<projectSlug>/<sid>.jsonl) and fan out via the
+// sseHub channel "workspaces". Depth filter excludes sidecar
+// jsonls (those are sessionWatcher territory).
 //
-// Why separate from sessionWatcher: per-session watcher only sees the
-// fork closure (= jsonls of sessions a client has opened SSE on). New
-// session jsonls appearing in the projects root wouldn't be seen by
-// any per-session subscription. To make the sidebar live-update, we
-// watch the projects root globally for `*.jsonl` add / unlink at depth
-// 2 (rootDir/<projectSlug>/<sid>.jsonl) and fan out via the sseHub
-// channel "workspaces".
+// 中: v0.9.1 workspace 级 chokidar watcher。和 sessionWatcher 分开
+// 因为后者只看 fork 闭包（已 SSE-subscribe 的 session 的 jsonl）；
+// projects root 下新增的 session jsonl 没人监听。本 watcher 监 2
+// 级深度（rootDir/<projectSlug>/<sid>.jsonl）的 add/unlink，深度
+// 过滤天然排除 sidecar jsonl（那是 sessionWatcher 的范围）。
 //
 // Started lazily on first subscriber (workspaces SSE route). Stays
 // running once started — projects-root watch is cheap and would

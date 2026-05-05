@@ -115,21 +115,31 @@ function truncate(s: string, max: number): string {
   return cleaned.length <= max ? cleaned : cleaned.slice(0, max - 1) + "…";
 }
 
-// Count connected llm_call chains in the WorkFlow DAG. An llm_call B
-// is a chain ROOT (= starts a new chain) iff its predecessor isn't
-// reachable inside this WorkFlow:
-//   - direct: B.parentUuid points at another llm_call's id
-//   - indirect: B.parentUuid is some tool_call's resultUserUuid, AND
-//     that tool_call's parentUuid points at an llm_call (= the
-//     predecessor)
+// EN: Count CONNECTED llm_call chains in the WorkFlow DAG.
+//
+// An llm_call B is a chain ROOT (= starts a new chain) iff its
+// predecessor isn't reachable inside this WorkFlow:
+//   direct:   B.parentUuid points at another llm_call's id
+//   indirect: B.parentUuid is some tool_call's resultUserUuid AND
+//             that tool_call's parentUuid points at an llm_call
+//             (= the predecessor)
 // Every llm_call that isn't a root continues an existing chain.
 // Chain count = number of roots.
 //
-// Intuition: chainCount=1 is the typical CC turn (user → llm → tool
-// → llm → tool → llm:end_turn). chainCount>1 happens when CC's
-// harness inserts a gap mid-turn (auto-compact, error-retry,
-// /escape resume) so the assistant's continuation chain breaks and
-// a fresh one starts.
+// chainCount=1 is the typical CC turn (user → llm → tool → llm
+// → tool → llm:end_turn). chainCount>1 happens when CC's harness
+// inserts a gap mid-turn (auto-compact, error retry, /escape
+// resume, etc.) so the assistant's continuation chain breaks and
+// a fresh one starts. Surfaced on the card as a 🔗 N chip when >1.
+//
+// 中: 数 WorkFlow DAG 里的连通 llm_call 链数。一个 llm_call B 是
+// chain ROOT（新链开头）当它的 predecessor 在本 WorkFlow 内不可达
+// （直接边 B.parentUuid==A.id，或间接边 B.parentUuid 是某 tool_call
+// 的 resultUserUuid 且该 tool_call.parentUuid 是某 llm_call）。
+// chainCount=root 数。chainCount=1 是常态（一次 CC turn 一条连续链
+// 直到 end_turn）；>1 表示 CC harness 在 turn 中段插入了 gap
+// （auto-compact / 错误重试 / /escape 续接等）导致链断开。
+// ChatNodeCard 在 chainCount>1 时显示 🔗 N chip 提示。
 function computeChainCount(nodes: WorkNode[]): number {
   const llmIds = new Set<string>();
   for (const n of nodes) if (n.kind === "llm_call") llmIds.add(n.id);

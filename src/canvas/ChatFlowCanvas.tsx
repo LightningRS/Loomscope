@@ -154,15 +154,20 @@ interface CanvasInnerProps extends ChatFlowCanvasProps {
   onEdgeHover: (e: HoveredEdgeState | null) => void;
 }
 
-// Pan the viewport so the node's CENTER lands at the screen center,
-// preserving zoom. RF's `node.position` is the top-left corner; for
-// `setCenter` we need the center, so add half the node's measured
-// dimensions. When the node hasn't been measured yet (just unfolded
-// + DOM not yet sized), fall back to the layout constants — same
-// dimensions dagre used for placement, so the estimate is close to
-// the real card. Without the fallback, missing measurements collapse
-// to 0 and the viewport centers on the top-left → card visually
-// lands in the bottom-right quadrant.
+// EN: Pan the viewport so the node's CENTER lands at the screen
+// center while preserving zoom. RF's `node.position` is the
+// TOP-LEFT corner; for setCenter we need the center, so add half
+// the node's measured dimensions. When the node hasn't been
+// measured yet (just unfolded, DOM not yet sized), fall back to
+// the layout constants — same dimensions dagre used during
+// placement, so the estimate is close to the real card. Without
+// this fallback, `node.measured?.width ?? 0` collapsed to zero
+// and setCenter received the top-left point as the center → card
+// landed in the bottom-right quadrant of the viewport.
+// 中: 把 viewport pan 到节点中心。RF 的 node.position 是左上角，
+// 计算中心需要加半个 width/height。卡片刚出现 DOM 没量过时
+// fallback 到 layout 常量（dagre 用的也是这些），否则 ?? 0
+// 会让 setCenter 拿到左上角当中心，卡片显示在视口右下方。
 function panToNodeCenter(
   rf: ReturnType<typeof useReactFlow>,
   node: { position: { x: number; y: number }; measured?: { width?: number; height?: number } },
@@ -406,13 +411,20 @@ function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasIn
         cur.foldedCompactIds,
         targetId,
       );
-      // Apply unfolds via the regular store action — but pass
-      // persist:false. Hover-pan is a TRANSIENT navigation aid; the
-      // unfold happens because we need the target visible for one
-      // hover, not because the user said "I want this open forever".
-      // Without this guard the user's `loomscope:unfold:` storage
-      // accumulates every compact whose pre-compact range the cursor
-      // ever brushed past.
+      // EN: persist:false is critical (v0.9.1 fix). Hover-pan is a
+      // TRANSIENT navigation aid — the unfold happens because we need
+      // the target visible for one hover, not because the user said
+      // "I want this compact open forever". Without persist:false,
+      // every compact whose pre-compact range the cursor ever brushed
+      // past gets persisted into `loomscope:unfold:` storage; after a
+      // session of browsing, the user's "default-fold" expectation
+      // looked broken because the unfold list covered everything.
+      // Settled rule: non-user-initiated state changes MUST NOT
+      // pollute persisted preferences.
+      // 中: persist:false 是 v0.9.1 关键修复。hover-pan 是临时导航辅助，
+      // 不是用户偏好。如果不传 persist:false，cursor 路过的所有压缩
+      // 范围都会被悄悄记成"用户已展开"——浏览一会儿之后用户会发现
+      // "默认折叠"看似失效。原则：非用户主动操作不应污染持久化偏好。
       for (const host of chain) {
         unfoldAction(sessionId, host, { persist: false });
       }
@@ -441,15 +453,19 @@ function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasIn
     pendingPanRef.current = null;
   }, [nodes, rf]);
 
-  // v0.9.1: capture / restore viewport across drill in ⇄ out. ChatFlow
-  // canvas is kept-mounted (display:none) when the user enters a
-  // WorkFlow drill; React Flow's internal viewport SHOULD persist
-  // across display flips but doesn't reliably (the ResizeObserver
-  // fires when display goes none→block with a 0×0 → real-size jump,
-  // and at certain timings the viewport resets to origin). Stash
-  // {x,y,zoom} on entry, write it back after the next layout commit
-  // on exit. ResizeObserver re-fit happens AFTER our restore so we
-  // override the reset.
+  // EN (v0.9.1): capture / restore viewport across drill in ⇄ out.
+  // ChatFlow canvas is kept-mounted (display:none) when the user
+  // enters a WorkFlow drill — React Flow's internal viewport state
+  // SHOULD persist across display flips but doesn't reliably: the
+  // ResizeObserver fires on the 0×0 → real-size jump and at certain
+  // timings resets the viewport to origin. Explicit capture (on
+  // 0 → >0 drillDepth transition) + restore (on >0 → 0, scheduled
+  // for the next rAF so RF's resize-driven adjust runs first and our
+  // restore overrides it) is the only reliable fix.
+  // 中: drill 进出 WorkFlow 时保留 ChatFlow viewport。React Flow 的
+  // 内部 viewport 应该 persist 但 display:none↔block 切换时
+  // ResizeObserver 在 0×0→正常尺寸跳变里会把 viewport reset 到原点，
+  // 显式 stash + 下一帧 restore 是唯一可靠方案。
   const drillDepth = useStore(
     (s) => s.sessions.get(sessionId)?.drillStack.length ?? 0,
   );

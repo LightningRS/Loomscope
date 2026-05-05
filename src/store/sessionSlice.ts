@@ -226,22 +226,27 @@ export const createSessionSlice: StateCreator<LoomscopeStore, [], [], SessionSli
     }
   },
 
-  // v0.9 file-tail: live re-fetch on SSE `invalidate`. Differs from
+  // EN: v0.9 file-tail live re-fetch on SSE `invalidate`. Differs from
   // loadSession in two ways:
-  //   1. No isLoading flag flip — the user shouldn't see a full-screen
-  //      "Parsing JSONL…" spinner just because the session ticked over;
-  //      cards get briefly stale until the network round-trip lands,
-  //      which is fine.
-  //   2. Reconciliation rather than overwrite: keeps selectedNodeId,
-  //      workflowSelectedNodeId, viewport, drillStack, branchMemory.
-  //      foldedCompactIds is re-hydrated against the new chatFlow so
-  //      newly-appeared compacts default-fold and disappeared ones drop
-  //      out (same intersection logic as initial load).
-  // The workflowCache is cleared because lite ChatFlow's per-cn summary
-  // may have shifted (turn count, contextTokens, etc.) — we want lazy
-  // hooks to refetch on next visibility. ChatNodes that weren't being
-  // viewed pay nothing; visible cards briefly re-enter `pending` then
-  // swap back to `ready` once the batch lands.
+  //   (1) No isLoading flag flip — the user shouldn't see a full-screen
+  //       "Parsing JSONL…" spinner just because the session ticked
+  //       over; cards stay briefly stale until the network round-trip
+  //       lands.
+  //   (2) Reconciliation rather than overwrite: keeps selectedNodeId,
+  //       workflowSelectedNodeId, viewport, drillStack, branchMemory.
+  //       foldedCompactIds is re-hydrated against the new chatFlow so
+  //       newly-appeared compacts default-fold + disappeared ones drop
+  //       out (intersection logic mirrors initial load).
+  // workflowCache cleared because lite ChatFlow's per-cn summary may
+  // have shifted (turn count, contextTokens, etc.) — lazy hooks refetch
+  // on next visibility. Failure here is non-fatal — previous chatFlow
+  // is still valid; log and let the next invalidate retry.
+  // 中: v0.9 file-tail 通过 SSE 'invalidate' 触发的实时刷新。跟
+  // loadSession 的区别：(1) 不翻 isLoading（用户不该因为 session
+  // 滴答一下就看到全屏 spinner）；(2) 保留 selection/viewport/drillStack
+  // 等用户状态而不是覆盖。workflowCache 清空让 lazy hook 自动刷新；
+  // subAgentCache 保留（避免 sub-agent drill 视图闪 loading）。失败
+  // 不致命，记 log 等下次 SSE 重试。
   refreshSession: async (id) => {
     try {
       const cf = await fetchJson<ChatFlow>(`/api/sessions/${id}`);
@@ -357,17 +362,28 @@ export const createSessionSlice: StateCreator<LoomscopeStore, [], [], SessionSli
     const top = cur.drillStack[cur.drillStack.length - 1];
     // Idempotent on the same chatnode at the top.
     if (top?.kind === "chatnode" && top.chatNodeId === chatNodeId) return;
-    // Stack-aware push: subworkflow on top means we're inside a
-    // sub-agent's ChatFlow → the click is a sub-ChatNode drill, append
-    // a chatnode frame. Otherwise (empty stack or top is chatnode)
-    // we're at top-level ChatFlow → RESET to single-frame stack.
-    //
-    // Don't try to disambiguate by "is chatNodeId in top-level scope?"
-    // — sub-agent ChatNodes can share uuids with top-level (CC's
-    // delegate spawn uses the parent's user uuid for the sub-agent's
-    // first user record), so an id-based check produces false RESETs.
-    // The which-canvas-is-the-user-on signal is the drillStack top
-    // itself, which is reliable.
+    // EN: Stack-aware push.
+    //   top kind == subworkflow → user is viewing a sub-agent's
+    //     ChatFlow; click is a sub-ChatNode drill → APPEND a chatnode
+    //     frame (`[CN A, 🤖, CN B]`).
+    //   otherwise (empty stack or top is chatnode) → user is at the
+    //     top-level ChatFlow; click is a "from scratch" drill →
+    //     RESET to a single-frame stack `[CN]`.
+    // ⚠ Do NOT disambiguate by "is chatNodeId in top-level scope?" —
+    // CC's Task delegation reuses the parent's user uuid as the
+    // sub-agent jsonl's first user record uuid, so sub-agent ChatNodes
+    // routinely share `id` with a top-level ChatNode. id-based
+    // check produces false RESETs that drop the user out of a deep
+    // drill back to the top-level WorkFlow. The drillStack top
+    // (= which canvas is currently being clicked) is the only
+    // reliable signal. See `docs/design-data-model.md` "uuid 共享
+    // 陷阱" + `feedback_loomscope_uuid_sharing` memory entry.
+    // 中: 按 drillStack 顶帧类型决定 push 还是 reset。⚠ 不能用 id 判
+    // scope —— sub-agent ChatNode 跟 parent ChatNode 共享 uuid（CC
+    // delegate 派发复用 parent 的 user uuid），id-based 判定会把
+    // sub-agent 内点击误识别为 top-level click 触发 RESET 把用户
+    // 踢回顶层。drillStack 顶帧（= 用户在哪块 canvas 上点）才是
+    // 可靠信号。详见 design-data-model.md 的 "uuid 共享陷阱"。
     const drillStack: DrillFrame[] =
       top?.kind === "subworkflow"
         ? [...cur.drillStack, { kind: "chatnode", chatNodeId }]
@@ -693,8 +709,15 @@ export const createSessionSlice: StateCreator<LoomscopeStore, [], [], SessionSli
     const updated = new Map(sessions);
     updated.set(sessionId, { ...cur, foldedCompactIds: next });
     set({ sessions: updated });
-    // Hover-pan auto-unfold passes persist:false so transient
-    // navigation doesn't leak into the user's explicit-unfold set.
+    // EN (v0.9.1): hover-pan auto-unfold passes persist:false so
+    // transient navigation doesn't leak into the user's
+    // explicit-unfold set. User-explicit clicks (chatFold node card,
+    // compact node fold-toggle button) leave the default true and
+    // persist normally. See `feedback_canvas_gestures_unreliable`
+    // memo + the v0.9.1 hover-pan fix in devlog.
+    // 中: hover-pan 自动展开走 persist:false，避免临时导航污染用户
+    // 显式展开偏好。用户主动点击的（chatFold 卡片、compact 节点切
+    // 换按钮）默认 persist=true 正常持久化。
     if (opts?.persist !== false) {
       persistUnfoldFromFolded(sessionId, next, cur.chatFlow);
     }
@@ -832,15 +855,34 @@ export function computeCompactRange(
   return collected.reverse();
 }
 
+// EN: Render-side drill resolver. Walks drillStack and produces the
+// final view shape (= which canvas to render, what the breadcrumb
+// labels are, what scope the visible ChatFlow is). Mirror of
+// `resolveDelegate` for the navigation-time path.
+//
+// Critical invariant: scope is determined by walker POSITION (have
+// we crossed a subworkflow frame yet?), NOT by ChatNode ids. CC's
+// Task delegation reuses parent user uuids → top-level and sub-agent
+// ChatNodes routinely share `id`. Any id-based scope check produces
+// wrong results — see the v0.9.1 4-bug-chain in
+// `docs/devlog.md` 2026-05-06 凌晨 entry.
+//
+// 中: 渲染时的 drill 解析器。walker 走 drillStack 决定渲染哪个 canvas
+// + breadcrumb 标签 + 当前作用域 ChatFlow。Scope 必须用 walker 位置
+// 判定（是否跨过 subworkflow 帧），不能用 ChatNode id —— sub-agent
+// 的 ChatNode 跟 parent 共享 uuid，id-based 判定会错。详见 v0.9.1
+// 4 个 bug 链（devlog 2026-05-06 凌晨条目）。
 export function resolveDrillView(state: SessionState): ResolvedDrillView | null {
   if (!state.chatFlow || state.drillStack.length === 0) return null;
   let scopeChatFlow: ChatFlow = state.chatFlow;
   let chatNode: import("@/data/types").ChatNode | null = null;
-  // Tracks whether we've crossed any subworkflow frame yet. The first
-  // chatnode frame (= drillStack[0]) is always top-level; everything
-  // after a subworkflow descend is sub-agent scope. We can't use the
-  // chatNode's id to disambiguate (ids collide between top-level and
-  // sub-agent due to CC's Task delegation reusing parent uuids).
+  // EN: True once the walker has crossed any subworkflow frame. From
+  // that point on, scope is sub-agent (chatFlow loaded via /subagents
+  // is full-fat → inline workflow.nodes is authoritative). Before
+  // that, scope is top-level (lite mode → read from workflowCache).
+  // 中: walker 跨过 subworkflow 后，scope 进入 sub-agent（/subagents
+  // 端点返 full-fat，inline workflow.nodes 可用）；之前是 top-level
+  // （lite 模式，需要读 workflowCache）。
   let crossedSubWorkflow = false;
   const labels: DrillBreadcrumbItem[] = [];
   for (let depth = 0; depth < state.drillStack.length; depth += 1) {

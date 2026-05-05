@@ -531,19 +531,28 @@ function MessageBubbleImpl({
 
 const MessageBubble = memo(MessageBubbleImpl);
 
-// v0.9.1 round 2: bundle a ChatNode's WorkFlow into a list of
-// "rounds" — one per llm_call. Each round owns the tool_call /
-// delegate WorkNodes that follow it (until the next llm_call).
+// EN (v0.9.1): bundle a ChatNode's WorkFlow into a list of "rounds"
+// — one per llm_call. Each round owns the tool_call / delegate
+// WorkNodes that follow it until the next llm_call. Walk in array
+// order: parser appends nodes as records arrive, which is
+// topological turn order. A round without text but with tools
+// still emits (assistant invoked tools without commentary); a
+// round with text but no tools emits a pure prose block. Empty
+// rounds (no text + no tools) are skipped so compact placeholders
+// or degenerate llm_call records don't produce empty-bubble rows.
 //
-// Walk in array order: parser appends nodes as records arrive in
-// the JSONL stream, which is topological turn order. A round
-// without text but with tools still emits (assistant invoked tools
-// without commentary); a round with text but no tools emits a
-// pure prose block.
+// Why this matters: the v0.10 ConversationView previously rendered
+// only the LAST llm_call's text. ChatNodes that span multiple
+// rounds (assistant text → tool → text → tool → text) lost
+// intermediate reasoning — users only saw the final summary.
 //
-// Empty rounds (no text, no tools) are skipped so users don't see
-// pointless empty-bubble rows from compact placeholders or
-// degenerate llm_call records.
+// 中: 把 ChatNode 的 WorkFlow 拆成 round 数组，每个 round 对应一个
+// llm_call + 它后续调用的工具（直到下一个 llm_call）。按数组顺序
+// walk（parser 是按 jsonl 顺序 append 的，等于 turn 拓扑序）。无
+// text 但有 tool 的 round 仍然 emit（assistant 没说话直接调工具
+// 的情况）；空 round（无 text 无 tool）跳过避免产生无意义空气泡。
+// 之前 v0.10 ConversationView 只渲染最后一个 llm_call 的 text，
+// 多轮 turn 中段的推理消失。
 interface ConversationRound {
   llmIndex: number;
   text: string;

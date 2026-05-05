@@ -1,10 +1,16 @@
-// v0.9.1: cross-tree scroll mediator (canvas → conversation).
+// EN: v0.9.1 cross-tree scroll mediator (canvas → conversation).
+// Mirror of `CanvasPanContext` but in the reverse direction —
+// ChatFlowCanvas (left, on hover/click of a ChatNodeCard) asks
+// ConversationView (right panel sibling) to scroll the matching
+// bubble into view. Same ref-pattern: App owns the ref,
+// ConversationView registers its impl on mount, callers from inside
+// ChatFlowCanvas read the ref via the shim hook.
 //
-// Mirror of CanvasPanContext. ChatFlowCanvas (canvas, hover/click on
-// a ChatNodeCard) needs to ask ConversationView (right-panel sibling)
-// to scroll the matching bubble into view. Same ref-pattern: App
-// owns the ref, ConversationView registers its impl on mount, hover
-// / click callers in ChatNodeCard read the ref via the hook.
+// 中: v0.9.1 跨子树的反向滚动 mediator（canvas → conversation）。
+// `CanvasPanContext` 的镜像：ChatFlowCanvas（hover/click ChatNode
+// 卡片）需要让 ConversationView（右边面板兄弟节点）滚到对应 bubble。
+// App 拿 ref，ConversationView 挂载时注册具体实现，ChatFlowCanvas
+// 通过 shim hook 在事件触发时读取最新 ref。
 //
 // Why a ref instead of a plain context value: the scroll impl uses
 // ConversationView-local state (containerRef, the rendered

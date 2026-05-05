@@ -54,7 +54,9 @@ export const i18nReady = i18n
     // 的 code（如 happy-dom 的 'en'）时 t() 会返回 key 名；让
     // i18next 自由用 resources 里的 key 解析就 OK。
     interpolation: { escapeValue: false },
-    initImmediate: false,
+    // EN: disable Suspense — resources are inline (no async backend
+    // load) so Suspense only adds a hydration-mismatch hazard.
+    // 中: 关掉 Suspense——所有 resources 都 inline 同步就绪。
     react: { useSuspense: false },
     detection: {
       order: ["localStorage", "navigator"],
