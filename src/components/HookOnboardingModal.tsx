@@ -99,6 +99,9 @@ export function HookOnboardingModal() {
       }
       const fresh = (await res.json()) as HookStatus;
       setStatus({ ...status!, ...fresh });
+      // PR 4: tell the Header chip to re-fetch + reflect the new
+      // configured count without waiting for its 30 s poll.
+      window.dispatchEvent(new CustomEvent("loomscope:hook-status-refresh"));
       // If everything is in place now, close the modal — but keep
       // dismissed=false in case the user clears localStorage.
       if (fresh.missing.length === 0 && !fresh.malformed) {

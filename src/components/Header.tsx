@@ -9,6 +9,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { copyToClipboardWithFallback } from "@/lib/clipboard";
+import { HookStatusChip } from "@/components/HookStatusChip";
 import { currentLanguage, setLanguage } from "@/i18n";
 import { useStore } from "@/store/index";
 import type { LiveChannelState } from "@/store/types";
@@ -53,6 +54,7 @@ export function Header() {
       </div>
 
       <div className="flex items-center gap-2 flex-shrink-0">
+        <HookStatusChip />
         <LiveIndicator
           sessionState={activeId ? liveStatus.session : "idle"}
           workspacesState={liveStatus.workspaces}
