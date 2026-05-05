@@ -58,15 +58,20 @@ describe("GET /api/cc-hook-onboarding/status", () => {
     expect(body.pasteableJson).toContain("X-Loomscope-Secret");
   });
 
-  it("reports configured events when our hooks are present", async () => {
+  it("reports configured events when our hooks are present (CC matcher schema)", async () => {
     await fs.writeFile(
       settingsFile,
       JSON.stringify({
         hooks: {
           PreToolUse: [
             {
-              type: "http",
-              url: "http://localhost:5174/api/cc-hook?event=PreToolUse",
+              matcher: "",
+              hooks: [
+                {
+                  type: "http",
+                  url: "http://localhost:5174/api/cc-hook?event=PreToolUse",
+                },
+              ],
             },
           ],
         },
@@ -84,7 +89,7 @@ describe("GET /api/cc-hook-onboarding/status", () => {
 });
 
 describe("POST /api/cc-hook-onboarding/patch", () => {
-  it("mode=add writes settings.json with all 11 events", async () => {
+  it("mode=add writes settings.json with all 11 events in CC matcher schema", async () => {
     const res = await app.request("/api/cc-hook-onboarding/patch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -93,13 +98,23 @@ describe("POST /api/cc-hook-onboarding/patch", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { configured: string[] };
     expect(body.configured.sort()).toEqual([...HOOK_EVENTS_LIST].sort());
-    // Verify file was actually written.
+    // Verify file shape: matcher entries wrapping action arrays.
     const raw = await fs.readFile(settingsFile, "utf8");
-    const parsed = JSON.parse(raw) as { hooks: Record<string, unknown[]> };
+    const parsed = JSON.parse(raw) as {
+      hooks: Record<
+        string,
+        Array<{ matcher: string; hooks: Array<{ type: string }> }>
+      >;
+    };
     expect(Object.keys(parsed.hooks).sort()).toEqual([...HOOK_EVENTS_LIST].sort());
+    for (const event of HOOK_EVENTS_LIST) {
+      const entries = parsed.hooks[event];
+      expect(entries[0].matcher).toBe("");
+      expect(Array.isArray(entries[0].hooks)).toBe(true);
+    }
   });
 
-  it("mode=remove strips Loomscope entries while preserving others", async () => {
+  it("mode=remove strips Loomscope entries (matcher schema) while preserving others", async () => {
     await fs.writeFile(
       settingsFile,
       JSON.stringify({
@@ -107,10 +122,18 @@ describe("POST /api/cc-hook-onboarding/patch", () => {
         hooks: {
           PreToolUse: [
             {
-              type: "http",
-              url: "http://localhost:5174/api/cc-hook?event=PreToolUse",
+              matcher: "",
+              hooks: [
+                {
+                  type: "http",
+                  url: "http://localhost:5174/api/cc-hook?event=PreToolUse",
+                },
+              ],
             },
-            { type: "command", command: "echo external" },
+            {
+              matcher: "Bash",
+              hooks: [{ type: "command", command: "echo external" }],
+            },
           ],
         },
       }),
@@ -124,12 +147,17 @@ describe("POST /api/cc-hook-onboarding/patch", () => {
     const raw = await fs.readFile(settingsFile, "utf8");
     const parsed = JSON.parse(raw) as {
       env: Record<string, string>;
-      hooks?: { PreToolUse?: Array<{ type: string }> };
+      hooks?: {
+        PreToolUse?: Array<{
+          matcher: string;
+          hooks: Array<{ type: string }>;
+        }>;
+      };
     };
     expect(parsed.env.KEEP).toBe("yes");
-    expect(parsed.hooks?.PreToolUse).toEqual([
-      { type: "command", command: "echo external" },
-    ]);
+    // Loomscope entry removed; third-party Bash entry kept verbatim.
+    expect(parsed.hooks?.PreToolUse).toHaveLength(1);
+    expect(parsed.hooks?.PreToolUse?.[0].matcher).toBe("Bash");
   });
 
   it("409 when existing settings.json is malformed", async () => {

@@ -43,19 +43,52 @@ function settingsPath(): string {
   return settingsPathOverride ?? DEFAULT_SETTINGS_PATH;
 }
 
-interface CcHookEntry {
+// EN: CC's settings.json hook schema (from the error CC throws when
+// it parses our file: "Hooks use a matcher + hooks array. Example:
+// {'PostToolUse': [{'matcher': 'Edit|Write', 'hooks': [{'type':
+// 'command', 'command': 'echo Done'}]}]}").
+//
+// Each event maps to an array of MATCHER ENTRIES. Each matcher entry
+// has a `matcher` string (tool-name filter, "" = all) and a `hooks`
+// array of action entries. The action is what we used to write at the
+// top level — `{ type: "http", url, ... }` — but it MUST be wrapped
+// in a matcher entry, otherwise CC's parser refuses to load the file
+// and the whole settings.json is skipped.
+//
+// First v∞.0 PR 3 release shipped the wrong shape (action entries
+// directly inside the event array). User repro: opening a fresh CC
+// terminal showed "hooks: Expected array, but received undefined" for
+// every event. The migration path here recognises both old-shape
+// (broken) and new-shape (correct) entries as "ours" so the next
+// `addLoomscopeHooks` call cleanly replaces the broken entries.
+//
+// 中: CC settings.json hook schema 是 `{matcher, hooks:[actions]}` 套
+// 娃。我们 v∞.0 PR 3 第一版漏了 matcher 一层，CC 拒绝加载整个文件。
+// 这里的迁移路径把"老（错）格式"也认成 ours，下次 add 直接清掉
+// 重写正确格式。
+
+/** Action entry — what CC actually executes. The flat-shape entry we
+ * mistakenly wrote in PR 3 v1 has the same fields but at the wrong
+ * nesting level. */
+interface CcHookAction {
   type?: string;
   url?: string;
   headers?: Record<string, string>;
   allowedEnvVars?: string[];
   timeout?: number;
-  // any other fields the user / CC version uses — preserved
-  // verbatim by `JSON.parse / JSON.stringify` round-trip.
+  command?: string;
+  [k: string]: unknown;
+}
+
+/** Correct schema: matcher string + array of action entries. */
+interface CcMatcherEntry {
+  matcher?: string;
+  hooks?: CcHookAction[];
   [k: string]: unknown;
 }
 
 interface CcSettings {
-  hooks?: Record<string, CcHookEntry[]>;
+  hooks?: Record<string, CcMatcherEntry[]>;
   [k: string]: unknown;
 }
 
@@ -106,13 +139,13 @@ export async function getHookStatus(loomscopePort: number): Promise<HookStatus> 
       malformed: true,
     };
   }
-  const hooks = (parsed.hooks ?? {}) as Record<string, CcHookEntry[]>;
+  const hooks = (parsed.hooks ?? {}) as Record<string, unknown[]>;
   const configured: string[] = [];
   for (const event of HOOK_EVENTS_LIST) {
     const entries = hooks[event];
     if (
       Array.isArray(entries) &&
-      entries.some((e) => isOurHookEntry(e, loomscopePort))
+      entries.some((e) => entryHasOurAction(e, loomscopePort))
     ) {
       configured.push(event);
     }
@@ -147,23 +180,28 @@ export async function addLoomscopeHooks(
     };
   }
   const settings: CcSettings = parsed ?? {};
-  const hooks: Record<string, CcHookEntry[]> = (settings.hooks ?? {}) as Record<
+  const hooks: Record<string, unknown[]> = (settings.hooks ?? {}) as Record<
     string,
-    CcHookEntry[]
+    unknown[]
   >;
   for (const event of HOOK_EVENTS_LIST) {
-    const existing: CcHookEntry[] = Array.isArray(hooks[event])
-      ? hooks[event]
+    const existing: unknown[] = Array.isArray(hooks[event])
+      ? (hooks[event] as unknown[])
       : [];
-    if (existing.some((e) => isOurHookEntry(e, loomscopePort))) {
-      // Already there — leave the user's other entries untouched
-      // alongside ours.
-      hooks[event] = existing;
-      continue;
-    }
-    hooks[event] = [...existing, buildHookEntry(event, loomscopePort)];
+    // EN: drop ANY entry of ours, whether new-shape (correct
+    // matcher + hooks wrapper) or old-shape (broken flat action
+    // from the first PR 3 release). Then append a single fresh
+    // new-shape entry. Other entries (third-party hooks, even on
+    // the same event name) stay untouched.
+    // 中: 把所有"我们的"entry 都剔掉（不管新格式还是老错格式），
+    // 然后追加一个全新正确格式的 entry。第三方的不动。
+    const cleaned = existing.filter((e) => !entryHasOurAction(e, loomscopePort));
+    hooks[event] = [...cleaned, buildMatcherEntry(event, loomscopePort)];
   }
-  settings.hooks = hooks;
+  // Cast back to CcMatcherEntry[] — entries we wrote are correct
+  // shape; entries we left untouched are user-owned and we don't
+  // type-narrow them here.
+  settings.hooks = hooks as Record<string, CcMatcherEntry[]>;
   await atomicWriteSettings(p, settings);
   return getHookStatus(loomscopePort);
 }
@@ -196,12 +234,13 @@ export async function removeLoomscopeHooks(
     };
   }
   const settings: CcSettings = parsed;
-  const hooks = (settings.hooks ?? {}) as Record<string, CcHookEntry[]>;
+  const hooks = (settings.hooks ?? {}) as Record<string, unknown[]>;
   for (const event of HOOK_EVENTS_LIST) {
-    const filtered =
-      Array.isArray(hooks[event])
-        ? hooks[event].filter((e) => !isOurHookEntry(e, loomscopePort))
-        : [];
+    const filtered = Array.isArray(hooks[event])
+      ? (hooks[event] as unknown[]).filter(
+          (e) => !entryHasOurAction(e, loomscopePort),
+        )
+      : [];
     if (filtered.length === 0) {
       delete hooks[event];
     } else {
@@ -211,7 +250,7 @@ export async function removeLoomscopeHooks(
   if (Object.keys(hooks).length === 0) {
     delete settings.hooks;
   } else {
-    settings.hooks = hooks;
+    settings.hooks = hooks as Record<string, CcMatcherEntry[]>;
   }
   await atomicWriteSettings(p, settings);
   return getHookStatus(loomscopePort);
@@ -224,16 +263,30 @@ export async function removeLoomscopeHooks(
  * `allowedEnvVars` whitelist and substitutes at fire time.
  */
 export function buildPasteableSnippet(loomscopePort: number): string {
-  const hooks: Record<string, CcHookEntry[]> = {};
+  const hooks: Record<string, CcMatcherEntry[]> = {};
   for (const event of HOOK_EVENTS_LIST) {
-    hooks[event] = [buildHookEntry(event, loomscopePort)];
+    hooks[event] = [buildMatcherEntry(event, loomscopePort)];
   }
   return JSON.stringify({ hooks }, null, 2);
 }
 
 // ─── internals ───────────────────────────────────────────────────────
 
-function buildHookEntry(eventName: string, port: number): CcHookEntry {
+/** Build a single CC-shaped matcher entry with one HTTP action
+ * pointing at our hook endpoint. matcher="" matches every tool
+ * (sufficient for our 11 tracked events; per-tool filtering is a
+ * future polish if we grow the hook set). */
+function buildMatcherEntry(
+  eventName: string,
+  port: number,
+): CcMatcherEntry {
+  return {
+    matcher: "",
+    hooks: [buildHookAction(eventName, port)],
+  };
+}
+
+function buildHookAction(eventName: string, port: number): CcHookAction {
   return {
     type: "http",
     url: `http://localhost:${port}/api/cc-hook?event=${eventName}`,
@@ -243,12 +296,32 @@ function buildHookEntry(eventName: string, port: number): CcHookEntry {
   };
 }
 
-function isOurHookEntry(entry: CcHookEntry | unknown, port: number): boolean {
+/**
+ * Is this entry "ours" (regardless of shape)? Used in two places:
+ *   - status read: "yes, this event already has a Loomscope entry"
+ *   - patch: "yes, drop this entry before adding the correct one"
+ *
+ * Recognises BOTH:
+ *   - new shape: `{ matcher, hooks: [{ url: "...localhost:PORT/api/cc-hook..." }] }`
+ *   - old (broken) shape from the first PR 3 release:
+ *     `{ url: "...localhost:PORT/api/cc-hook..." }` — flat action at
+ *     the matcher level, missing the `hooks` array CC requires.
+ */
+function entryHasOurAction(entry: unknown, port: number): boolean {
   if (!entry || typeof entry !== "object") return false;
-  const url = (entry as CcHookEntry).url;
+  // New shape: matcher entry wrapping a `hooks` array.
+  const e = entry as { hooks?: unknown[] };
+  if (Array.isArray(e.hooks)) {
+    return e.hooks.some((a) => actionHasOurUrl(a, port));
+  }
+  // Old broken shape: action fields at the entry level.
+  return actionHasOurUrl(entry, port);
+}
+
+function actionHasOurUrl(action: unknown, port: number): boolean {
+  if (!action || typeof action !== "object") return false;
+  const url = (action as { url?: unknown }).url;
   if (typeof url !== "string") return false;
-  // Match `http://localhost:<port>/api/cc-hook` — be tolerant of
-  // query string / scheme / etc.
   return url.includes(`localhost:${port}/api/cc-hook`);
 }
 

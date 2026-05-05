@@ -42,7 +42,55 @@ describe("getHookStatus", () => {
     expect(s.missing).toEqual([...HOOK_EVENTS_LIST]);
   });
 
-  it("classifies entries based on URL match (port-aware)", async () => {
+  it("classifies entries based on URL match (port-aware) — new schema", async () => {
+    await fs.writeFile(
+      settingsFile,
+      JSON.stringify({
+        hooks: {
+          PreToolUse: [
+            {
+              matcher: "",
+              hooks: [
+                {
+                  type: "http",
+                  url: `http://localhost:${PORT}/api/cc-hook?event=PreToolUse`,
+                },
+              ],
+            },
+          ],
+          // Different port → NOT ours
+          PostToolUse: [
+            {
+              matcher: "",
+              hooks: [
+                {
+                  type: "http",
+                  url: "http://localhost:9999/api/cc-hook?event=PostToolUse",
+                },
+              ],
+            },
+          ],
+          // Third-party hook on a Loomscope-tracked event
+          PostCompact: [
+            {
+              matcher: "",
+              hooks: [{ type: "command", command: "/usr/bin/notify" }],
+            },
+          ],
+        },
+      }),
+    );
+    const s = await getHookStatus(PORT);
+    expect(s.configured).toEqual(["PreToolUse"]);
+    expect(s.missing).toContain("PostToolUse");
+    expect(s.missing).toContain("PostCompact");
+  });
+
+  it("classifies broken old-shape entries as ours (migration recognition)", async () => {
+    // First v∞.0 PR 3 release wrote action fields directly inside
+    // the event array, missing the matcher wrapper. Status read
+    // must still recognise them as ours so the next add can clean
+    // up.
     await fs.writeFile(
       settingsFile,
       JSON.stringify({
@@ -53,22 +101,11 @@ describe("getHookStatus", () => {
               url: `http://localhost:${PORT}/api/cc-hook?event=PreToolUse`,
             },
           ],
-          // Different port → NOT ours
-          PostToolUse: [
-            {
-              type: "http",
-              url: "http://localhost:9999/api/cc-hook?event=PostToolUse",
-            },
-          ],
-          // Third-party hook on a Loomscope-tracked event
-          PostCompact: [{ type: "command", command: "/usr/bin/notify" }],
         },
       }),
     );
     const s = await getHookStatus(PORT);
     expect(s.configured).toEqual(["PreToolUse"]);
-    expect(s.missing).toContain("PostToolUse");
-    expect(s.missing).toContain("PostCompact");
   });
 
   it("malformed JSON → malformed=true, no exception", async () => {
@@ -79,14 +116,28 @@ describe("getHookStatus", () => {
 });
 
 describe("addLoomscopeHooks", () => {
-  it("creates settings.json with all 11 events when file is missing", async () => {
+  it("creates settings.json with all 11 events in the CC matcher+hooks schema", async () => {
     const status = await addLoomscopeHooks(PORT);
     expect(status.configured).toEqual([...HOOK_EVENTS_LIST]);
     expect(status.missing).toEqual([]);
 
     const raw = await fs.readFile(settingsFile, "utf8");
-    const parsed = JSON.parse(raw) as { hooks: Record<string, unknown[]> };
+    const parsed = JSON.parse(raw) as {
+      hooks: Record<
+        string,
+        Array<{ matcher: string; hooks: Array<{ type: string; url: string }> }>
+      >;
+    };
     expect(Object.keys(parsed.hooks).sort()).toEqual([...HOOK_EVENTS_LIST].sort());
+    // CC's expected shape: matcher entry wrapping a hooks action array.
+    for (const event of HOOK_EVENTS_LIST) {
+      const entries = parsed.hooks[event];
+      expect(entries).toHaveLength(1);
+      expect(entries[0].matcher).toBe("");
+      expect(entries[0].hooks).toBeInstanceOf(Array);
+      expect(entries[0].hooks[0].type).toBe("http");
+      expect(entries[0].hooks[0].url).toContain(`event=${event}`);
+    }
   });
 
   it("preserves third-party top-level keys", async () => {
@@ -104,33 +155,95 @@ describe("addLoomscopeHooks", () => {
     expect(parsed.cleanupPeriodDays).toBe(30);
   });
 
-  it("preserves third-party hook entries on the same event names", async () => {
+  it("preserves third-party matcher entries on the same event names", async () => {
     await fs.writeFile(
       settingsFile,
       JSON.stringify({
         hooks: {
-          PreToolUse: [{ type: "command", command: "echo external" }],
+          PreToolUse: [
+            {
+              matcher: "Bash",
+              hooks: [{ type: "command", command: "echo external" }],
+            },
+          ],
         },
       }),
     );
     await addLoomscopeHooks(PORT);
     const raw = await fs.readFile(settingsFile, "utf8");
     const parsed = JSON.parse(raw) as {
-      hooks: { PreToolUse: Array<{ type: string }> };
+      hooks: {
+        PreToolUse: Array<{
+          matcher: string;
+          hooks: Array<{ type: string; command?: string; url?: string }>;
+        }>;
+      };
     };
     expect(parsed.hooks.PreToolUse).toHaveLength(2);
-    expect(parsed.hooks.PreToolUse.some((e) => e.type === "command")).toBe(true);
-    expect(parsed.hooks.PreToolUse.some((e) => e.type === "http")).toBe(true);
+    // Third-party kept verbatim.
+    const thirdParty = parsed.hooks.PreToolUse.find((e) => e.matcher === "Bash");
+    expect(thirdParty?.hooks[0].command).toBe("echo external");
+    // Loomscope's new entry sits alongside.
+    const ours = parsed.hooks.PreToolUse.find(
+      (e) => e.hooks[0].type === "http" && e.hooks[0].url?.includes("/api/cc-hook"),
+    );
+    expect(ours).toBeDefined();
   });
 
-  it("idempotent — re-adding doesn't duplicate Loomscope entries", async () => {
+  it("idempotent — re-adding doesn't duplicate Loomscope entries (correct schema)", async () => {
     await addLoomscopeHooks(PORT);
     await addLoomscopeHooks(PORT);
     const raw = await fs.readFile(settingsFile, "utf8");
     const parsed = JSON.parse(raw) as {
-      hooks: { PreToolUse: Array<{ type: string }> };
+      hooks: { PreToolUse: Array<{ matcher: string }> };
     };
     expect(parsed.hooks.PreToolUse).toHaveLength(1);
+  });
+
+  it("MIGRATION: replaces old broken flat-shape entries with new matcher-wrapped shape", async () => {
+    // First v∞.0 PR 3 shipped this broken shape; if the user now
+    // re-runs auto-add, we MUST clean up our own mistake.
+    await fs.writeFile(
+      settingsFile,
+      JSON.stringify({
+        hooks: {
+          PreToolUse: [
+            {
+              type: "http",
+              url: `http://localhost:${PORT}/api/cc-hook?event=PreToolUse`,
+              headers: { "X-Loomscope-Secret": "$LOOMSCOPE_SECRET" },
+            },
+          ],
+          PostToolUse: [
+            {
+              type: "http",
+              url: `http://localhost:${PORT}/api/cc-hook?event=PostToolUse`,
+            },
+            // Third-party old-shape entry that's NOT ours — must
+            // remain untouched even though it's flat-shape.
+            { type: "command", command: "echo other" },
+          ],
+        },
+      }),
+    );
+    await addLoomscopeHooks(PORT);
+    const raw = await fs.readFile(settingsFile, "utf8");
+    const parsed = JSON.parse(raw) as {
+      hooks: Record<
+        string,
+        Array<{ matcher?: string; hooks?: unknown[]; type?: string; command?: string }>
+      >;
+    };
+    // Our PreToolUse entry: cleaned up to new shape, no remaining
+    // broken-shape sibling.
+    expect(parsed.hooks.PreToolUse).toHaveLength(1);
+    expect(parsed.hooks.PreToolUse[0].matcher).toBe("");
+    expect(Array.isArray(parsed.hooks.PreToolUse[0].hooks)).toBe(true);
+    // PostToolUse: third-party flat-shape kept verbatim alongside
+    // our new matcher-wrapped entry.
+    expect(parsed.hooks.PostToolUse).toHaveLength(2);
+    expect(parsed.hooks.PostToolUse.some((e) => e.command === "echo other")).toBe(true);
+    expect(parsed.hooks.PostToolUse.some((e) => e.matcher === "")).toBe(true);
   });
 
   it("refuses to write when existing file is malformed JSON", async () => {
@@ -144,19 +257,30 @@ describe("addLoomscopeHooks", () => {
 });
 
 describe("removeLoomscopeHooks", () => {
-  it("strips Loomscope entries while preserving third-party ones", async () => {
+  it("strips Loomscope entries (both shapes) while preserving third-party ones", async () => {
     await fs.writeFile(
       settingsFile,
       JSON.stringify({
         env: { KEEP: "yes" },
         hooks: {
           PreToolUse: [
-            { type: "command", command: "echo external" },
+            // Third-party (kept)
             {
-              type: "http",
-              url: `http://localhost:${PORT}/api/cc-hook?event=PreToolUse`,
+              matcher: "Bash",
+              hooks: [{ type: "command", command: "echo external" }],
+            },
+            // Ours, new shape (removed)
+            {
+              matcher: "",
+              hooks: [
+                {
+                  type: "http",
+                  url: `http://localhost:${PORT}/api/cc-hook?event=PreToolUse`,
+                },
+              ],
             },
           ],
+          // Old broken shape from PR 3 v1 — also "ours" → removed
           PostToolUse: [
             {
               type: "http",
@@ -173,11 +297,8 @@ describe("removeLoomscopeHooks", () => {
       hooks?: Record<string, unknown[]>;
     };
     expect(parsed.env.KEEP).toBe("yes");
-    // PreToolUse keeps the third-party entry
-    expect(parsed.hooks?.PreToolUse).toEqual([
-      { type: "command", command: "echo external" },
-    ]);
-    // PostToolUse had only ours → removed entirely
+    expect(parsed.hooks?.PreToolUse).toHaveLength(1);
+    // PostToolUse had only the broken-shape ours → cleaned up
     expect(parsed.hooks?.PostToolUse).toBeUndefined();
   });
 
@@ -207,15 +328,27 @@ describe("removeLoomscopeHooks", () => {
 });
 
 describe("buildPasteableSnippet", () => {
-  it("produces a valid JSON snippet covering all 11 events", () => {
+  it("produces a valid CC-shaped JSON snippet covering all 11 events", () => {
     const snippet = buildPasteableSnippet(PORT);
     const parsed = JSON.parse(snippet) as {
-      hooks: Record<string, Array<{ url: string }>>;
+      hooks: Record<
+        string,
+        Array<{
+          matcher: string;
+          hooks: Array<{ type: string; url: string; headers?: Record<string, string> }>;
+        }>
+      >;
     };
     expect(Object.keys(parsed.hooks).sort()).toEqual([...HOOK_EVENTS_LIST].sort());
     for (const event of HOOK_EVENTS_LIST) {
-      expect(parsed.hooks[event][0].url).toContain(`event=${event}`);
-      expect(parsed.hooks[event][0].url).toContain(`localhost:${PORT}`);
+      const matcherEntry = parsed.hooks[event][0];
+      expect(matcherEntry.matcher).toBe("");
+      expect(matcherEntry.hooks).toHaveLength(1);
+      expect(matcherEntry.hooks[0].url).toContain(`event=${event}`);
+      expect(matcherEntry.hooks[0].url).toContain(`localhost:${PORT}`);
+      expect(matcherEntry.hooks[0].headers?.["X-Loomscope-Secret"]).toBe(
+        "$LOOMSCOPE_SECRET",
+      );
     }
   });
 });
