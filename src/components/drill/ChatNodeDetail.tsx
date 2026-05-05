@@ -10,7 +10,8 @@ import { memo, useMemo } from "react";
 import { MarkdownView } from "@/components/MarkdownView";
 import { JsonView } from "@/components/JsonView";
 import { distinctToolUseFiles, nodeOwnFileChanges } from "@/canvas/layoutDag";
-import type { ChatFlow, ChatNode, LlmCallNode } from "@/data/types";
+import type { ChatFlow, ChatNode, LlmCallNode, WorkFlow } from "@/data/types";
+import { useChatNodeWorkflow } from "@/store/workflowHooks";
 
 interface Props {
   chatNode: ChatNode;
@@ -18,6 +19,10 @@ interface Props {
   // ancestor-snapshot subtraction. Same scope ChatFlow as DrillPanel
   // resolves (top-level or sub-agent).
   chatFlow: ChatFlow;
+  // v0.10 lazy ChatFlow B4: passed through to useChatNodeWorkflow so
+  // the panel can lazy-fetch this ChatNode's workflow.nodes when it
+  // arrived as a lite stub.
+  sessionId: string;
 }
 
 // Memoized — selection switches happen frequently (every canvas
@@ -25,18 +30,46 @@ interface Props {
 // full re-render when ChatNode identity hasn't changed.
 export const ChatNodeDetail = memo(
   ChatNodeDetailImpl,
-  (a, b) => a.chatNode === b.chatNode && a.chatFlow === b.chatFlow,
+  (a, b) =>
+    a.chatNode === b.chatNode &&
+    a.chatFlow === b.chatFlow &&
+    a.sessionId === b.sessionId,
 );
 
-function ChatNodeDetailImpl({ chatNode, chatFlow }: Props) {
+function ChatNodeDetailImpl({ chatNode, chatFlow, sessionId }: Props) {
   const userText = useMemo(() => extractText(chatNode.userMessage.content), [chatNode]);
-  const lastLlm = useMemo(() => findLastLlmCall(chatNode), [chatNode]);
-  const llmCount = chatNode.workflow.nodes.filter((n) => n.kind === "llm_call").length;
-  const toolCount = chatNode.workflow.nodes.filter(
-    (n) => n.kind === "tool_call" || n.kind === "delegate",
-  ).length;
-  const compactCount = chatNode.workflow.nodes.filter((n) => n.kind === "compact").length;
-  const attachCount = chatNode.workflow.nodes.filter((n) => n.kind === "attachment").length;
+
+  // v0.10 lazy ChatFlow B4: workflow.nodes may not be loaded yet (lite
+  // ChatFlow ships them empty). The hook fires the fetch and returns
+  // status; counts come from summary so the overview section never
+  // blocks on lazy load. Only the assistant-reply body waits for
+  // ready.
+  const access = useChatNodeWorkflow(sessionId, chatNode);
+  const lastLlm = useMemo(() => {
+    if (!access.workflow) return null;
+    return findLastLlmCallInWorkflow(access.workflow);
+  }, [access.workflow]);
+
+  const summary = chatNode.workflow.summary;
+  // Counts read from summary when present (always true for top-level
+  // lite responses) so the overview surfaces immediately. Fall back
+  // to walking nodes for hand-built test fixtures + sub-agent
+  // ChatNodes (their nodes ship inline).
+  const llmCount =
+    summary?.llmCount ??
+    chatNode.workflow.nodes.filter((n) => n.kind === "llm_call").length;
+  const toolCount =
+    summary?.toolCount ??
+    chatNode.workflow.nodes.filter(
+      (n) => n.kind === "tool_call" || n.kind === "delegate",
+    ).length;
+  // compact / attachment counts aren't on summary (canvas card doesn't
+  // render them); when workflow is lazy-loaded we pull from the
+  // post-load nodes, otherwise defer to inline.
+  const nodesForExtraCounts = access.workflow?.nodes ?? chatNode.workflow.nodes;
+  const compactCount = nodesForExtraCounts.filter((n) => n.kind === "compact").length;
+  const attachCount = nodesForExtraCounts.filter((n) => n.kind === "attachment").length;
+  const totalNodes = llmCount + toolCount + compactCount + attachCount;
 
   return (
     <div data-testid="chat-node-detail" className="flex flex-col gap-3">
@@ -65,7 +98,18 @@ function ChatNodeDetailImpl({ chatNode, chatFlow }: Props) {
       </Section>
 
       <Section title="助手末次回复">
-        {lastLlm ? (
+        {access.status === "pending" ? (
+          <div
+            data-testid="assistant-reply-loading"
+            className="text-[11px] italic text-gray-400"
+          >
+            正在加载…
+          </div>
+        ) : access.status === "error" ? (
+          <div className="text-[11px] italic text-rose-600">
+            加载失败: {access.error}
+          </div>
+        ) : lastLlm ? (
           <AssistantReply node={lastLlm} />
         ) : (
           <div className="text-[11px] italic text-gray-400">(无 assistant 回复)</div>
@@ -78,7 +122,7 @@ function ChatNodeDetailImpl({ chatNode, chatFlow }: Props) {
           <li>tool_call + delegate: {toolCount}</li>
           {compactCount > 0 && <li>compact: {compactCount}</li>}
           {attachCount > 0 && <li>attachment: {attachCount}</li>}
-          <li className="text-gray-400">total: {chatNode.workflow.nodes.length}</li>
+          <li className="text-gray-400">total: {totalNodes}</li>
         </ul>
         <div className="mt-1 text-[10px] text-gray-400">
           点 ChatNode 上的「⤢ 进入工作流」查看 WorkFlow 详情
@@ -171,8 +215,10 @@ function extractText(content: unknown): string | null {
   return null;
 }
 
-function findLastLlmCall(cn: ChatNode): LlmCallNode | null {
-  const llms = cn.workflow.nodes.filter((n): n is LlmCallNode => n.kind === "llm_call");
+function findLastLlmCallInWorkflow(workflow: WorkFlow): LlmCallNode | null {
+  const llms = workflow.nodes.filter(
+    (n): n is LlmCallNode => n.kind === "llm_call",
+  );
   return llms.length > 0 ? llms[llms.length - 1] : null;
 }
 

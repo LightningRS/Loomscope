@@ -39,6 +39,7 @@ import { CompactCard } from "@/canvas/nodes/worknodes/CompactCard";
 import { AttachmentCard } from "@/canvas/nodes/worknodes/AttachmentCard";
 import type { ChatNode } from "@/data/types";
 import { useStore } from "@/store/index";
+import { useChatNodeWorkflow } from "@/store/workflowHooks";
 
 const nodeTypes: NodeTypes = {
   llm_call: LlmCallCard,
@@ -71,7 +72,23 @@ export function WorkFlowCanvas(props: WorkFlowCanvasProps) {
 }
 
 function CanvasInner({ chatNode, sessionId }: WorkFlowCanvasProps) {
-  const { nodes, edges } = useMemo(() => layoutWorkFlow(chatNode), [chatNode]);
+  // v0.10 lazy ChatFlow B4: workflow.nodes may be empty for top-level
+  // ChatNodes (lite ChatFlow strips them). Hook fires the fetch and
+  // gives us a ready WorkFlow once it lands. Sub-agent ChatNodes ship
+  // workflow inline, so the hook resolves to ready synchronously.
+  const access = useChatNodeWorkflow(sessionId, chatNode);
+  // Layout off the ready workflow when present; otherwise use the
+  // (possibly empty) inline workflow. layoutWorkFlow on an empty
+  // workflow returns empty nodes/edges, which is exactly what we
+  // want to render during pending state.
+  const layoutChatNode = useMemo(() => {
+    if (access.workflow) return { ...chatNode, workflow: access.workflow };
+    return chatNode;
+  }, [chatNode, access.workflow]);
+  const { nodes, edges } = useMemo(
+    () => layoutWorkFlow(layoutChatNode),
+    [layoutChatNode],
+  );
   const setSelected = useStore((s) => s.setWorkflowSelected);
   const enterSubWorkflow = useStore((s) => s.enterSubWorkflow);
 
@@ -127,6 +144,33 @@ function CanvasInner({ chatNode, sessionId }: WorkFlowCanvasProps) {
     fittedRef.current = chatNode.id;
   }, [chatNode.id, firstNodeMeasured, rf]);
 
+  // v0.10 lazy ChatFlow B4: pending → loading overlay; error → error
+  // hint. Distinguish from "genuinely empty WorkFlow" via `access.status`.
+  if (access.status === "pending") {
+    return (
+      <div
+        data-testid="workflow-canvas-loading"
+        className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-gray-400"
+      >
+        <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-teal-500" />
+        <div className="text-sm">加载 WorkFlow…</div>
+      </div>
+    );
+  }
+  if (access.status === "error") {
+    return (
+      <div
+        data-testid="workflow-canvas-error"
+        className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-rose-600"
+      >
+        <span className="text-3xl">✗</span>
+        <div className="text-sm">WorkFlow 加载失败</div>
+        <code className="text-[11px] bg-rose-50 border border-rose-200 px-2 py-1 rounded font-mono max-w-[480px] break-words">
+          {access.error}
+        </code>
+      </div>
+    );
+  }
   if (nodes.length === 0) {
     return (
       <div

@@ -54,7 +54,7 @@ describe("ChatNodeDetail", () => {
     const cn = makeChatNode({
       userMessage: { uuid: "u1", content: "hello **world**", attachments: [] },
     });
-    const { container } = render(<ChatNodeDetail chatNode={cn} chatFlow={flowFor(cn)} />);
+    const { container } = render(<ChatNodeDetail sessionId="test-sid" chatNode={cn} chatFlow={flowFor(cn)} />);
     expect(container.querySelector("strong")?.textContent).toBe("world");
   });
 
@@ -62,7 +62,7 @@ describe("ChatNodeDetail", () => {
     const cn = makeChatNode({
       userMessage: { uuid: "u1", content: { weird: "shape" }, attachments: [] },
     });
-    render(<ChatNodeDetail chatNode={cn} chatFlow={flowFor(cn)} />);
+    render(<ChatNodeDetail sessionId="test-sid" chatNode={cn} chatFlow={flowFor(cn)} />);
     expect(screen.getByTestId("json-view")).toBeTruthy();
   });
 
@@ -88,7 +88,7 @@ describe("ChatNodeDetail", () => {
         edges: [],
       },
     });
-    render(<ChatNodeDetail chatNode={cn} chatFlow={flowFor(cn)} />);
+    render(<ChatNodeDetail sessionId="test-sid" chatNode={cn} chatFlow={flowFor(cn)} />);
     expect(screen.getByText("final answer")).toBeTruthy();
   });
 
@@ -103,7 +103,7 @@ describe("ChatNodeDetail", () => {
         edges: [],
       },
     });
-    const { container } = render(<ChatNodeDetail chatNode={cn} chatFlow={flowFor(cn)} />);
+    const { container } = render(<ChatNodeDetail sessionId="test-sid" chatNode={cn} chatFlow={flowFor(cn)} />);
     expect(container.textContent).toMatch(/llm_call: 1/);
     expect(container.textContent).toMatch(/tool_call \+ delegate: 2/);
   });
@@ -112,7 +112,7 @@ describe("ChatNodeDetail", () => {
     const cn = makeChatNode({
       slashCommand: { name: "/model", args: undefined, stdout: "Set model to Opus" },
     });
-    const { container } = render(<ChatNodeDetail chatNode={cn} chatFlow={flowFor(cn)} />);
+    const { container } = render(<ChatNodeDetail sessionId="test-sid" chatNode={cn} chatFlow={flowFor(cn)} />);
     expect(container.textContent).toMatch(/\/model/);
     expect(container.textContent).toMatch(/Set model to Opus/);
   });
@@ -126,7 +126,7 @@ describe("ChatNodeDetail", () => {
       },
     });
     const { container } = render(
-      <ChatNodeDetail chatNode={cn} chatFlow={flowFor(cn)} />,
+      <ChatNodeDetail sessionId="test-sid" chatNode={cn} chatFlow={flowFor(cn)} />,
     );
     expect(container.textContent).toMatch(/本轮累积文件改动/);
   });
@@ -154,7 +154,7 @@ describe("ChatNodeDetail", () => {
         ],
       },
     });
-    render(<ChatNodeDetail chatNode={child} chatFlow={flowFor(parent, child)} />);
+    render(<ChatNodeDetail sessionId="test-sid" chatNode={child} chatFlow={flowFor(parent, child)} />);
     // newfile.ts is the only path attributable to THIS node.
     expect(screen.getByTestId("nofc-row-newfile.ts")).toBeTruthy();
     expect(screen.queryByTestId("nofc-row-a.ts")).toBeNull();
@@ -179,7 +179,7 @@ describe("ChatNodeDetail", () => {
         ],
       },
     });
-    render(<ChatNodeDetail chatNode={child} chatFlow={flowFor(parent, child)} />);
+    render(<ChatNodeDetail sessionId="test-sid" chatNode={child} chatFlow={flowFor(parent, child)} />);
     expect(screen.queryByTestId("node-own-file-changes")).toBeNull();
   });
 
@@ -202,7 +202,7 @@ describe("ChatNodeDetail", () => {
         ],
       },
     });
-    render(<ChatNodeDetail chatNode={cn} chatFlow={flowFor(cn)} />);
+    render(<ChatNodeDetail sessionId="test-sid" chatNode={cn} chatFlow={flowFor(cn)} />);
     expect(screen.getByTestId("fh-row-docs/devlog.md")).toBeTruthy();
     expect(screen.getByTestId("fh-row-src/A.ts")).toBeTruthy();
     expect(screen.getByTestId("fh-row-src/B.ts")).toBeTruthy();
@@ -221,7 +221,7 @@ describe("ChatNodeDetail", () => {
         ],
       },
     });
-    render(<ChatNodeDetail chatNode={cn} chatFlow={flowFor(cn)} />);
+    render(<ChatNodeDetail sessionId="test-sid" chatNode={cn} chatFlow={flowFor(cn)} />);
     const fresh = screen.getByTestId("fh-row-src/A.ts");
     const stale = screen.getByTestId("fh-row-stale-only.ts");
     // Path text cell = first child div in the grid row
@@ -231,7 +231,7 @@ describe("ChatNodeDetail", () => {
 
   it("hides the section when neither snapshots nor tool_use file paths exist", () => {
     const cn = makeChatNode({});
-    render(<ChatNodeDetail chatNode={cn} chatFlow={flowFor(cn)} />);
+    render(<ChatNodeDetail sessionId="test-sid" chatNode={cn} chatFlow={flowFor(cn)} />);
     expect(screen.queryByTestId("file-history-snapshot-list")).toBeNull();
   });
 
@@ -257,7 +257,7 @@ describe("ChatNodeDetail", () => {
         ],
       },
     });
-    render(<ChatNodeDetail chatNode={cn} chatFlow={flowFor(cn)} />);
+    render(<ChatNodeDetail sessionId="test-sid" chatNode={cn} chatFlow={flowFor(cn)} />);
     const row = screen.getByTestId("fh-row-src/A.ts");
     expect(row.className).not.toMatch(/text-amber-700/);
     expect(screen.getByTestId("fh-src/A.ts-snap").textContent).toBe("✓");
@@ -277,7 +277,7 @@ describe("ChatNodeDetail", () => {
         ],
       },
     });
-    render(<ChatNodeDetail chatNode={cn} chatFlow={flowFor(cn)} />);
+    render(<ChatNodeDetail sessionId="test-sid" chatNode={cn} chatFlow={flowFor(cn)} />);
     const row = screen.getByTestId("fh-row-docs/devlog.md");
     expect(row.className).toMatch(/text-amber-700/);
     expect(screen.getByTestId("fh-docs/devlog.md-snap").textContent).toBe("📸");
@@ -299,7 +299,7 @@ describe("ChatNodeDetail", () => {
         edges: [],
       },
     });
-    render(<ChatNodeDetail chatNode={cn} chatFlow={flowFor(cn)} />);
+    render(<ChatNodeDetail sessionId="test-sid" chatNode={cn} chatFlow={flowFor(cn)} />);
     const row = screen.getByTestId("fh-row-.env.local");
     expect(row.className).toMatch(/text-amber-700/);
     expect(screen.getByTestId("fh-.env.local-snap").textContent).toBe("—");
@@ -349,7 +349,7 @@ describe("ChatNodeDetail", () => {
         edges: [],
       },
     });
-    render(<ChatNodeDetail chatNode={cn} chatFlow={flowFor(cn)} />);
+    render(<ChatNodeDetail sessionId="test-sid" chatNode={cn} chatFlow={flowFor(cn)} />);
     expect(screen.getByTestId("fh-row-edit.ts")).toBeTruthy();
     expect(screen.getByTestId("fh-row-write.ts")).toBeTruthy();
     expect(screen.getByTestId("fh-row-multi.ts")).toBeTruthy();

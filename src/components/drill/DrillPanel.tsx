@@ -303,6 +303,23 @@ function DetailTabContent({
     (s) => s.sessions.get(sessionId)?.workflowSelectedNodeId ?? null,
   );
 
+  // v0.10 lazy ChatFlow B4: when drilledChatNode came via the lite
+  // endpoint (top-level chatflow), its workflow.nodes is empty until
+  // the lazy fetch completes. WorkFlowCanvas mounts in parallel and
+  // triggers the same fetch via its own hook — they share the cache,
+  // so once any one of them lands the result, all consumers
+  // re-render. Subscribe here too so WorkNode resolution finds the
+  // selectedWorkId once nodes land.
+  const drilledWorkflowCache = useStore((s) =>
+    drilledChatNode
+      ? s.sessions.get(sessionId)?.workflowCache.get(drilledChatNode.id) ?? null
+      : null,
+  );
+  const drilledWorkflowNodes =
+    drilledWorkflowCache?.status === "ready" && drilledWorkflowCache.workflow
+      ? drilledWorkflowCache.workflow.nodes
+      : drilledChatNode?.workflow.nodes ?? [];
+
   // Resolve the currently focused node based on viewMode + selection.
   // chatflow + sub-chatflow both surface ChatNodeDetail; workflow
   // surfaces WorkNodeDetail. ``chatFlow`` here is the *scope*
@@ -317,15 +334,26 @@ function DetailTabContent({
     }
     if (!drilledChatNode) return { kind: "empty" as const };
     const wn = selectedWorkId
-      ? drilledChatNode.workflow.nodes.find((n) => n.id === selectedWorkId) ?? null
+      ? drilledWorkflowNodes.find((n) => n.id === selectedWorkId) ?? null
       : null;
     return { kind: "worknode" as const, workNode: wn };
-  }, [viewMode, selectedChatId, selectedWorkId, chatFlow, drilledChatNode]);
+  }, [
+    viewMode,
+    selectedChatId,
+    selectedWorkId,
+    chatFlow,
+    drilledChatNode,
+    drilledWorkflowNodes,
+  ]);
 
   return (
     <>
       {focused.kind === "chatnode" && focused.chatNode && (
-        <ChatNodeDetail chatNode={focused.chatNode} chatFlow={chatFlow} />
+        <ChatNodeDetail
+          chatNode={focused.chatNode}
+          chatFlow={chatFlow}
+          sessionId={sessionId}
+        />
       )}
       {focused.kind === "chatnode" && !focused.chatNode && (
         <EmptyHint label="点 ChatNode 查看详情" />
