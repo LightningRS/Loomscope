@@ -18,10 +18,19 @@ import { streamSSE } from "hono/streaming";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 
-import { buildChatFlow, parseJsonlFile } from "@/parse/jsonl";
+import {
+  buildChatFlow,
+  parseJsonlFile,
+  parseJsonlFileIncremental,
+} from "@/parse/jsonl";
 import { parseLine, type RawRecord } from "@/parse/raw-record";
 import { SidecarLoader, type AgentMetadata } from "@/parse/sidecar";
-import { getOrLoad as getOrLoadCachedChatFlow } from "@/server/services/chatFlowCache";
+import {
+  clearStashedState,
+  getOrLoad as getOrLoadCachedChatFlow,
+  getStashedState,
+  setStashedState,
+} from "@/server/services/chatFlowCache";
 import { findForkClosure, type ClosureMember } from "@/server/services/forkTree";
 import {
   sidecarSubagentsDir,
@@ -478,11 +487,26 @@ async function loadMergedChatFlow(args: {
   // or exactly [entry] with no other members. Still go through merge
   // path so linkedSessions / customTitle handling stays uniform.
   if (closure.length <= 1) {
-    const result = await parseJsonlFile(entryJsonlPath);
-    // linkedSessions stays undefined when the session has no fork
-    // relations — signals "single-session, not a merge product."
-    return result.chatFlow;
+    // v0.10 收尾 / v0.11 prep: incremental parse for the
+    // single-jsonl path. The state stash lives in chatFlowCache and
+    // survives LRU invalidation (LRU is keyed by mtime, the stash is
+    // keyed by sessionId), so an SSE-triggered re-parse picks up the
+    // stash and only reads the appended bytes. usedIncremental=false
+    // covers first visit / file shrunk / read race — all silently
+    // fall back to full parse.
+    const prevState = getStashedState(entrySessionId);
+    const r = await parseJsonlFileIncremental(entryJsonlPath, prevState);
+    setStashedState(entrySessionId, r.state);
+    return r.chatFlow;
   }
+  // Multi-jsonl fork closure: incremental can't help here — the
+  // merged record stream depends on dedupe order across closure
+  // members and any one of them appending changes the merge. Drop the
+  // stash so when this session later reverts to a closure ≤ 1 read
+  // (rare — only if a fork sibling jsonl gets deleted) we don't
+  // resurrect a state that mismatches the current single-jsonl
+  // truth. Will revisit when the v∞.3 fork composer ships.
+  clearStashedState(entrySessionId);
   // Read all closure jsonls' records in BFS order (entry first).
   const recordsByMember: Array<{ sessionId: string; records: RawRecord[] }> = [];
   for (const m of closure) {

@@ -652,3 +652,136 @@ describe("CORS middleware", () => {
     expect(res.status).toBe(200);
   });
 });
+
+// v0.10 收尾 / v0.11 prep: incremental parser through the route layer.
+// Verifies that an SSE-equivalent re-parse (= LRU miss after the file
+// grew) goes through the per-session state stash so we don't re-read
+// the entire jsonl. Hermetic — _resetForTests clears both LRU and
+// stash so the assertions don't leak across cases.
+describe("GET /api/sessions/:id — incremental parse on append", () => {
+  let _resetCache: () => void;
+  let _peekStash: () => string[];
+  beforeEach(async () => {
+    const mod = await import("@/server/services/chatFlowCache");
+    _resetCache = mod._resetForTests;
+    _peekStash = mod._peekStashKeysForTests;
+    _resetCache();
+  });
+
+  it("populates the per-session state stash on first parse, reuses it after append", async () => {
+    const projectDir = path.join(tmpRoot, "-home-user-INCR");
+    const sid = "44444444-4444-4000-8000-000000000004";
+    const filePath = path.join(projectDir, `${sid}.jsonl`);
+    await writeJsonl(filePath, [
+      {
+        type: "user",
+        uuid: "u1",
+        sessionId: sid,
+        promptId: "p1",
+        cwd: "/home/user/INCR",
+        message: { role: "user", content: "first" },
+        timestamp: "2026-05-08T00:00:00.000Z",
+      },
+      {
+        type: "assistant",
+        uuid: "a1",
+        parentUuid: "u1",
+        sessionId: sid,
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "ok" }],
+          stop_reason: "end_turn",
+        },
+        timestamp: "2026-05-08T00:00:01.000Z",
+      },
+    ]);
+
+    // First request — full parse, state stash populated.
+    const r1 = await app.request(`/api/sessions/${sid}`);
+    expect(r1.status).toBe(200);
+    const b1 = (await r1.json()) as { chatNodes: unknown[] };
+    expect(b1.chatNodes.length).toBe(1);
+    expect(_peekStash()).toContain(sid);
+
+    // Append a second turn. Bumping mtime so LRU misses + stash is
+    // consulted.
+    await new Promise((res) => setTimeout(res, 10));
+    await fs.appendFile(
+      filePath,
+      [
+        {
+          type: "user",
+          uuid: "u2",
+          parentUuid: "a1",
+          sessionId: sid,
+          promptId: "p2",
+          message: { role: "user", content: "second" },
+          timestamp: "2026-05-08T00:00:02.000Z",
+        },
+        {
+          type: "assistant",
+          uuid: "a2",
+          parentUuid: "u2",
+          sessionId: sid,
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "ok2" }],
+            stop_reason: "end_turn",
+          },
+          timestamp: "2026-05-08T00:00:03.000Z",
+        },
+      ]
+        .map((l) => JSON.stringify(l))
+        .join("\n") + "\n",
+    );
+
+    const r2 = await app.request(`/api/sessions/${sid}`);
+    expect(r2.status).toBe(200);
+    const b2 = (await r2.json()) as { chatNodes: Array<{ id: string }> };
+    expect(b2.chatNodes.length).toBe(2);
+    // The stash now reflects the larger file.
+    expect(_peekStash()).toContain(sid);
+  });
+
+  it("file shrunk (truncation/rewrite) → stash falls back to full parse on the next request", async () => {
+    const projectDir = path.join(tmpRoot, "-home-user-INCR2");
+    const sid = "55555555-5555-4000-8000-000000000005";
+    const filePath = path.join(projectDir, `${sid}.jsonl`);
+    // Large initial file.
+    await writeJsonl(
+      filePath,
+      Array.from({ length: 6 }, (_, i) => ({
+        type: "user",
+        uuid: `u${i}`,
+        sessionId: sid,
+        promptId: `p${i}`,
+        cwd: "/home/user/INCR2",
+        message: { role: "user", content: `msg ${i}` },
+        timestamp: `2026-05-08T00:00:${String(i).padStart(2, "0")}.000Z`,
+      })),
+    );
+    const r1 = await app.request(`/api/sessions/${sid}`);
+    expect(r1.status).toBe(200);
+    const b1 = (await r1.json()) as { chatNodes: unknown[] };
+    expect(b1.chatNodes.length).toBe(6);
+
+    // Replace file with strictly smaller content (rewrite). Incremental
+    // would diverge from truth — it should fall back to a full parse.
+    await new Promise((res) => setTimeout(res, 10));
+    await writeJsonl(filePath, [
+      {
+        type: "user",
+        uuid: "only",
+        sessionId: sid,
+        promptId: "only",
+        cwd: "/home/user/INCR2",
+        message: { role: "user", content: "smaller" },
+        timestamp: "2026-05-08T00:01:00.000Z",
+      },
+    ]);
+    const r2 = await app.request(`/api/sessions/${sid}`);
+    expect(r2.status).toBe(200);
+    const b2 = (await r2.json()) as { chatNodes: Array<{ id: string }> };
+    expect(b2.chatNodes.length).toBe(1);
+  });
+});

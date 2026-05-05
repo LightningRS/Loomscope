@@ -7,13 +7,18 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { ChatFlow } from "@/data/types";
+import type { IncrementalParseState } from "@/parse/jsonl";
 import {
   _peekKeysForTests,
+  _peekStashKeysForTests,
   _resetForTests,
   buildCacheKey,
+  clearStashedState,
   getCached,
   getOrLoad,
+  getStashedState,
   setCached,
+  setStashedState,
 } from "@/server/services/chatFlowCache";
 
 function makeChatFlow(id: string): ChatFlow {
@@ -186,5 +191,59 @@ describe("getOrLoad", () => {
     expect(loadCount).toBe(2);
     // Two different cached entries co-exist briefly until LRU eviction.
     expect(r2.chatFlow).not.toBe(r1.chatFlow);
+  });
+});
+
+describe("incremental parse state stash (M1)", () => {
+  function makeState(records: number): IncrementalParseState {
+    return {
+      records: Array.from({ length: records }, (_, i) => ({
+        type: "user",
+        uuid: `u-${i}`,
+      })) as unknown as IncrementalParseState["records"],
+      parseFailures: 0,
+      byteSize: 100 * records,
+      mtimeMs: 1,
+      pendingFragment: "",
+    };
+  }
+
+  it("stash returns undefined on first read", () => {
+    expect(getStashedState("x")).toBeUndefined();
+  });
+
+  it("setStashedState round-trips through getStashedState", () => {
+    const s = makeState(3);
+    setStashedState("x", s);
+    expect(getStashedState("x")).toBe(s);
+  });
+
+  it("clearStashedState removes the entry", () => {
+    setStashedState("x", makeState(1));
+    expect(getStashedState("x")).toBeDefined();
+    clearStashedState("x");
+    expect(getStashedState("x")).toBeUndefined();
+  });
+
+  it("_resetForTests clears both LRU and stash", () => {
+    setCached("k1", makeChatFlow("a"));
+    setStashedState("x", makeState(1));
+    expect(_peekKeysForTests().length).toBe(1);
+    expect(_peekStashKeysForTests().length).toBe(1);
+    _resetForTests();
+    expect(_peekKeysForTests().length).toBe(0);
+    expect(_peekStashKeysForTests().length).toBe(0);
+  });
+
+  it("multiple sessions get independent stash slots", () => {
+    const a = makeState(1);
+    const b = makeState(2);
+    setStashedState("a", a);
+    setStashedState("b", b);
+    expect(getStashedState("a")).toBe(a);
+    expect(getStashedState("b")).toBe(b);
+    clearStashedState("a");
+    expect(getStashedState("a")).toBeUndefined();
+    expect(getStashedState("b")).toBe(b);
   });
 });

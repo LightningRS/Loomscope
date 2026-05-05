@@ -26,6 +26,7 @@
 import { promises as fs } from "node:fs";
 
 import type { ChatFlow } from "@/data/types";
+import type { IncrementalParseState } from "@/parse/jsonl";
 import type { ClosureMember } from "@/server/services/forkTree";
 
 const MAX_ENTRIES = 8;
@@ -35,13 +36,66 @@ const MAX_ENTRIES = 8;
 // to the end.
 const cache = new Map<string, ChatFlow>();
 
+// v0.10 收尾 / v0.11 prep: per-session incremental-parse state stash.
+// Independent from the LRU above — LRU is keyed by full closure mtime
+// signature so any append produces a cache miss; the stash survives
+// that miss so the next loader call can reuse the prior records[]
+// instead of re-reading the whole jsonl.
+//
+// Keyed by sessionId only (not by entry jsonl path or closure
+// signature). Multiple closures pointing at the same sessionId would
+// collide, but the only path that calls into the stash is the
+// closure ≤ 1 (single-jsonl) case in `loadMergedChatFlow`, so
+// closure-signature collisions don't matter in practice.
+//
+// `invalidateSession` does NOT touch the stash — that's the whole
+// point. The stash represents what we knew at byteSize N; the next
+// reader picks it up and reads [N, current size).
+//
+// 中: 增量 parse state 旁路 stash，跟 LRU 解耦。LRU 因为 mtime 进 key
+// append 必 miss；stash 不参与 key，下一次 loader 直接拿来当 prevState
+// 喂给 parseJsonlFileIncremental，省掉重读老内容。
+const stateStash = new Map<string, IncrementalParseState>();
+
 // Public for tests; production callers should go through getOrLoad.
 export function _resetForTests(): void {
   cache.clear();
+  stateStash.clear();
 }
 
 export function _peekKeysForTests(): string[] {
   return [...cache.keys()];
+}
+
+export function _peekStashKeysForTests(): string[] {
+  return [...stateStash.keys()];
+}
+
+/** v0.10 收尾: read the stashed incremental-parse state for `sessionId`,
+ * if any. Caller is expected to feed it into
+ * `parseJsonlFileIncremental` and call `setStashedState` with the
+ * fresh state on success. Returns undefined when no stash exists
+ * (first visit / cache reset / cleared by `clearStashedState`). */
+export function getStashedState(
+  sessionId: string,
+): IncrementalParseState | undefined {
+  return stateStash.get(sessionId);
+}
+
+/** v0.10 收尾: replace the stashed state for `sessionId`. */
+export function setStashedState(
+  sessionId: string,
+  state: IncrementalParseState,
+): void {
+  stateStash.set(sessionId, state);
+}
+
+/** v0.10 收尾: drop the stashed state for `sessionId`. Called when the
+ * loader can't produce a state worth keeping — e.g. a closure-merge
+ * (>1 jsonl) ChatFlow whose records[] doesn't correspond to a single
+ * jsonl's tail. Force-fall-back-to-full on the next call. */
+export function clearStashedState(sessionId: string): void {
+  stateStash.delete(sessionId);
 }
 
 /**
