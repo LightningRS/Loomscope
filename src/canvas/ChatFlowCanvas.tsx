@@ -224,30 +224,28 @@ function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasIn
   }, [rawEdges, sessionLive, latestRunningId]);
   const setSelected = useStore((s) => s.setSelected);
   const conversationScroll = useConversationScrollShim();
+  const hoverScrollReleaseRef = useRef<(() => void) | null>(null);
   const onNodeClick = useCallback(
     (_e: unknown, node: { id: string }) => {
-      // chatFold phantoms aren't real ChatNodes — skip selection so
-      // DrillPanel doesn't try to look up a non-existent ChatNode by
-      // the phantom id. The card itself stops propagation on click,
-      // but defense-in-depth here covers keyboard activation paths.
       if (isChatFoldId(node.id)) return;
+      // Click → drop any in-flight hover preview WITHOUT restoring,
+      // so the click's persistent scroll wins.
+      hoverScrollReleaseRef.current = null;
       setSelected(sessionId, node.id);
-      // Click → conversation scrolls to the matching bubble. Done
-      // explicitly here in addition to the selectedId-driven effect
-      // in ConversationView so the smooth-scroll behaviour is
-      // predictable on direct user action (the effect path uses
-      // 'auto' on selection change to avoid jumpiness across drill
-      // round-trips).
-      conversationScroll(node.id, { smooth: true });
+      conversationScroll(node.id, { smooth: true, mode: "click" });
     },
     [setSelected, sessionId, conversationScroll],
   );
 
-  // v0.9.1: hover dwell on a ChatNode card → conversation scrolls.
-  // Mirrors ConversationView's 250ms hover-pan dwell so the two
-  // directions feel symmetric. Single timer per canvas (the cursor
-  // can only hover one node at a time); mouseLeave on any node
-  // clears the pending fire.
+  // EN (v0.9.1): canvas hover-dwell on a ChatNode → conversation
+  // scrolls to the matching bubble as a TRANSIENT preview. Stash
+  // the release so onMouseLeave can restore the previous scroll
+  // position; without this, brushing the cursor over a card
+  // permanently jumps the conversation panel and feels like
+  // misclicking. 250ms dwell mirrors ConversationView's hover-pan.
+  // 中: canvas hover 250ms 停留 → conversation scroll 到对应 bubble
+  // 作临时预览。stash 返回的 release，mouseLeave 时调它恢复滚动位置，
+  // 避免误触把 conversation 永久滚走。
   const hoverTimerRef = useRef<number | null>(null);
   const onNodeMouseEnter = useCallback(
     (_e: unknown, node: { id: string }) => {
@@ -257,7 +255,14 @@ function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasIn
       }
       hoverTimerRef.current = window.setTimeout(() => {
         hoverTimerRef.current = null;
-        conversationScroll(node.id, { smooth: true });
+        // Release any prior preview before kicking off this one.
+        hoverScrollReleaseRef.current?.();
+        const release = conversationScroll(node.id, {
+          smooth: true,
+          mode: "hover",
+        });
+        hoverScrollReleaseRef.current =
+          typeof release === "function" ? release : null;
       }, 250);
     },
     [conversationScroll],
@@ -267,6 +272,8 @@ function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasIn
       window.clearTimeout(hoverTimerRef.current);
       hoverTimerRef.current = null;
     }
+    hoverScrollReleaseRef.current?.();
+    hoverScrollReleaseRef.current = null;
   }, []);
   // Cleanup on unmount so a half-fired timer doesn't reach a stale
   // shim after canvas remount.
@@ -426,7 +433,7 @@ function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasIn
   const pendingPanRef = useRef<string | null>(null);
   useEffect(() => {
     if (!panCtx) return;
-    panCtx.ref.current = (targetId: string) => {
+    panCtx.ref.current = (targetId, mode = "click") => {
       const cur = useStore.getState().sessions.get(sessionId);
       if (!cur || !cur.chatFlow) return;
       const chain = computeUnfoldChainTo(
@@ -434,32 +441,49 @@ function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasIn
         cur.foldedCompactIds,
         targetId,
       );
-      // EN: persist:false is critical (v0.9.1 fix). Hover-pan is a
-      // TRANSIENT navigation aid — the unfold happens because we need
-      // the target visible for one hover, not because the user said
-      // "I want this compact open forever". Without persist:false,
-      // every compact whose pre-compact range the cursor ever brushed
-      // past gets persisted into `loomscope:unfold:` storage; after a
-      // session of browsing, the user's "default-fold" expectation
-      // looked broken because the unfold list covered everything.
-      // Settled rule: non-user-initiated state changes MUST NOT
-      // pollute persisted preferences.
-      // 中: persist:false 是 v0.9.1 关键修复。hover-pan 是临时导航辅助，
-      // 不是用户偏好。如果不传 persist:false，cursor 路过的所有压缩
-      // 范围都会被悄悄记成"用户已展开"——浏览一会儿之后用户会发现
-      // "默认折叠"看似失效。原则：非用户主动操作不应污染持久化偏好。
+      // EN (v0.9.1): persist:false on every auto-unfold — this is a
+      // navigation aid, not a user preference. Without persist:false
+      // the hover/click rewrite would re-pollute `loomscope:unfold:`
+      // storage on every cursor pass. User-explicit fold/unfold
+      // (chatFold node card, compact node fold-toggle button)
+      // continues to default-persist via opts.persist=true.
+      // 中: 任何自动展开都走 persist:false（不是用户偏好）；用户主动
+      // 点 fold/unfold 才持久。
       for (const host of chain) {
         unfoldAction(sessionId, host, { persist: false });
       }
+      // EN: stash viewport BEFORE pan so the hover release can
+      // restore. Click mode doesn't need stash but capturing it is
+      // cheap; we just don't expose a release for click.
+      // 中: pan 前先 stash viewport；hover release 时恢复。click 模式
+      // 不暴露 release 也无所谓，stash 本身只是读一次 viewport。
+      const stashedViewport = rf.getViewport();
       pendingPanRef.current = targetId;
-      // If no unfold was needed, the next layout commit isn't coming
-      // — pan immediately. Otherwise the [nodes]-effect below picks
-      // it up after layoutChatFlow re-runs.
       if (chain.length === 0) {
         const node = rf.getNode(targetId);
         if (node) panToNodeCenter(rf, node);
         pendingPanRef.current = null;
       }
+      if (mode === "click") return; // persistent: no release
+      // EN (hover preview release): caller (ConversationView's
+      // mouseLeave) calls this to undo the transient pan + re-fold.
+      // Idempotent — we mark applied=false on first call so a second
+      // release is a no-op.
+      // 中: hover 释放回调，恢复 viewport + 重新折叠之前展开的链。
+      // 幂等，重复调用安全。
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        // Re-fold in reverse order (innermost first → outermost) so
+        // each parent fold sees its child correctly stowed.
+        for (let i = chain.length - 1; i >= 0; i -= 1) {
+          useStore
+            .getState()
+            .foldCompact(sessionId, chain[i], { persist: false });
+        }
+        rf.setViewport(stashedViewport, { duration: 200 });
+      };
     };
     return () => {
       if (panCtx.ref.current) panCtx.ref.current = null;

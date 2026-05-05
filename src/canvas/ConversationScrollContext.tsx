@@ -21,10 +21,18 @@
 
 import { createContext, useContext, useRef, type ReactNode } from "react";
 
+/** EN: persistence semantics. `click` = stays applied; `hover` =
+ *  caller invokes the returned ScrollRelease on mouseleave to restore
+ *  the previous scroll position.
+ *  中: click 持久；hover 必须在 mouseleave 时调返回的 release 恢复。 */
+export type ScrollMode = "click" | "hover";
+
+export type ScrollRelease = () => void;
+
 export type ScrollToChatNodeFn = (
   chatNodeId: string,
-  opts?: { smooth?: boolean },
-) => void;
+  opts?: { smooth?: boolean; mode?: ScrollMode },
+) => ScrollRelease | void;
 
 export interface ConversationScrollAPI {
   ref: { current: ScrollToChatNodeFn | null };
@@ -52,6 +60,6 @@ export function ConversationScrollProvider({
 export function useConversationScrollShim(): ScrollToChatNodeFn {
   const ctx = useContext(ConversationScrollContext);
   return (id, opts) => {
-    ctx?.ref.current?.(id, opts);
+    return ctx?.ref.current?.(id, opts);
   };
 }

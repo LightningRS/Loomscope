@@ -110,17 +110,32 @@ export function ConversationView({ sessionId, chatFlow }: Props) {
   const topMarkerRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const skipNextScrollRef = useRef(false);
-  // v0.9.1: scroll-to-bubble helper. Resolves the rendered DOM node
-  // by data-testid (= conversation-bubble-<chatNodeId>) and scrolls
-  // it into view. Falls back to bottom marker when the bubble isn't
-  // in the current rendered slice (lazy-pack window may have it
-  // truncated above startIdx). Both ChatNodeCard hover/click and
-  // selectedId-change effects route through this so behaviour is
-  // uniform.
+  // EN: scroll-to-bubble helper. Resolves the rendered DOM node by
+  // data-testid (= conversation-bubble-<chatNodeId>) and scrolls it
+  // into view. Falls back to the bottom marker when the bubble
+  // isn't in the current rendered slice (lazy-pack window may have
+  // truncated it above startIdx). ChatFlowCanvas hover/click +
+  // selectedId-change effects all route through here.
+  //
+  // Mode:
+  //   - "click" (default): stays scrolled.
+  //   - "hover": stashes the scroll viewport's scrollTop on the
+  //     ancestor scroll container before scrolling, returns a
+  //     release that restores it. ChatFlowCanvas's onNodeMouseLeave
+  //     calls release so a stray cursor pass over a card doesn't
+  //     persistently jump the conversation away from where the
+  //     user was reading.
+  // 中: hover 模式 stash 滚动容器的 scrollTop 并返回 release，
+  // mouseLeave 时恢复，避免误触永久滚走。click 持久。
   const scrollToBubble = useCallback(
-    (chatNodeId: string, opts?: { smooth?: boolean }) => {
+    (
+      chatNodeId: string,
+      opts?: { smooth?: boolean; mode?: "click" | "hover" },
+    ) => {
       const root = containerRef.current;
       if (!root) return;
+      const scrollEl = findScrollParent(root);
+      const stashedScrollTop = scrollEl?.scrollTop ?? null;
       const bubble = root.querySelector<HTMLElement>(
         `[data-testid="conversation-bubble-${CSS.escape(chatNodeId)}"]`,
       );
@@ -135,6 +150,18 @@ export function ConversationView({ sessionId, chatFlow }: Props) {
           behavior: "auto",
         });
       }
+      if (opts?.mode !== "hover") return;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        if (scrollEl && stashedScrollTop != null) {
+          scrollEl.scrollTo({
+            top: stashedScrollTop,
+            behavior: "smooth",
+          });
+        }
+      };
     },
     [],
   );
@@ -241,17 +268,35 @@ export function ConversationView({ sessionId, chatFlow }: Props) {
     (nid: string) => {
       skipNextScrollRef.current = true;
       setSelected(sessionId, nid);
+      // EN: explicit click → persistent pan. If a hover preview was
+      // in flight (release callback pending), drop it without
+      // restoring — the click takes precedence and we want the new
+      // viewport to stay.
+      // 中: 点击 = 持久 pan，丢弃任何未释放的 hover preview。
+      hoverReleaseRef.current = null;
+      panToChatNode(nid, "click");
     },
-    [sessionId, setSelected],
+    [sessionId, setSelected, panToChatNode],
   );
+  // EN: stash the hover preview's release callback. Set on dwell,
+  // called from mouseLeave to restore viewport + re-fold compacts.
+  // Cleared on click (so click's persistent pan isn't undone).
+  // 中: hover preview 的 release 回调存这里。dwell 时设置，
+  // mouseLeave 调它恢复；点击时清空（让 click 的持久 pan 不被撤销）。
+  const hoverReleaseRef = useRef<(() => void) | null>(null);
   const handleHoverDwell = useCallback(
     (nid: string) => {
-      panToChatNode(nid);
+      // Release any prior preview before kicking off a new one.
+      hoverReleaseRef.current?.();
+      const release = panToChatNode(nid, "hover");
+      hoverReleaseRef.current = typeof release === "function" ? release : null;
       setConversationHovered(nid);
     },
     [panToChatNode, setConversationHovered],
   );
   const handleHoverEnd = useCallback(() => {
+    hoverReleaseRef.current?.();
+    hoverReleaseRef.current = null;
     setConversationHovered(null);
   }, [setConversationHovered]);
 

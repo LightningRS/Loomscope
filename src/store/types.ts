@@ -264,7 +264,16 @@ export interface SessionSlice {
   // idempotent (folding an already-folded id, or unfolding an
   // already-unfolded id, are no-ops that still re-persist for
   // determinism).
-  foldCompact: (sessionId: string, compactChatNodeId: string) => void;
+  // EN: `opts.persist=false` skips the localStorage write. Used by
+  // the hover-pan release path so re-folding for preview restoration
+  // doesn't write back the user's transient hover state to storage.
+  // 中: persist:false 不写 storage；hover-pan 释放时恢复折叠用，
+  // 避免临时预览状态污染持久化偏好。
+  foldCompact: (
+    sessionId: string,
+    compactChatNodeId: string,
+    opts?: { persist?: boolean },
+  ) => void;
   // v0.9.1: `opts.persist=false` skips the localStorage write — used by
   // ConversationView's hover-pan auto-unfold so a transient navigation
   // gesture doesn't pollute the user's persisted "explicitly opened"

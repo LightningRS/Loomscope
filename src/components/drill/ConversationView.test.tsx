@@ -381,7 +381,10 @@ describe("ConversationView — v0.8.1 #5 hover-to-pan dwell", () => {
     vi.advanceTimersByTime(200);
     expect(panSpy).not.toHaveBeenCalled();
     vi.advanceTimersByTime(60);
-    expect(panSpy).toHaveBeenCalledWith("a");
+    // v0.9.1 polish: hover passes mode="hover" so the pan can be
+    // released on mouseLeave (transient preview). Click uses "click"
+    // for persistent semantics.
+    expect(panSpy).toHaveBeenCalledWith("a", "hover");
   });
 
   it("mouseleave before 250ms cancels the pending pan", () => {
@@ -407,7 +410,7 @@ describe("ConversationView — v0.8.1 #5 hover-to-pan dwell", () => {
     vi.advanceTimersByTime(260);
     // Only "b" fires — "a" was cancelled.
     expect(panSpy).toHaveBeenCalledTimes(1);
-    expect(panSpy).toHaveBeenCalledWith("b");
+    expect(panSpy).toHaveBeenCalledWith("b", "hover");
   });
 });
 

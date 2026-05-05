@@ -833,7 +833,7 @@ export const createSessionSlice: StateCreator<LoomscopeStore, [], [], SessionSli
   // (i.e. visible at the current drill depth) — the fold set is global
   // across drill frames; toggling from a sub-ChatFlow drill view should
   // affect what shows when the user pops back to top-level too.
-  foldCompact: (sessionId, compactChatNodeId) => {
+  foldCompact: (sessionId, compactChatNodeId, opts) => {
     const sessions = get().sessions;
     const cur = sessions.get(sessionId);
     if (!cur || !cur.chatFlow) return;
@@ -843,7 +843,14 @@ export const createSessionSlice: StateCreator<LoomscopeStore, [], [], SessionSli
     const updated = new Map(sessions);
     updated.set(sessionId, { ...cur, foldedCompactIds: next });
     set({ sessions: updated });
-    persistUnfoldFromFolded(sessionId, next, cur.chatFlow);
+    // EN: hover-pan release path passes persist:false to undo a
+    // transient hover-unfold without writing the in-memory state
+    // back to storage. Symmetric with unfoldCompact's opts.persist.
+    // 中: hover 预览结束时调本 action 重新折叠，传 persist:false
+    // 避免把临时状态写回 storage。
+    if (opts?.persist !== false) {
+      persistUnfoldFromFolded(sessionId, next, cur.chatFlow);
+    }
   },
   unfoldCompact: (sessionId, compactChatNodeId, opts) => {
     const sessions = get().sessions;
