@@ -379,21 +379,37 @@ function MessageBubbleImpl({
     () => buildConversationRounds(access.workflow),
     [access.workflow],
   );
-  // Fallback text used when workflow hasn't loaded OR ChatNode's
-  // entire content lives outside the workflow (compact summary,
-  // slash command stdout, lite-mode preview).
+  // EN: Inline-content fallback for ChatNodes whose payload lives
+  // OUTSIDE workflow.nodes — compact summary, slash command stdout.
+  // Both are stored directly on the ChatNode (compactMetadata /
+  // slashCommand), not inside the lazy workflow, so they're
+  // immediately available without a fetch round-trip.
+  // ⚠ DO NOT include `summary.assistantPreview` here. The truncated
+  // 80-char preview was a placeholder for the lazy load window in
+  // v0.10 lazy ChatFlow B5, but the visual transition (one-line
+  // preview → expand to full markdown ~80ms later) felt like a
+  // page reflow. v0.9.1 polish: render a tiny "loading…" skeleton
+  // during pending instead, so the bubble appears empty briefly
+  // and then drops in the full content with no shrink-then-expand
+  // motion.
+  // 中: 不再用 summary.assistantPreview 当占位——会让 bubble 先压缩
+  // 成一行再展开，肉眼不舒服。改成 pending 期间显示 skeleton，
+  // 直接等 cache 完成后渲染完整内容。
   const fallbackText = useMemo(() => {
     if (rounds.some((r) => r.text || r.tools.length > 0)) return null;
     if (chatNode.compactMetadata?.summaryText)
       return chatNode.compactMetadata.summaryText;
     if (chatNode.slashCommand?.stdout) return chatNode.slashCommand.stdout;
-    if (chatNode.workflow.summary?.assistantPreview)
-      return chatNode.workflow.summary.assistantPreview;
     return null;
   }, [rounds, chatNode]);
-  const isAssistantPlaceholder =
-    access.status === "pending" &&
-    !!chatNode.workflow.summary?.assistantPreview;
+  // EN: only true when the workflow lazy-load is in flight AND we
+  // genuinely have nothing yet to render. `cached.workflow` from
+  // stale-while-revalidate counts as "have content" — that path
+  // already shows the old workflow as ready.
+  // 中: 真正"没东西可显示"的 pending 状态——cache 里有旧 workflow
+  // 时（stale-while-revalidate）已经渲染旧内容了，不算 pending UI。
+  const isAssistantSkeleton =
+    access.status === "pending" && rounds.length === 0 && !fallbackText;
   // For copy / meta resolution we still want the LAST round's text.
   const lastAssistantText = useMemo(() => {
     for (let i = rounds.length - 1; i >= 0; i -= 1) {
@@ -488,13 +504,7 @@ function MessageBubbleImpl({
             <div key={i} data-round-index={i}>
               {round.text && (
                 <div
-                  className={[
-                    "prose prose-sm max-w-none text-[13px] leading-relaxed break-words",
-                    isAssistantPlaceholder
-                      ? "text-gray-400 italic"
-                      : "text-gray-800",
-                  ].join(" ")}
-                  data-loading={isAssistantPlaceholder ? "true" : "false"}
+                  className="prose prose-sm max-w-none text-[13px] leading-relaxed break-words text-gray-800"
                 >
                   <MarkdownView>{round.text}</MarkdownView>
                 </div>
@@ -514,18 +524,22 @@ function MessageBubbleImpl({
           ))}
         </div>
       )}
-      {/* Fallback text (compact summary / slashCommand stdout / lite
-          preview) — rendered when the workflow path produced no
-          rounds at all. */}
+      {/* Fallback text (compact summary / slashCommand stdout). */}
       {rounds.length === 0 && fallbackText && (
-        <div
-          className={[
-            "prose prose-sm max-w-none text-[13px] leading-relaxed break-words",
-            isAssistantPlaceholder ? "text-gray-400 italic" : "text-gray-800",
-          ].join(" ")}
-          data-loading={isAssistantPlaceholder ? "true" : "false"}
-        >
+        <div className="prose prose-sm max-w-none text-[13px] leading-relaxed break-words text-gray-800">
           <MarkdownView>{fallbackText}</MarkdownView>
+        </div>
+      )}
+      {/* EN: skeleton during the lazy-load fetch window. Replaces
+          the v0.10 truncated-preview placeholder which made every
+          fresh session-open visually shrink+expand. The skeleton
+          is height-stable (matches a typical bubble's first line)
+          so cards don't jump when the real content lands.
+          中: pending 占位骨架——避免气泡先一行预览再展开的视觉跳动。 */}
+      {isAssistantSkeleton && (
+        <div className="space-y-1.5" data-testid={`assistant-skeleton-${chatNode.id}`}>
+          <div className="h-3 w-4/5 rounded bg-gray-100 animate-pulse" />
+          <div className="h-3 w-3/5 rounded bg-gray-100 animate-pulse" />
         </div>
       )}
       {access.status === "error" && !hasContent && (
@@ -549,7 +563,7 @@ function MessageBubbleImpl({
       <MessageMeta
         chatNode={chatNode}
         workflow={access.workflow}
-        assistantCopyText={isAssistantPlaceholder ? null : lastAssistantText}
+        assistantCopyText={isAssistantSkeleton ? null : lastAssistantText}
       />
     </div>
   );
