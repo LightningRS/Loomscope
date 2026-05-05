@@ -314,22 +314,26 @@ function DetailTabContent({
     (s) => s.sessions.get(sessionId)?.workflowSelectedNodeId ?? null,
   );
 
-  // v0.10 lazy ChatFlow B4: when drilledChatNode came via the lite
-  // endpoint (top-level chatflow), its workflow.nodes is empty until
-  // the lazy fetch completes. WorkFlowCanvas mounts in parallel and
-  // triggers the same fetch via its own hook — they share the cache,
-  // so once any one of them lands the result, all consumers
-  // re-render. Subscribe here too so WorkNode resolution finds the
-  // selectedWorkId once nodes land.
+  // v0.10 lazy ChatFlow B4 + v0.9.1 sub-agent fix: prefer INLINE
+  // workflow.nodes when populated; only fall back to workflowCache
+  // when inline is empty (lite top-level ChatNode that hasn't lazy-
+  // fetched yet). Sub-agent ChatNodes from /subagents always have
+  // inline populated and MUST NOT consult the cache, because
+  // workflowCache is keyed by chatNode.id and CC's Task delegation
+  // reuses parent uuids — the cache lookup with sub-agent's
+  // chatNodeId would return the top-level entry (wrong WorkFlow).
   const drilledWorkflowCache = useStore((s) =>
-    drilledChatNode
+    drilledChatNode && drilledChatNode.workflow.nodes.length === 0
       ? s.sessions.get(sessionId)?.workflowCache.get(drilledChatNode.id) ?? null
       : null,
   );
-  const drilledWorkflowNodes =
-    drilledWorkflowCache?.status === "ready" && drilledWorkflowCache.workflow
-      ? drilledWorkflowCache.workflow.nodes
-      : drilledChatNode?.workflow.nodes ?? [];
+  const drilledWorkflowNodes = drilledChatNode
+    ? drilledChatNode.workflow.nodes.length > 0
+      ? drilledChatNode.workflow.nodes
+      : drilledWorkflowCache?.status === "ready" && drilledWorkflowCache.workflow
+        ? drilledWorkflowCache.workflow.nodes
+        : []
+    : [];
 
   // Resolve the currently focused node based on viewMode + selection.
   // chatflow + sub-chatflow both surface ChatNodeDetail; workflow
