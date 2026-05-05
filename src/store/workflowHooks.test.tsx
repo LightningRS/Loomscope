@@ -274,6 +274,31 @@ describe("useChatNodeWorkflow", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("autoFetch=false → does NOT fire load on first access (caller-owned fetch)", async () => {
+    const cn = chatNode("g"); // lite + summaryHasContent
+    seed(flow([cn]));
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    function ProbeNoAuto({ onRender }: { onRender: (s: Snapshot) => void }) {
+      const r = useChatNodeWorkflow(SID, cn, { autoFetch: false });
+      onRender({
+        status: r.status,
+        hasWorkflow: r.workflow !== null,
+        isLazy: r.isLazy,
+        error: r.error,
+      });
+      return null;
+    }
+    const snapshots: Snapshot[] = [];
+    render(<ProbeNoAuto onRender={(s) => snapshots.push(s)} />);
+    // Pure read: pending (no inline, no cache, no fetch fired)
+    expect(snapshots[snapshots.length - 1].status).toBe("pending");
+    // Wait a microtask to make sure no deferred fetch fires either
+    await Promise.resolve();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("cache=pending → stays pending without firing another fetch", () => {
     const cn = chatNode("f");
     seed(flow([cn]));

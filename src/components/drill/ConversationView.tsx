@@ -284,42 +284,51 @@ export function ConversationView({ sessionId, chatFlow }: Props) {
   );
   const hasMoreAbove = startIdx > 0;
 
-  // EN (v0.9.2 c): newest-first incremental fetch of visible-slice
-  // workflows. v0.10 originally batched all visible ids into ONE HTTP
-  // request — fast total but every bubble's tool pills appeared
-  // simultaneously after the response landed. User feedback: "feels
-  // like full-batch load even after summary.assistantText shows the
-  // bubble text immediately." Even though text is fast (lite payload),
-  // tool pills lagging together creates a wall-of-content moment.
+  // EN (v0.9.2 c+, "Option A on B"): progressive reveal of visible-slice
+  // workflows.
   //
-  // Strategy: split visiblePath into len(N) separate fetches, fired
-  // in REVERSE (latest first). setTimeout(0) staggers between calls
-  // so the microtask flush in `loadChatNodeWorkflows` runs ONCE per
-  // id, producing N independent requests + N independent store
-  // updates. Server's LRU cache makes all but the first request a
-  // dict-lookup (zero parse cost) so this is cheap on the wire.
-  // Visual effect: bubbles fill in tool pills bottom-to-top as the
-  // user reads downward — eye lands on latest first, by the time
-  // they scroll up older bubbles have caught up.
+  // Why the previous setTimeout(0) stagger didn't work: every
+  // MessageBubble's `useChatNodeWorkflow` ran its own auto-fetch
+  // useEffect on mount, and all N children mount BEFORE the parent's
+  // useEffect — so all N ids hit `loadChatNodeWorkflows` in the same
+  // tick and got collapsed by its microtask coalescing buffer into
+  // ONE batch request. By the time this effect ran, every id was
+  // already pending → staggered calls were no-ops.
   //
-  // 中: 把 visible slice 拆成 N 个独立 fetch 倒序发送（最新→最旧），
-  // setTimeout(0) 让 microtask flush 在每两个之间运行。每个 fetch
-  // 独立更新 store，bubble 由下到上依次填充工具 pill。server LRU
-  // 缓存让首个之外的请求是字典查找，几乎零成本。
+  // Fix: MessageBubble now passes `disableAutoFetch={true}` (which
+  // forwards to the hook as `{ autoFetch: false }`), turning the hook
+  // into a pure read. This effect becomes the SOLE owner of fetch
+  // sequencing for the conversation list: it walks the visible slice
+  // in REVERSE (newest first) and `await`s each `loadWorkflows` call
+  // before firing the next. Each iteration is its own tick, so each
+  // call gets its own coalesce buffer, its own HTTP request, and its
+  // own store update — bubbles fill in tool pills strictly newest →
+  // oldest. Server LRU makes all-but-first request near-free.
+  //
+  // Cancellation: re-runs (visiblePath grew via extendUp, or session
+  // switched) flip the cancelled flag so the in-flight loop stops
+  // queuing further fetches. Already-cached ids early-exit inside
+  // `loadChatNodeWorkflows` so the loop replay is cheap.
+  //
+  // 中: "选项 A 落在 B 上"的渐进 reveal。之前的 setTimeout(0) stagger
+  // 失效是因为子组件 hook 在父 useEffect 之前同 tick fire，被 microtask
+  // 合并成一次请求。现在 MessageBubble 传 disableAutoFetch=true 让 hook
+  // 变成纯读，这个 useEffect 独占 fetch 时序：倒序 await 每个 id 的
+  // load，每次都在新 tick 里各自一个请求 / 一次 store 更新，bubble 严格
+  // 由新到旧依次填充。session 切换 / 上滑加载用 cancelled flag 中断。
   const loadWorkflows = useStore((s) => s.loadChatNodeWorkflows);
   useEffect(() => {
     if (visiblePath.length === 0) return;
     const ordered = [...visiblePath].reverse(); // newest first
-    const handles: number[] = [];
-    ordered.forEach((id, i) => {
-      handles.push(
-        window.setTimeout(() => {
-          void loadWorkflows(sessionId, [id]);
-        }, i * 0),
-      );
-    });
+    let cancelled = false;
+    void (async () => {
+      for (const id of ordered) {
+        if (cancelled) return;
+        await loadWorkflows(sessionId, [id]);
+      }
+    })();
     return () => {
-      for (const h of handles) window.clearTimeout(h);
+      cancelled = true;
     };
   }, [sessionId, visiblePath, loadWorkflows]);
 
@@ -419,6 +428,7 @@ export function ConversationView({ sessionId, chatFlow }: Props) {
               onSelect={handleSelect}
               onHoverDwell={handleHoverDwell}
               onHoverEnd={handleHoverEnd}
+              disableAutoFetch
             />
             {fork && (
               <BranchSelector
@@ -468,6 +478,7 @@ function MessageBubbleImpl({
   onSelect,
   onHoverDwell,
   onHoverEnd,
+  disableAutoFetch,
 }: {
   chatNode: ChatNode;
   sessionId: string;
@@ -477,17 +488,23 @@ function MessageBubbleImpl({
   onSelect: (chatNodeId: string) => void;
   onHoverDwell: (chatNodeId: string) => void;
   onHoverEnd: () => void;
+  /** When true, the hook is a pure read — fetch sequencing is
+   * delegated to the parent (see ConversationView's progressive-
+   * reveal effect). Other call sites (ChatNodeDetail) keep the
+   * default auto-fetch behaviour. */
+  disableAutoFetch?: boolean;
 }) {
   const userText = useMemo(() => extractText(chatNode.userMessage.content), [chatNode]);
   // v0.10 lazy ChatFlow B5: full assistant markdown lives on
-  // workflow.nodes which the lite endpoint strips. The hook + the
-  // parent's batch loadWorkflows fire fetch in the background;
-  // bubbles render `summary.assistantPreview` (truncated 80 chars)
-  // as a placeholder until the full text arrives. The swap is
-  // transparent — Markdown re-parses with the real text once cache
-  // flips to ready. Failure → fall back to the preview + show error
-  // chip in the meta row.
-  const access = useChatNodeWorkflow(sessionId, chatNode);
+  // workflow.nodes which the lite endpoint strips. ConversationView
+  // owns the staggered fetch sequencing for the visible slice (passes
+  // `disableAutoFetch`); other call sites let the hook auto-fetch.
+  // While the workflow is in flight the bubble synthesises rounds
+  // from `summary.assistantText` so user text + assistant text stay
+  // visually coupled — only the tool-pill row lights up later.
+  const access = useChatNodeWorkflow(sessionId, chatNode, {
+    autoFetch: !disableAutoFetch,
+  });
   const rounds = useMemo(() => {
     // EN (v0.9.2): when workflow is loaded, build rounds with full
     // structure (text + tool_call + delegate). When NOT loaded yet,

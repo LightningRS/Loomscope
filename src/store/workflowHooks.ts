@@ -56,15 +56,28 @@ export interface WorkflowAccessResult {
   isLazy: boolean;
 }
 
+export interface UseChatNodeWorkflowOpts {
+  /** When false, the hook becomes a pure read — it will NOT fire
+   * `loadChatNodeWorkflows` on first access. Caller takes ownership
+   * of triggering the fetch (e.g. ConversationView's progressive
+   * reveal staggers fetches itself, and would otherwise see all
+   * children-hook autoFetches collapse into one batch via the
+   * microtask coalescing buffer in `loadChatNodeWorkflows`). Default
+   * true preserves the v0.10 behaviour for every other call site. */
+  autoFetch?: boolean;
+}
+
 /**
  * Return the WorkFlow object for a ChatNode, lazy-loading on first
  * access. Safe to call from a component render; the load fires from
- * a useEffect under the hood.
+ * a useEffect under the hood (unless `opts.autoFetch === false`).
  */
 export function useChatNodeWorkflow(
   sessionId: string,
   chatNode: ChatNode,
+  opts: UseChatNodeWorkflowOpts = {},
 ): WorkflowAccessResult {
+  const autoFetch = opts.autoFetch !== false;
   const cached = useStore((s) =>
     s.sessions.get(sessionId)?.workflowCache.get(chatNode.id) ?? null,
   );
@@ -81,13 +94,14 @@ export function useChatNodeWorkflow(
   const needsLazy = !inlineLoaded && summaryHasContent;
 
   useEffect(() => {
+    if (!autoFetch) return;
     if (!needsLazy) return;
     if (cached?.status === "ready" || cached?.status === "pending") return;
     // First access OR previous error — fire (re)load. Action dedupes
     // against in-flight, so concurrent hooks for the same id collapse
     // into one network round-trip.
     void load(sessionId, [chatNode.id]);
-  }, [needsLazy, cached?.status, load, sessionId, chatNode.id]);
+  }, [autoFetch, needsLazy, cached?.status, load, sessionId, chatNode.id]);
 
   // Resolution priority: INLINE WINS when the workflow is already
   // populated. Why: workflowCache is keyed by chatNode.id, and CC's
