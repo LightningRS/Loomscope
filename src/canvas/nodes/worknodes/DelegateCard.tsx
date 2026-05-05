@@ -8,6 +8,7 @@
 
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
+import { useTranslation } from "react-i18next";
 
 import {
   WF_NODE_SIZE,
@@ -109,6 +110,7 @@ export function DelegateCard({ id, data }: NodeProps<DelegateRFNode>) {
 // the click from bubbling to RF's node-click handler (which would
 // flip workflow selection unhelpfully).
 function SubAgentDrillButton({ workNodeId }: { workNodeId: string }) {
+  const { t } = useTranslation();
   const enter = useStore((s) => s.enterSubWorkflow);
   const activeId = useStore((s) => s.activeSessionId);
   return (
@@ -123,7 +125,7 @@ function SubAgentDrillButton({ workNodeId }: { workNodeId: string }) {
       data-testid={`enter-subworkflow-${workNodeId}`}
     >
       <span>⤢</span>
-      <span>进入子工作流</span>
+      <span>{t("buttons.enter_subworkflow")}</span>
     </button>
   );
 }

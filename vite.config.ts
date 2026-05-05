@@ -27,6 +27,14 @@ export default defineConfig({
   test: {
     environment: "happy-dom",
     globals: true,
+    // EN: setupFiles runs before each test file — we use it to
+    // initialise i18next so `t('foo.bar')` resolves to the actual
+    // string instead of falling back to the key name. Without this
+    // the existing UI tests that match against e.g. "Pick a session"
+    // would break the moment we wrap the JSX in t(...).
+    // 中: vitest 启动前先 init i18n，否则测试里 t('foo.bar') 会
+    // 直接吐出 key 名导致字符串匹配 fail。
+    setupFiles: ["./src/test/setup.ts"],
     // e2e/** uses Playwright (`@playwright/test`), not Vitest. v0.7
     // shipped e2e against Agentloom's playwright binary rather than
     // adding @playwright/test as a Loomscope devDep — exclude the

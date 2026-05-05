@@ -13,6 +13,7 @@
 // Visual chrome per `design-visual-language.md` 视觉 token 章节.
 
 import { useEffect, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 
 import { CanvasPanProvider } from "@/canvas/CanvasPanContext";
 import { ConversationScrollProvider } from "@/canvas/ConversationScrollContext";
@@ -238,6 +239,7 @@ function DrillBreadcrumb({
   sessionId: string;
   frames: DrillBreadcrumbItem[];
 }) {
+  const { t } = useTranslation();
   const exitWorkflow = useStore((s) => s.exitWorkflow);
   const truncate = useStore((s) => s.truncateDrillStack);
   return (
@@ -251,7 +253,7 @@ function DrillBreadcrumb({
         data-testid="exit-workflow"
         className="hover:text-blue-600 hover:underline transition-colors"
       >
-        ← ChatFlow
+        {t("breadcrumb.back_to_chatflow")}
       </button>
       {frames.map((frame, i) => {
         const isLast = i === frames.length - 1;
@@ -292,6 +294,7 @@ function DrillBreadcrumb({
 }
 
 function EmptyState() {
+  const { t } = useTranslation();
   const workspaces = useStore((s) => s.workspaces);
   const workspacesLoading = useStore((s) => s.workspacesLoading);
   const workspacesError = useStore((s) => s.workspacesError);
@@ -307,28 +310,28 @@ function EmptyState() {
           Loomscope
         </div>
         <div className="text-sm text-gray-500">
-          Claude Code session 可视化阅读器
+          {t("empty_state.subtitle")}
         </div>
       </div>
       {workspacesLoading ? (
-        <div className="text-xs text-gray-400">扫描 ~/.claude/projects/…</div>
+        <div className="text-xs text-gray-400">{t("empty_state.scanning")}</div>
       ) : workspacesError ? (
         <div className="text-xs text-rose-600">
-          扫描失败：<code className="font-mono">{workspacesError}</code>
+          {t("empty_state.scan_failed")}<code className="font-mono">{workspacesError}</code>
         </div>
       ) : workspaces.length === 0 ? (
         <div className="space-y-1.5 text-xs text-gray-500">
-          <div>没有在 <code className="font-mono text-gray-600">~/.claude/projects/</code> 找到 session</div>
-          <div className="text-gray-400">用过 Claude Code 后这里会自动列出</div>
+          <div>{t("empty_state.no_sessions_found")} <code className="font-mono text-gray-600">{t("empty_state.no_sessions_path")}</code> {t("empty_state.no_sessions_suffix")}</div>
+          <div className="text-gray-400">{t("empty_state.no_sessions_hint")}</div>
         </div>
       ) : (
         <div className="space-y-1.5 text-xs text-gray-500">
           <div>
-            扫到 <span className="font-medium text-gray-700">{workspaces.length}</span> 个 workspace ·{" "}
-            <span className="font-medium text-gray-700">{totalSessions}</span> 个 session
+            {t("empty_state.found_summary_workspaces")} <span className="font-medium text-gray-700">{workspaces.length}</span> {t("empty_state.found_summary_unit_workspace")}{" "}
+            <span className="font-medium text-gray-700">{totalSessions}</span> {t("empty_state.found_summary_unit_session")}
           </div>
           <div className="text-gray-400">
-            ← 从左侧 sidebar 展开 workspace 选一个 session
+            {t("empty_state.pick_hint")}
           </div>
         </div>
       )}
@@ -337,22 +340,26 @@ function EmptyState() {
 }
 
 function LoadingState() {
+  const { t } = useTranslation();
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-gray-500">
       <span className="inline-flex items-center gap-2 rounded bg-teal-100 px-3 py-1.5 text-sm font-medium text-teal-900">
         <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-teal-500" />
-        Parsing JSONL…
+        {t("loading_state.parsing")}
       </span>
-      <span className="text-[11px] text-gray-400">Large sessions may take a few seconds.</span>
+      <span className="text-[11px] text-gray-400">
+        {t("loading_state.large_session_hint")}
+      </span>
     </div>
   );
 }
 
 function ErrorState({ message }: { message: string }) {
+  const { t } = useTranslation();
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-rose-700">
       <span className="text-3xl">✗</span>
-      <span className="text-sm font-medium">Failed to load session.</span>
+      <span className="text-sm font-medium">{t("error_state.failed_to_load")}</span>
       <code className="text-[11px] bg-rose-50 border border-rose-200 px-2 py-1 rounded font-mono text-rose-900 max-w-[480px] break-words">
         {message}
       </code>

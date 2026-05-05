@@ -14,6 +14,7 @@
 
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
+import { useTranslation } from "react-i18next";
 
 import { useFoldAnchor } from "@/canvas/FoldAnchorContext";
 import { type ChatNodeRFNode } from "@/canvas/layoutDag";
@@ -620,6 +621,7 @@ function SlashCommandCard({
 // and doesn't re-render the whole ChatNodeCard when ``activeSessionId``
 // changes for unrelated reasons.
 function DrillButton({ chatNodeId }: { chatNodeId: string }) {
+  const { t } = useTranslation();
   const enter = useStore((s) => s.enterWorkflow);
   const activeId = useStore((s) => s.activeSessionId);
   return (
@@ -634,7 +636,7 @@ function DrillButton({ chatNodeId }: { chatNodeId: string }) {
       data-testid={`enter-workflow-${chatNodeId}`}
     >
       <span>⤢</span>
-      <span>进入工作流</span>
+      <span>{t("buttons.enter_workflow")}</span>
     </button>
   );
 }

@@ -1,0 +1,67 @@
+{
+  "header": {
+    "pick_session": "Pick a session →",
+    "loading": "loading",
+    "chat_nodes": "ChatNodes",
+    "live": "live",
+    "connecting": "connecting",
+    "reconnecting": "reconnecting",
+    "offline": "offline",
+    "live_tooltip": "live: session={{session}}, workspaces={{workspaces}}"
+  },
+  "sidebar": {
+    "search_placeholder": "Search sessions…",
+    "refresh": "Refresh",
+    "no_workspaces": "No workspaces found",
+    "no_sessions": "No sessions found",
+    "scanning": "Scanning ~/.claude/projects/…"
+  },
+  "empty_state": {
+    "subtitle": "Claude Code session viewer",
+    "scanning": "Scanning ~/.claude/projects/…",
+    "scan_failed": "Scan failed: ",
+    "no_sessions_found": "No sessions in",
+    "no_sessions_path": "~/.claude/projects/",
+    "no_sessions_suffix": "",
+    "no_sessions_hint": "After you run Claude Code they appear here automatically",
+    "found_summary_workspaces": "Found",
+    "found_summary_unit_workspace": "workspaces ·",
+    "found_summary_unit_session": "sessions",
+    "pick_hint": "← Expand a workspace in the sidebar to pick a session"
+  },
+  "loading_state": {
+    "parsing": "Parsing JSONL…",
+    "large_session_hint": "Large sessions may take a few seconds."
+  },
+  "error_state": {
+    "failed_to_load": "Failed to load session."
+  },
+  "breadcrumb": {
+    "back_to_chatflow": "← ChatFlow"
+  },
+  "buttons": {
+    "enter_workflow": "Enter WorkFlow",
+    "enter_subworkflow": "Enter sub-WorkFlow",
+    "copy": "Copy",
+    "copied": "Copied",
+    "copy_failed": "Copy failed"
+  },
+  "tool_pill": {
+    "input": "Input",
+    "output": "Output",
+    "prompt": "Prompt",
+    "result": "Result",
+    "no_result": "(no result captured)",
+    "failed": "✗ failed"
+  },
+  "stats": {
+    "rounds_tooltip": "{{count}} llm_call invocations (one per model request)",
+    "chains_tooltip": "{{count}} disjoint chains (llm→tool→llm sequences not connected within this ChatNode; typical causes: auto-compact mid-turn, error retry, harness interruption)",
+    "tools_tooltip": "{{count}} tool calls (tool_call + delegate combined)",
+    "thinking_tooltip": "thinking chars: {{count}}"
+  },
+  "language": {
+    "zh": "中",
+    "en": "EN"
+  }
+}

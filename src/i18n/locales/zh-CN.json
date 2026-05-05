@@ -1,0 +1,67 @@
+{
+  "header": {
+    "pick_session": "Pick a session →",
+    "loading": "loading",
+    "chat_nodes": "ChatNodes",
+    "live": "live",
+    "connecting": "连接中",
+    "reconnecting": "重连中",
+    "offline": "offline",
+    "live_tooltip": "live: session={{session}}, workspaces={{workspaces}}"
+  },
+  "sidebar": {
+    "search_placeholder": "搜索 session…",
+    "refresh": "刷新",
+    "no_workspaces": "未找到 workspace",
+    "no_sessions": "未找到 sessions",
+    "scanning": "扫描 ~/.claude/projects/…"
+  },
+  "empty_state": {
+    "subtitle": "Claude Code session 可视化阅读器",
+    "scanning": "扫描 ~/.claude/projects/…",
+    "scan_failed": "扫描失败：",
+    "no_sessions_found": "没有在",
+    "no_sessions_path": "~/.claude/projects/",
+    "no_sessions_suffix": "找到 session",
+    "no_sessions_hint": "用过 Claude Code 后这里会自动列出",
+    "found_summary_workspaces": "扫到",
+    "found_summary_unit_workspace": "个 workspace ·",
+    "found_summary_unit_session": "个 session",
+    "pick_hint": "← 从左侧 sidebar 展开 workspace 选一个 session"
+  },
+  "loading_state": {
+    "parsing": "Parsing JSONL…",
+    "large_session_hint": "Large sessions may take a few seconds."
+  },
+  "error_state": {
+    "failed_to_load": "Failed to load session."
+  },
+  "breadcrumb": {
+    "back_to_chatflow": "← ChatFlow"
+  },
+  "buttons": {
+    "enter_workflow": "进入工作流",
+    "enter_subworkflow": "进入子工作流",
+    "copy": "复制",
+    "copied": "已复制",
+    "copy_failed": "复制失败"
+  },
+  "tool_pill": {
+    "input": "Input",
+    "output": "Output",
+    "prompt": "Prompt",
+    "result": "Result",
+    "no_result": "(no result captured)",
+    "failed": "✗ failed"
+  },
+  "stats": {
+    "rounds_tooltip": "{{count}} 次 llm_call（每次模型请求一次）",
+    "chains_tooltip": "{{count}} 条独立链（同一 ChatNode 内 llm→tool→llm 链不连续；典型成因：auto-compact 中断、错误重试、harness 干预）",
+    "tools_tooltip": "{{count}} 次工具调用（tool_call + delegate）",
+    "thinking_tooltip": "thinking 字符数：{{count}}"
+  },
+  "language": {
+    "zh": "中",
+    "en": "EN"
+  }
+}
