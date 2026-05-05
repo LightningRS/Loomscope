@@ -491,7 +491,18 @@ agent ship 完后 user 浏览器实测发现的小问题逐条手工打磨。每
 | **B2 store** | `c06ae18` | `WorkflowCacheEntry { status, workflow, error }` + `loadChatNodeWorkflows` action（dedupe in-flight / skip ready/pending / retry error / 100-id chunk / network-fail mark-all） |
 | **B3 canvas** | `9ec9dfc` | `lastModelOf` / `deriveContextTokens` / `lastAssistantPreview` / `distinctToolUseFiles` / `deriveCardData` 全切到读 `summary.*`，fallback 走 nodes 兼容 test fixture |
 | **B4 DrillPanel + WorkFlowCanvas** | `2157861` | `useChatNodeWorkflow(sessionId, cn)` hook 单点封装（区分 lite vs inline / 触发 lazy load / 返 `{ workflow, status, error, isLazy }`）。ChatNodeDetail / WorkFlowCanvas / DrillPanel.DetailTabContent 全部经 hook 解析；pending / error 各自有 UI 反馈 |
-| **B5 ConversationView** | 待做 | `lastAssistantText` 还在读 `workflow.nodes`。需要：visible slice 触发批量 lazy load、pending 用 `summary.assistantPreview` 占位、ready 后 swap 完整 markdown、scroll 时新进入的 ChatNode 排队 fetch |
+| **B5 ConversationView** | `2ddff9e` ... `4770947` | visible slice 批量 lazy load + skeleton 占位 + ready 后 swap 完整 markdown。后续在 v0.9.2 batch 里继续推到视口驱动（见下） |
+
+### v0.9.2 batch（2026-05-06 上午 ship）
+
+跟 B5 同条线，把"打开 session 等 7 秒一锅出" / "长 Bash 5 秒动画熄灭" / "刚发消息没动画"几个用户反馈一刀切完。
+
+| 段 | commit | 内容 |
+|---|---|---|
+| **(a) lite payload 增强** | `1cc3cca` | `summary.assistantText[]` 进 lite，bubble 在 workflow 拉到前已能显示完整文本（不再 80 字符 preview "shrink+expand") |
+| **(b) 数据形态 in-flight** | `97500a2` + `11b02a2` + `abb4b82` | `summary.hasInFlightWork` 后端预算（tool_call 缺 resultBlock / delegate 未收尾 / 末 llm_call 缺 stopReason / 空 workflow=刚发消息），干掉 5s sessionLive 误判 |
+| **(c) autoFetch decoupling** | `89e066b` | `useChatNodeWorkflow` 加 `autoFetch?: boolean`，长列表 caller 显式关掉、自己驱动 fetch；不再被 children-coalescing 撞死。短期同 commit 用 sequential-await 实现倒序填充 |
+| **(d) 视口驱动 + 预读 + 跳过纯文本** | `9d79943` | `IntersectionObserver` rootMargin 1000 px + sequential drainer newest-first + `toolCount===0` skip-fetch。50 节点开 session 从 50 个请求降到视口 ± 1000 px 那部分，再砍 30-50% 纯文本节点 |
 
 **实测 25MB session（176 ChatNode）**：
 - 冷启动：22.47MB / 340ms → **2.83MB / 26ms**（13× 加速 / 87% bytes 减）
@@ -500,12 +511,18 @@ agent ship 完后 user 浏览器实测发现的小问题逐条手工打磨。每
 
 **架构产物**：`useChatNodeWorkflow` hook 是 component-level 抽象，未来 v0.9 file-tail / v∞.0 live update 触发 cache 失效时 hook 自动 refetch。LRU + lite 视图模式让未来"按字段聚合 / 跨 cn batch"等新查询 0 成本加。
 
+### v0.10 收尾批（小活，单刀做完）
+
+- localStorage GC：session 从 sidebar 删 / 文件不存在时清掉对应 `loomscope:unfold:<sid>` / `loomscope:fold:<sid>` / branchMemory
+- WorkFlow viewport 持久化：drill 内切换 ChatNode 时 WorkFlow canvas 自身 zoom/pan 保留（store 级，不写 localStorage——太细）
+- WorkFlow drill follow-on-leaf：commit `3ea2248` 提到要跟数据形态那批一起做但漏了；refresh 时若 `workflowSelectedNodeId` 是新 WorkNode 的父节点，focus 跟到新 leaf
+
 ### 仍未做（defer 到 v0.11+ 或 backlog）
 
 - 性能：256MB 大 session 首屏 < 30s（按 lazy 收益线性外推 200MB session 约 ~28MB lite + 0.3s parse；够用）
-- WorkFlow viewport state 持久化
 - Sidebar fork 树状缩进（v0.8 deferred → v∞.3）
-- localStorage GC（session 删除时清 fold 条目）
+- 真正的增量 parser（v0.9.1 留下的最后一个口子；当前 SSE 触发是 full reparse，25MB / ~100ms 还行，200+MB 会卡）
+- B：parser 按 `message.id` 合并 llm_call（CC 把一次 API response 拆成多条 jsonl record，每条只装一个 content block，造成 detail 面板上"空壳节点"——v0.9.2 batch 末尾用户反馈后定下做但延后）
 
 ## v1.0 — ship
 
