@@ -11,6 +11,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createApp } from "@/server/app";
+import { _setCacheRootForTests } from "@/server/services/chatFlowDiskCache";
 
 let tmpRoot: string;
 let app: ReturnType<typeof createApp>;
@@ -19,10 +20,14 @@ const ORIGIN = "http://localhost:5174";
 
 beforeEach(async () => {
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "loomscope-app-test-"));
+  // Pin disk cache to tmpRoot so getOrLoad's fire-and-forget writes
+  // don't pollute the developer's real ~/.loomscope/cache/.
+  _setCacheRootForTests(path.join(tmpRoot, "disk-cache"));
   app = createApp({ rootDir: tmpRoot, csrfToken: TOKEN, allowedOrigin: ORIGIN });
 });
 
 afterEach(async () => {
+  _setCacheRootForTests(null);
   await fs.rm(tmpRoot, { recursive: true, force: true });
 });
 

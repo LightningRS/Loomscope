@@ -35,6 +35,7 @@ import * as path from "node:path";
 
 import { FSWatcher, watch } from "chokidar";
 
+import { dropDiskCache } from "@/server/services/chatFlowDiskCache";
 import { broadcast } from "@/server/services/sseHub";
 
 const WORKSPACES_CHANNEL = "workspaces";
@@ -106,6 +107,11 @@ export function ensureWorkspaceWatcher(rootDir: string): void {
   watcher.on("unlink", (filePath: string) => {
     const hit = classify(rootDir, filePath);
     if (!hit) return;
+    // v0.10 收尾: source jsonl gone → drop the persistent disk cache
+    // entry too, otherwise `~/.loomscope/cache/` accumulates dead
+    // snapshots forever. Best-effort (errors swallowed inside
+    // dropDiskCache).
+    void dropDiskCache(hit.sessionId);
     broadcast(WORKSPACES_CHANNEL, {
       event: "workspace-changed",
       data: {

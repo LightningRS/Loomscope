@@ -27,6 +27,10 @@ import { promises as fs } from "node:fs";
 
 import type { ChatFlow } from "@/data/types";
 import type { IncrementalParseState } from "@/parse/jsonl";
+import {
+  readDiskCache,
+  writeDiskCache,
+} from "@/server/services/chatFlowDiskCache";
 import type { ClosureMember } from "@/server/services/forkTree";
 
 const MAX_ENTRIES = 8;
@@ -165,13 +169,31 @@ export function setCached(key: string, chatFlow: ChatFlow): void {
 }
 
 /** Default convenience wrapper used by route handlers. Computes the
- * cache key, returns cached if hit, otherwise calls `loader` and stores
- * the result. */
+ * cache key, returns cached if hit, otherwise consults the persistent
+ * disk cache, otherwise calls `loader` and stores the result.
+ *
+ * Cache layering (top = fastest):
+ *   1. In-memory LRU (sub-ms)
+ *   2. Persistent disk cache `~/.loomscope/cache/<sid>.json` —
+ *      gated to `closure.length <= 1` (single-jsonl sessions).
+ *      Read pays one fs.stat + JSON.parse (50-300 ms regardless
+ *      of underlying jsonl size).
+ *   3. Cold parse via `loader` (full pipeline; 300 ms - 30+ s).
+ *
+ * Disk cache is opt-in per call: pass `useDisk: false` to skip
+ * (e.g. for fork-merge load paths whose ChatFlow depends on
+ * multiple jsonls in a closure-specific dedupe order — the disk
+ * cache schema is keyed on a single sessionId + sourcePath only).
+ */
 export async function getOrLoad(args: {
   sessionId: string;
   closure: ClosureMember[];
   fallbackJsonlPath: string;
   loader: () => Promise<ChatFlow>;
+  /** v0.10 收尾: opt-in disk cache (default true). Set false when
+   * the loader's input depends on more than just the entry jsonl
+   * (= fork closure with > 1 member). */
+  useDisk?: boolean;
 }): Promise<{ chatFlow: ChatFlow; cacheHit: boolean }> {
   const key = await buildCacheKey(
     args.sessionId,
@@ -180,7 +202,33 @@ export async function getOrLoad(args: {
   );
   const hit = getCached(key);
   if (hit) return { chatFlow: hit, cacheHit: true };
+
+  // Disk-cache layer. Best-effort — failures fall through to the
+  // loader. Gate to closure ≤ 1 by default; caller can also force
+  // off via `useDisk: false`.
+  const useDisk =
+    (args.useDisk ?? true) && (args.closure.length <= 1);
+  if (useDisk) {
+    const onDisk = await readDiskCache({
+      sessionId: args.sessionId,
+      sourcePath: args.fallbackJsonlPath,
+    });
+    if (onDisk) {
+      setCached(key, onDisk);
+      return { chatFlow: onDisk, cacheHit: true };
+    }
+  }
+
   const chatFlow = await args.loader();
   setCached(key, chatFlow);
+  if (useDisk) {
+    // Fire-and-forget — never block the request on disk write.
+    // Errors logged inside `writeDiskCache`.
+    void writeDiskCache({
+      sessionId: args.sessionId,
+      sourcePath: args.fallbackJsonlPath,
+      chatFlow,
+    });
+  }
   return { chatFlow, cacheHit: false };
 }

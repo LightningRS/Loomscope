@@ -20,6 +20,7 @@ import {
   setCached,
   setStashedState,
 } from "@/server/services/chatFlowCache";
+import { _setCacheRootForTests } from "@/server/services/chatFlowDiskCache";
 
 function makeChatFlow(id: string): ChatFlow {
   return {
@@ -38,9 +39,12 @@ let tmpDir: string;
 beforeEach(async () => {
   _resetForTests();
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "loomscope-cache-test-"));
+  // Pin disk cache to the temp dir so tests don't touch ~/.loomscope.
+  _setCacheRootForTests(path.join(tmpDir, "disk-cache"));
 });
 
 afterEach(async () => {
+  _setCacheRootForTests(null);
   await fs.rm(tmpDir, { recursive: true, force: true });
 });
 
@@ -245,5 +249,160 @@ describe("incremental parse state stash (M1)", () => {
     clearStashedState("a");
     expect(getStashedState("a")).toBeUndefined();
     expect(getStashedState("b")).toBe(b);
+  });
+});
+
+describe("getOrLoad disk-cache layer (B v0.10 收尾)", () => {
+  it("first call misses both LRU + disk → loader runs → result is written to disk", async () => {
+    const file = path.join(tmpDir, "a.jsonl");
+    await fs.writeFile(file, "{}");
+    let loadCount = 0;
+    const loader = async () => {
+      loadCount += 1;
+      return makeChatFlow(`a-${loadCount}`);
+    };
+    const r1 = await getOrLoad({
+      sessionId: "a",
+      closure: [],
+      fallbackJsonlPath: file,
+      loader,
+    });
+    expect(r1.cacheHit).toBe(false);
+    expect(loadCount).toBe(1);
+    // Disk write is fire-and-forget — let the microtask flush.
+    await new Promise((res) => setTimeout(res, 20));
+    // After clearing the in-memory LRU, next call should hit disk
+    // (NOT the loader).
+    _resetForTests();
+    // Re-pin the cache root since _resetForTests doesn't clear that
+    // override (it's an unrelated piece of state).
+    _setCacheRootForTests(path.join(tmpDir, "disk-cache"));
+    const r2 = await getOrLoad({
+      sessionId: "a",
+      closure: [],
+      fallbackJsonlPath: file,
+      loader,
+    });
+    expect(r2.cacheHit).toBe(true);
+    expect(loadCount).toBe(1); // loader did NOT re-run
+    expect(r2.chatFlow.id).toBe("a-1"); // exact same shape from disk
+  });
+
+  it("disk hit also seeds the in-memory LRU so a subsequent call is a fast LRU hit", async () => {
+    const file = path.join(tmpDir, "b.jsonl");
+    await fs.writeFile(file, "{}");
+    let loadCount = 0;
+    const loader = async () => {
+      loadCount += 1;
+      return makeChatFlow(`b-${loadCount}`);
+    };
+    await getOrLoad({
+      sessionId: "b",
+      closure: [],
+      fallbackJsonlPath: file,
+      loader,
+    });
+    await new Promise((res) => setTimeout(res, 20));
+    // Drop only the LRU; disk cache stays.
+    _resetForTests();
+    _setCacheRootForTests(path.join(tmpDir, "disk-cache"));
+    // First call after reset reads disk + populates LRU.
+    await getOrLoad({
+      sessionId: "b",
+      closure: [],
+      fallbackJsonlPath: file,
+      loader,
+    });
+    // Peek LRU keys — `b:<mtime>` should now be present.
+    expect(_peekKeysForTests().some((k) => k.startsWith("b:"))).toBe(true);
+  });
+
+  it("invalidates on file mtime change → loader re-runs", async () => {
+    const file = path.join(tmpDir, "c.jsonl");
+    await fs.writeFile(file, "{}");
+    let loadCount = 0;
+    const loader = async () => {
+      loadCount += 1;
+      return makeChatFlow(`c-${loadCount}`);
+    };
+    await getOrLoad({
+      sessionId: "c",
+      closure: [],
+      fallbackJsonlPath: file,
+      loader,
+    });
+    await new Promise((res) => setTimeout(res, 20));
+    _resetForTests();
+    _setCacheRootForTests(path.join(tmpDir, "disk-cache"));
+    // Append (= mtime + size both change) — disk guard rejects.
+    await fs.appendFile(file, "{}\n", "utf8");
+    const r = await getOrLoad({
+      sessionId: "c",
+      closure: [],
+      fallbackJsonlPath: file,
+      loader,
+    });
+    expect(r.cacheHit).toBe(false);
+    expect(loadCount).toBe(2);
+  });
+
+  it("closure > 1 (fork merge) skips disk cache: no write, no read", async () => {
+    const file = path.join(tmpDir, "d.jsonl");
+    await fs.writeFile(file, "{}");
+    let loadCount = 0;
+    const loader = async () => {
+      loadCount += 1;
+      return makeChatFlow(`d-${loadCount}`);
+    };
+    const fakeClosure = [
+      { sessionId: "d", jsonlPath: file },
+      { sessionId: "d-fork", jsonlPath: file },
+    ];
+    await getOrLoad({
+      sessionId: "d",
+      closure: fakeClosure,
+      fallbackJsonlPath: file,
+      loader,
+    });
+    await new Promise((res) => setTimeout(res, 20));
+    _resetForTests();
+    _setCacheRootForTests(path.join(tmpDir, "disk-cache"));
+    // Even with same closure, second call must miss disk and re-run
+    // the loader since we never wrote.
+    await getOrLoad({
+      sessionId: "d",
+      closure: fakeClosure,
+      fallbackJsonlPath: file,
+      loader,
+    });
+    expect(loadCount).toBe(2);
+  });
+
+  it("explicit `useDisk: false` opts out of disk cache for that call", async () => {
+    const file = path.join(tmpDir, "e.jsonl");
+    await fs.writeFile(file, "{}");
+    let loadCount = 0;
+    const loader = async () => {
+      loadCount += 1;
+      return makeChatFlow(`e-${loadCount}`);
+    };
+    await getOrLoad({
+      sessionId: "e",
+      closure: [],
+      fallbackJsonlPath: file,
+      loader,
+      useDisk: false,
+    });
+    await new Promise((res) => setTimeout(res, 20));
+    _resetForTests();
+    _setCacheRootForTests(path.join(tmpDir, "disk-cache"));
+    // Disk wasn't written, so even closure=[] re-runs the loader.
+    await getOrLoad({
+      sessionId: "e",
+      closure: [],
+      fallbackJsonlPath: file,
+      loader,
+    });
+    expect(loadCount).toBe(2);
   });
 });
