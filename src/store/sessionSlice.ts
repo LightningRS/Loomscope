@@ -336,10 +336,49 @@ export const createSessionSlice: StateCreator<LoomscopeStore, [], [], SessionSli
         return newCn;
       });
       const mergedFlow: ChatFlow = { ...cf, chatNodes: mergedChatNodes };
+      // EN: foldedCompactIds preservation. Previous behaviour
+      // (`hydrateFoldedCompactIds(id, mergedFlow)`) re-read
+      // localStorage on every refresh, which OVERRODE any in-session
+      // fold/unfold the user did since the page loaded. Symptom:
+      // user folds compact X → CC writes a new turn → SSE invalidate
+      // → refreshSession re-hydrates → if storage's unfold list has
+      // X (e.g., from earlier hover-pan poll-pollution before the
+      // persist:false fix), X gets re-marked unfolded.
+      // Fix: keep cur.foldedCompactIds verbatim for existing compacts
+      // + add NEW compacts (appeared since last refresh) as folded
+      // (default-fold for fresh nodes). Drop dead compacts (no longer
+      // in chatFlow) so the set doesn't grow unbounded. Storage is
+      // only consulted at session-load time via hydrateFoldedCompactIds.
+      // 中: refresh 不再 re-hydrate fold；保留内存里的用户操作，新出
+      // 现的 compact 默认折叠，已消失的 compact 从集合移除。storage
+      // 只在 session 首次 load 时读。修复"已折叠 compact 在收到新消
+      // 息后被打开"的问题（脏 storage 数据每次 refresh 都覆盖）。
+      const liveCompactIds = new Set<string>();
+      const oldCompactIds = new Set<string>();
+      if (oldFlow) {
+        for (const cn of oldFlow.chatNodes) {
+          if (cn.isCompactSummary) oldCompactIds.add(cn.id);
+        }
+      }
+      for (const cn of mergedFlow.chatNodes) {
+        if (cn.isCompactSummary) liveCompactIds.add(cn.id);
+      }
+      const nextFolded = new Set<string>();
+      for (const id of liveCompactIds) {
+        if (cur.foldedCompactIds.has(id)) {
+          nextFolded.add(id); // user-folded already, keep
+        } else if (!oldCompactIds.has(id)) {
+          nextFolded.add(id); // newly appeared → default-fold
+        }
+        // else: user explicitly unfolded earlier in this session, keep unfolded
+      }
+      const foldedChanged =
+        nextFolded.size !== cur.foldedCompactIds.size ||
+        [...nextFolded].some((id) => !cur.foldedCompactIds.has(id));
       updated.set(id, {
         ...cur,
         chatFlow: mergedFlow,
-        foldedCompactIds: hydrateFoldedCompactIds(id, mergedFlow),
+        foldedCompactIds: foldedChanged ? nextFolded : cur.foldedCompactIds,
         workflowCache: newCache,
         // subAgentCache stays — sub-agent ids are sidecar-rooted; the
         // sub-agent SSE invalidate path (kind='subagent') has its own
