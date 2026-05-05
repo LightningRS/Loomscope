@@ -293,6 +293,36 @@ toolStats:        {readCount, searchCount, bashCount, editFileCount, linesAdded/
 
 **递归层数**：sub-agent 内部可以再调 Agent。**v0.5 跨用户全 session 实测**：165 个 sub-agent jsonl 中 depth-1 链 131 条 / depth-2 链 35 条 / 最深 2 层（仅 auto-compact 触达）；256MB 主样本 93 个全部 depth-1。design / 实现上**支持递归展开**（drillStack subworkflow 帧无层级限制），breadcrumb 链长 ≤ 4 项的实测分布让 1600 视口完全够用。
 
+**⚠ uuid 共享陷阱（v0.9.1 实测踩到，2026-05-05 夜）**：
+
+CC 的 Task 派发会**复用 parent ChatNode 的 user uuid 作为 sub-agent jsonl 第一条 user record 的 uuid**。结果：
+
+- 父 jsonl 里 `da0ce6ef-5353-...` 的 user record 是某个 ChatNode 的根 uuid
+- 子 sidecar `agent-<agentId>.jsonl` 第一条 user record 的 uuid 也是 `da0ce6ef-5353-...`
+- 因为 `ChatNode.id = rootUserUuid`（解析约定），**两边的 ChatNode.id 完全一样**
+
+**影响范围**：任何用 `chatNode.id` 当 key / lookup 判定 scope 的代码都会被骗。一晚上踩了 4 次：
+- `useChatNodeWorkflow` hook 的 `workflowCache.get(chatNode.id)`：拿 sub-agent 的 chatNode 查 cache，命中 top-level 的 entry → 渲染错的 WorkFlow
+- `DrillPanel.DetailTabContent` 同 cache 查询：右侧 detail 显示错的 WorkNode（或空）
+- `resolveDelegate` / `resolveDrillView` 用 `state.chatFlow.chatNodes.some(c.id===)` 判 isTopLevelCn：sub-agent 的 chatnode 帧被误判 top-level，从 cache 拿了错的 nodes，于是同一 toolu id 的点击在父子 WorkFlow 间反复套娃，breadcrumb 无限延长
+- `enterWorkflow` 用同样的 id 测试判定 RESET vs APPEND：sub-agent 内点击被误判成 top-level click，触发 RESET 把用户踢回顶层
+
+**正确判定原则 —— scope 用位置，不用 id**：
+
+`drillStack` walker 走过任何 `subworkflow` 帧之后，scope **必然**是 sub-agent；这是位置语义、可靠。所有相关 lookup 用一个 `crossedSubWorkflow` flag（或等价位置信息）：
+
+| 帧位置 | nodes 来源 | 原因 |
+|---|---|---|
+| 跨 subworkflow 之前的 chatnode 帧 | `workflowCache.get(chatNodeId)`（lite mode）| top-level lite 端点剥了 inline nodes |
+| 跨 subworkflow 之后的 chatnode 帧 | `chatNode.workflow.nodes` (inline) | `/subagents` 端点返 full-fat ChatFlow，inline 已填 |
+
+或者更简单的等价判定：**inline 优先**——`chatNode.workflow.nodes.length > 0` 就用 inline；为空才查 cache。`/subagents` 永远填 inline，lite top-level 永远空 inline，这两条互斥，inline-presence 是可靠的 scope signal。
+
+**未来开发注意事项**：
+- 给 chatNode/workflow 写新 lookup 时**先问"会不会被 sub-agent 跑到？" 是 → 不能用 id 当 scope key**
+- fork merge / chatnode brief / live update 等涉及跨文件 ChatNode 关联的功能要带这个心智
+- 下次有时间可以考虑给 sub-agent ChatNode 在 parser 层加个 `originPath` 字段，让 id 不再唯一时仍然可区分（但要权衡：现在的 id 共享其实方便 toolu_use → tool_result 匹配，强行打散可能砸到别处）
+
 **sub-agent 元数据**（`agent-<agentId>.meta.json`，源码定义见 `sessionStorage.ts:264 AgentMetadata`）：
 
 ```ts

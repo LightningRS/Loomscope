@@ -6,6 +6,48 @@
 
 ---
 
+## 2026-05-06 凌晨 — v0.9.1 sidecar/workspace SSE + sub-agent uuid 共享灾难
+
+### v0.9.1 三件功能 ship（commits `2a22aeb` / `99ca03e` / `7466416`）
+
+把 v0.9 spike 留下的 3 个口子补完：
+1. **Sidecar / sub-agent jsonl watch**（`2a22aeb`）：sessionWatcher 自动扩展每条主 jsonl 的 sidecar `subagents/` 目录。chokidar 同时听 `add`（新 sub-agent 出现）和 `change`（追加），event payload 加 `kind: 'main'|'subagent'` + `agentId` + `subdir` 让 client 精准失效。client 加 `refreshSubAgent` 把 ready 状态 demote 到 loading 后调 `loadSubAgent`。
+2. **Workspace scanner SSE**（`99ca03e`）：`workspaceWatcher.ts` chokidar 监 projects root depth-2，新 jsonl `add` / `unlink` 经 sseHub 通道 `"workspaces"` 广播。client 在 App.tsx 装永久 EventSource 订阅，event 触发 `refreshWorkspaces` + 所有 expandedCwd 的 `loadSessions`——sidebar 实时更新。depth filter 防 sidecar jsonl 误触发。
+3. **Header live indicator**（`7466416`）：`LiveEventSlice` 加 `liveStatus: { session, workspaces }` + `setLiveStatus`。Header 渲染合并 pill：emerald=live / amber=connecting / rose=reconnecting / gray=offline，tooltip 显示双通道状态。
+
+### Delegate drill 改成按钮（`0e04ce6` → `3786b0d`）
+
+v0.5 的 onNodeDoubleClick 被 React Flow 默认的 zoom-on-double-click 截胡——5 个月没人发现因为没浏览器实测过。先尝试 `onNodeContextMenu`（右键），但浏览器 context menu 优先级更高 + 没法 preventDefault 干净（`3786b0d`）。最终 `SubAgentDrillButton` 显式按钮放在 DelegateCard 中段（description / Result 文本下、stats 上），purple chrome 配色。
+
+> 学到的：**canvas 里的非按钮手势都不可靠**——双击 / 右键都被默认行为吃；以后类似事情默认走显式按钮，少踩坑。
+
+### Sub-agent uuid 共享灾难（4 commits 链：`b8d9dba` → `6fe4e8b` → `adb403b` → `fb599e0` → `b5a1308` → `bdf12c9`）
+
+用户点 delegate 进入子工作流后体验崩盘，连环 4 个 bug 同根：CC 的 Task 派发**复用 parent ChatNode 的 user uuid 作为 sub-agent jsonl 第一条 user record 的 uuid**——所以 sub-agent 第一个 ChatNode 跟 parent 共享 `chatNode.id`。
+
+每一处用 `chatNode.id` 做 key 或 scope 判定的 code 都被骗：
+
+| commit | 触发现象 | 出 bug 的位置 | 修复 |
+|---|---|---|---|
+| `b8d9dba` | 点 delegate "进入子工作流" 完全无反应 | `resolveDelegate` 用 `state.chatFlow.chatNodes` 查 nodes（v0.10 lazy 后 inline 是空的）| 加 workflowCache 优先 lookup |
+| `6fe4e8b` | enterSubWorkflow 推帧但 view 又退到外层 ChatFlow | `resolveDrillView` 同样直接读 inline 而不是 cache | 同 cache 优先 |
+| `adb403b` | 嵌套点击触发 RESET 把用户踢回顶层 | enterWorkflow 用 `state.chatFlow.chatNodes.some(c.id === click)` 判 isTopLevel——sub-agent 内点击被误判 top-level | revert 到原始 stack-aware 逻辑（top 是 subworkflow 就 APPEND） |
+| `fb599e0` | breadcrumb 无限增长 chatnode/subworkflow/chatnode/... 7+ 帧 | resolveDelegate / resolveDrillView 走到深层 chatnode 帧时仍用 id 判 isTopLevelCn，加载 top-level 的 cache → 同一 toolu_id 在父子间反复套娃 | 改用 `crossedSubWorkflow` 位置 flag |
+| `b5a1308` | 点子工作流的 delegate 仍然无响应——canvas 显示的是 parent 的 WorkFlow | `useChatNodeWorkflow` hook 读 `workflowCache.get(chatNode.id)` 拿到 top-level 的 cache | inline 优先于 cache |
+| `bdf12c9` | 选中 sub-agent 内 WorkNode 右侧 detail 不显示 | `DrillPanel.DetailTabContent` 同 hook 同 bug | inline 优先于 cache |
+
+最终钉死的原则（写到 design-data-model.md）：
+
+> **scope 判定永远用位置，不用 id**。drillStack walker 跨过任何 subworkflow 帧之后必然是 sub-agent scope；或更简单——`chatNode.workflow.nodes.length > 0` 就用 inline，否则用 cache（`/subagents` 永远填 inline、lite top-level 永远空 inline，互斥）。
+
+debug 过程踩坑值：每个 silent-bail 都加了 `console.warn` / `console.info`——以后类似 "click does nothing" 直接 console-glance 定位。
+
+### 顺手修的 markdown chip 漏到 fenced block（`efc671f`）
+
+用户用 ConversationView 看本对话时发现 ```` ``` ```` fenced 块叠了 inline-code chip 的 padding/font-size——v0.8.1 的 typography theme.extend 给 `.prose :where(code)` 加了 chip props，但 plugin 内置的 `pre code` reset 只覆盖默认属性。手动加 `"pre code": { ...reset }` 在 tailwind.config.js 里。
+
+---
+
 ## 2026-05-05 深夜 — v0.9 file-tail spike + Agent SDK API 验证
 
 ### v0.9 spike（commit `3153381`）
