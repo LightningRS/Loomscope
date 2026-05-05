@@ -21,6 +21,7 @@ import { ChatFlowCanvas } from "@/canvas/ChatFlowCanvas";
 import { WorkFlowCanvas } from "@/canvas/WorkFlowCanvas";
 import { DrillPanel } from "@/components/drill/DrillPanel";
 import { Header } from "@/components/Header";
+import { PermissionBanner } from "@/components/PermissionBanner";
 import { Sidebar } from "@/components/Sidebar";
 import { useKeyboardNav } from "@/hooks/useKeyboardNav";
 import { useStore } from "@/store/index";
@@ -95,6 +96,32 @@ export default function App() {
         }
       } catch (err) {
         console.error("[loomscope] sse invalidate parse failed:", err);
+      }
+    });
+    // v∞.0 PR 2: CC settings.json hook fires reach us via the
+    // hookSseForwarder → sseHub bridge as a `cc-hook` event.
+    // Most events are just activity signals (file-watch refresh
+    // covers the data-shape changes anyway); the load-bearing
+    // branch is PermissionRequest, which never appears in jsonl
+    // and would otherwise be invisible.
+    es.addEventListener("cc-hook", (ev) => {
+      try {
+        const data = JSON.parse((ev as MessageEvent).data) as {
+          event: string;
+          payload: {
+            session_id: string;
+            transcript_path?: string;
+            cwd?: string;
+            permission_mode?: string;
+            agent_id?: string;
+            agent_type?: string;
+            extras: Record<string, unknown>;
+          };
+        };
+        if (data.payload.session_id !== activeId) return;
+        useStore.getState().applyCcHookEvent(activeId, data.event, data.payload);
+      } catch (err) {
+        console.error("[loomscope] sse cc-hook parse failed:", err);
       }
     });
     es.addEventListener("hello", () => {
@@ -207,6 +234,7 @@ export default function App() {
           {!activeId && <EmptyState />}
           {activeId && session?.isLoading && <LoadingState />}
           {activeId && session?.error && <ErrorState message={session.error} />}
+          {activeId && <PermissionBanner sessionId={activeId} />}
           {/* v0.10 perf: top-level ChatFlowCanvas stays mounted across
               drill in/out — hidden via display:none when not the
               active view. Prevents the 187-card unmount/remount spike

@@ -28,6 +28,7 @@ function seedSession() {
       subAgentCache: new Map(),
       workflowCache: new Map(),
       workflowViewports: new Map(),
+      pendingPermission: null,
       isLoading: false,
       error: null,
       lastUpdated: 0,

@@ -115,6 +115,7 @@ function seedSession(cf: ChatFlow = makeChatFlow()) {
       subAgentCache: new Map(),
       workflowCache: new Map(),
       workflowViewports: new Map(),
+      pendingPermission: null,
       isLoading: false,
       error: null,
       lastUpdated: Date.now(),

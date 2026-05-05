@@ -9,6 +9,7 @@ import { csrfMiddleware } from "@/server/middleware/csrf";
 import { ccHookRouter } from "@/server/routes/ccHook";
 import { sessionsRouter } from "@/server/routes/sessions";
 import { workspacesRouter } from "@/server/routes/workspaces";
+import { initHookSseForwarder } from "@/server/services/hookSseForwarder";
 
 export interface AppOptions {
   rootDir: string; // e.g. ~/.claude/projects
@@ -25,6 +26,10 @@ export function createApp(opts: AppOptions) {
   const app = new Hono();
   app.use("*", corsMiddleware(opts.allowedOrigin));
   app.use("*", csrfMiddleware(opts.csrfToken));
+
+  // v∞.0 PR 2: idempotent — bridges hookEventBus → sseHub so CC
+  // hook fires reach SSE-subscribed browser clients.
+  initHookSseForwarder();
 
   app.get("/api/health", (c) =>
     c.json({ ok: true, version: "0.2.0", rootDir: opts.rootDir }),

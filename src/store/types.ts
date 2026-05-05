@@ -185,6 +185,19 @@ export interface SessionState {
   // state. Cleared via `setWorkflowViewport(sid, cnId, null)` if we
   // ever need to wipe.
   workflowViewports: Map<string, { x: number; y: number; zoom: number }>;
+  // v∞.0 PR 2: surfaces CC's PermissionRequest hook (the one signal
+  // not in jsonl). Set by `applyCcHookEvent` on PermissionRequest;
+  // cleared on PermissionDenied or any PostToolUse / file-watch
+  // refresh that proves the tool already ran. UI shows a non-modal
+  // banner asking the user to alt-tab to their terminal and confirm.
+  // null when no permission is currently pending.
+  pendingPermission: {
+    toolName?: string;
+    toolInput?: unknown;
+    cwd?: string;
+    permissionMode?: string;
+    receivedAt: number;
+  } | null;
   isLoading: boolean;
   error: string | null;
   lastUpdated: number;
@@ -221,6 +234,24 @@ export interface SessionSlice {
   // 中: 把指定 session 的 lastInvalidateAt 设为当前时间戳，由 App.tsx
   // 的 SSE invalidate 处理器调用，触发 liveness 进入 active。
   markSessionActivity: (sessionId: string) => void;
+  // v∞.0 PR 2: dispatch a CC settings.json hook event into the
+  // session's state. Driven by the `cc-hook` SSE event in App.tsx.
+  // Common path = bump activity timestamp; the load-bearing branch
+  // is PermissionRequest / PermissionDenied which manage the
+  // `pendingPermission` slot (the only signal not in jsonl).
+  applyCcHookEvent: (
+    sessionId: string,
+    event: string,
+    payload: {
+      session_id: string;
+      transcript_path?: string;
+      cwd?: string;
+      permission_mode?: string;
+      agent_id?: string;
+      agent_type?: string;
+      extras: Record<string, unknown>;
+    },
+  ) => void;
   // v0.9.1: SSE `invalidate` with kind='subagent' fires when a sidecar
   // sub-agent jsonl ticked over (CC delegated tool, sub-agent appended
   // a turn). Drops the cached entry then re-fetches if it was ready —

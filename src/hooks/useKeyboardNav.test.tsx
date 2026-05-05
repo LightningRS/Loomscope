@@ -54,6 +54,7 @@ function seed(cf: ChatFlow, selectedId: string | null): void {
       subAgentCache: new Map(),
       workflowCache: new Map(),
       workflowViewports: new Map(),
+      pendingPermission: null,
       isLoading: false,
       error: null,
       lastUpdated: Date.now(),

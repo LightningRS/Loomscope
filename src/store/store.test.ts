@@ -246,6 +246,68 @@ describe("Session slice", () => {
     useStore.getState().removeSession("victim");
     expect(useStore.getState().activeSessionId).toBe("kept-active");
   });
+
+  describe("applyCcHookEvent (v∞.0 PR 2)", () => {
+    const SID = "hook-target";
+    function payload(extras: Record<string, unknown> = {}, over: Record<string, string> = {}) {
+      return {
+        session_id: SID,
+        cwd: "/home/u/proj",
+        permission_mode: "default",
+        ...over,
+        extras,
+      };
+    }
+
+    it("PermissionRequest sets pendingPermission with tool details from extras", () => {
+      useStore.getState().toggleFold(SID, "_seed_"); // create blank session
+      useStore.getState().applyCcHookEvent(SID, "PermissionRequest", payload({
+        tool_name: "Bash",
+        tool_input: { command: "rm -rf /tmp/foo" },
+      }));
+      const p = useStore.getState().sessions.get(SID)?.pendingPermission;
+      expect(p).not.toBeNull();
+      expect(p?.toolName).toBe("Bash");
+      expect((p?.toolInput as { command?: string })?.command).toBe("rm -rf /tmp/foo");
+      expect(p?.cwd).toBe("/home/u/proj");
+    });
+
+    it("PermissionDenied clears pendingPermission", () => {
+      useStore.getState().toggleFold(SID, "_seed_");
+      useStore.getState().applyCcHookEvent(SID, "PermissionRequest", payload({ tool_name: "Bash" }));
+      expect(useStore.getState().sessions.get(SID)?.pendingPermission).not.toBeNull();
+      useStore.getState().applyCcHookEvent(SID, "PermissionDenied", payload({}));
+      expect(useStore.getState().sessions.get(SID)?.pendingPermission).toBeNull();
+    });
+
+    it("PostToolUse clears pendingPermission (= user approved + tool ran)", () => {
+      useStore.getState().toggleFold(SID, "_seed_");
+      useStore.getState().applyCcHookEvent(SID, "PermissionRequest", payload({ tool_name: "Bash" }));
+      useStore.getState().applyCcHookEvent(SID, "PostToolUse", payload({ tool_name: "Bash" }));
+      expect(useStore.getState().sessions.get(SID)?.pendingPermission).toBeNull();
+    });
+
+    it("any hook event bumps lastInvalidateAt (acts as activity signal)", () => {
+      useStore.getState().toggleFold(SID, "_seed_");
+      const before = useStore.getState().sessions.get(SID)!.lastInvalidateAt;
+      // Tick forward so Date.now() differs
+      const now = before + 1000;
+      const realNow = Date.now;
+      Date.now = () => now;
+      try {
+        useStore.getState().applyCcHookEvent(SID, "PreToolUse", payload({ tool_name: "Read" }));
+      } finally {
+        Date.now = realNow;
+      }
+      expect(useStore.getState().sessions.get(SID)!.lastInvalidateAt).toBe(now);
+    });
+
+    it("no-op when sessionId is unknown (no exception)", () => {
+      expect(() =>
+        useStore.getState().applyCcHookEvent("missing", "PreToolUse", payload({})),
+      ).not.toThrow();
+    });
+  });
 });
 
 describe("LiveEvent slice (stub)", () => {

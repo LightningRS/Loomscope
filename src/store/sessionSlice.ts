@@ -26,6 +26,7 @@ function blankSessionState(): SessionState {
     subAgentCache: new Map<string, SubAgentCacheEntry>(),
     workflowCache: new Map<string, WorkflowCacheEntry>(),
     workflowViewports: new Map<string, { x: number; y: number; zoom: number }>(),
+    pendingPermission: null,
     isLoading: false,
     error: null,
     lastUpdated: 0,
@@ -507,6 +508,43 @@ export const createSessionSlice: StateCreator<LoomscopeStore, [], [], SessionSli
     if (!cur) return;
     const updated = new Map(sessions);
     updated.set(sessionId, { ...cur, lastInvalidateAt: Date.now() });
+    set({ sessions: updated });
+  },
+
+  applyCcHookEvent: (sessionId, event, payload) => {
+    const sessions = get().sessions;
+    const cur = sessions.get(sessionId);
+    if (!cur) return;
+    const updated = new Map(sessions);
+    let next = { ...cur, lastInvalidateAt: Date.now() };
+    // EN: PermissionRequest is the one event not represented in
+    // jsonl — show a banner. Tool details land in `extras`. Other
+    // events get the same activity bump file-watch invalidate
+    // already provides; keeping the action permissive (== "every
+    // hook is at least an activity signal") makes the dispatch
+    // table predictable for future event types.
+    // 中: PermissionRequest 是唯一不进 jsonl 的事件 → 设 pendingPermission
+    // 触发 banner。其它事件统一当 activity 信号处理。
+    if (event === "PermissionRequest") {
+      const ex = payload.extras;
+      next = {
+        ...next,
+        pendingPermission: {
+          toolName:
+            typeof ex.tool_name === "string" ? ex.tool_name : undefined,
+          toolInput: ex.tool_input,
+          cwd: payload.cwd,
+          permissionMode: payload.permission_mode,
+          receivedAt: Date.now(),
+        },
+      };
+    } else if (event === "PermissionDenied" || event === "PostToolUse") {
+      // PermissionDenied: explicit "user said no". PostToolUse: tool
+      // ran (= permission was granted), so any pending banner is now
+      // stale. Both clear the slot.
+      if (next.pendingPermission) next = { ...next, pendingPermission: null };
+    }
+    updated.set(sessionId, next);
     set({ sessions: updated });
   },
 
