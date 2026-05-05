@@ -1,8 +1,10 @@
 // delegate (sub-agent) WorkNode card. v0.3 shipped the folded rich
-// card; v0.5 surfaces the "右键进入" affordance + an
-// auto-compact badge for harness-spawned agents (agentId starts with
-// ``acompact-``). The double-click handler itself lives on
-// WorkFlowCanvas — here we just hint the affordance.
+// card; v0.5 added the auto-compact badge for harness-spawned agents
+// (agentId starts with ``acompact-``); v0.9.1 follow-up replaces the
+// invisible "right-click to drill" gesture with an explicit button —
+// React Flow's built-in zoom-on-double-click and the unreachable
+// browser context menu both ate the gesture, so an explicit click
+// target on the card body is the only reliable affordance.
 
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
@@ -16,6 +18,7 @@ import { NodeIdLine } from "@/canvas/nodes/chrome/NodeIdLine";
 import { TokenBar } from "@/canvas/nodes/chrome/TokenBar";
 import type { DelegateNode } from "@/data/types";
 import { useIsWorkNodeSelected } from "@/store/selectionHooks";
+import { useStore } from "@/store/index";
 import { handleStyle, workNodeChromeClass } from "./cardChrome";
 
 export function DelegateCard({ id, data }: NodeProps<DelegateRFNode>) {
@@ -34,7 +37,6 @@ export function DelegateCard({ id, data }: NodeProps<DelegateRFNode>) {
       data-testid={`worknode-delegate-${n.id}`}
       data-worknode-kind="delegate"
       data-auto-compact={isAutoCompact ? "true" : "false"}
-      title="Double-click to drill into sub-agent"
     >
       <Handle
         type="target"
@@ -74,23 +76,19 @@ export function DelegateCard({ id, data }: NodeProps<DelegateRFNode>) {
           {desc}
         </div>
       )}
-      <DelegateStats n={n} />
       {contentPreview && (
         <div className="mt-1 pt-1 border-t border-purple-200/60 text-[10px] text-gray-700 break-words line-clamp-2">
           <span className="text-purple-600 font-medium">Result: </span>
           {contentPreview}
         </div>
       )}
-      {/* Drill affordance — small text hint at the bottom right. The
-          actual handler is wired on WorkFlowCanvas's onNodeContextMenu
-          (right-click). Double-click is left to React Flow's default
-          zoom-to-fit. Hidden when the delegate has no agentId
-          (sidecar can't be located). */}
-      {n.agentId && (
-        <div className="mt-1 text-[9px] text-purple-500 italic text-right">
-          ⤢ 右键进入
-        </div>
-      )}
+      {/* v0.9.1: explicit drill-into-sub-agent button. Sits between
+          the text content (desc / Result) and the stats row so it
+          reads as "act on this content"; mirrors ChatNodeCard's
+          DrillButton pattern. Hidden when agentId missing (sidecar
+          can't be located, drill would 404). */}
+      {n.agentId && <SubAgentDrillButton workNodeId={n.id} />}
+      <DelegateStats n={n} />
       {numOrNull(n.totalTokens) != null && (
         <TokenBar tokens={numOrNull(n.totalTokens) as number} />
       )}
@@ -102,6 +100,31 @@ export function DelegateCard({ id, data }: NodeProps<DelegateRFNode>) {
         style={handleStyle(data.hasOutgoingEdge)}
       />
     </div>
+  );
+}
+
+// v0.9.1: drill-in button — same pattern as ChatNodeCard's DrillButton
+// but purple-themed to match delegate chrome. Per-button Zustand
+// subscription keeps re-renders local; e.stopPropagation() prevents
+// the click from bubbling to RF's node-click handler (which would
+// flip workflow selection unhelpfully).
+function SubAgentDrillButton({ workNodeId }: { workNodeId: string }) {
+  const enter = useStore((s) => s.enterSubWorkflow);
+  const activeId = useStore((s) => s.activeSessionId);
+  return (
+    <button
+      type="button"
+      className="mt-1 flex w-full items-center justify-center gap-1 rounded border border-purple-200 bg-purple-50 px-2 py-1 text-[10px] text-purple-700 hover:border-purple-400 hover:bg-purple-100 hover:text-purple-900 transition-colors"
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!activeId) return;
+        enter(activeId, workNodeId);
+      }}
+      data-testid={`enter-subworkflow-${workNodeId}`}
+    >
+      <span>⤢</span>
+      <span>进入子工作流</span>
+    </button>
   );
 }
 

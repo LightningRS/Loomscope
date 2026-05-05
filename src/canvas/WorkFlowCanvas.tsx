@@ -14,7 +14,7 @@
 // ChatFlow rendered by ChatFlowCanvas (recursive), not chatNodes[0]
 // here — so the v0.5 amber multiChatNodeNotice banner is gone.
 
-import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import {
   Background,
@@ -90,7 +90,6 @@ function CanvasInner({ chatNode, sessionId }: WorkFlowCanvasProps) {
     [layoutChatNode],
   );
   const setSelected = useStore((s) => s.setWorkflowSelected);
-  const enterSubWorkflow = useStore((s) => s.enterSubWorkflow);
 
   const onNodeClick = useCallback(
     (_e: unknown, node: { id: string }) => {
@@ -99,20 +98,11 @@ function CanvasInner({ chatNode, sessionId }: WorkFlowCanvasProps) {
     [setSelected, sessionId],
   );
 
-  // Right-click on a delegate WorkNode → drill into its sub-WorkFlow.
-  // (v0.5 originally bound this to double-click but React Flow's
-  // built-in zoom-on-double-click ate the event before our handler
-  // ran. Right-click has no canvas-level competitor — preventDefault
-  // suppresses the browser context menu so the gesture is purely
-  // ours.) Other kinds ignore right-click (no behavior change).
-  const onNodeContextMenu = useCallback(
-    (e: React.MouseEvent, node: { id: string; type?: string }) => {
-      if (node.type !== "delegate") return;
-      e.preventDefault();
-      enterSubWorkflow(sessionId, node.id);
-    },
-    [enterSubWorkflow, sessionId],
-  );
+  // v0.9.1: delegate sub-agent drill-in moved to an explicit button on
+  // DelegateCard (SubAgentDrillButton) — both double-click (RF zoom)
+  // and right-click (browser context menu intercepted before our
+  // handler) failed in real browsers. Button is the only reliable
+  // gesture. No canvas-level handler needed here.
 
   // No `decoratedNodes` indirection: each WorkNode card subscribes to
   // its own selected boolean via `useIsWorkNodeSelected(id)`. See the
@@ -198,7 +188,6 @@ function CanvasInner({ chatNode, sessionId }: WorkFlowCanvasProps) {
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
       onNodeClick={onNodeClick}
-      onNodeContextMenu={onNodeContextMenu}
       minZoom={0.1}
       maxZoom={2}
       proOptions={{ hideAttribution: true }}

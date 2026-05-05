@@ -216,10 +216,10 @@ describe("DelegateCard", () => {
     // emits 49.6k too, so getAllByText keeps the assertion non-ambiguous.
     expect(screen.getAllByText(/49\.6k/).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/🔧 21/)).toBeTruthy();
-    // v0.9.1: drill affordance hint visible when agentId present.
-    // Switched from double-click to right-click in v0.9.1 because RF's
-    // default zoom-on-double-click ate the gesture.
-    expect(screen.getByText(/右键进入/)).toBeTruthy();
+    // v0.9.1: drill affordance is now an explicit button (replaced
+    // the v0.5 double-click + the briefly-tried right-click — both
+    // were eaten by RF / browser defaults).
+    expect(screen.getByText(/进入子工作流/)).toBeTruthy();
     // v0.6 redo M4: TokenBar (totalTokens=49560) + NodeIdLine present.
     expect(screen.getByTestId("node-id-d1")).toBeTruthy();
   });
@@ -268,7 +268,7 @@ describe("DelegateCard", () => {
         />,
       ),
     );
-    expect(screen.queryByText(/右键进入/)).toBeNull();
+    expect(screen.queryByText(/进入子工作流/)).toBeNull();
   });
 });
 
