@@ -1,6 +1,8 @@
+import { promises as fsp } from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   buildSyntheticRecords,
@@ -11,7 +13,10 @@ import {
 import {
   buildChatFlow,
   chatFlowStats,
+  parseJsonlFile,
+  parseJsonlFileIncremental,
   parseJsonlText,
+  type IncrementalParseState,
 } from "./jsonl";
 import {
   blocksOf,
@@ -860,5 +865,125 @@ describe("fork tracking — forkedFrom + custom-title (v0.8 M1)", () => {
   it("non-merged ChatFlow leaves linkedSessions undefined (server fills it in M2)", () => {
     const cf = buildChatFlow(buildSyntheticRecords(), FIXTURE_PATH);
     expect(cf.linkedSessions).toBeUndefined();
+  });
+});
+
+describe("parseJsonlFileIncremental (M0 — v0.10 收尾 / v0.11 prep)", () => {
+  let tmpDir: string;
+  let jsonlPath: string;
+
+  beforeEach(async () => {
+    tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "loomscope-incr-"));
+    jsonlPath = path.join(tmpDir, "session.jsonl");
+  });
+  afterEach(async () => {
+    await fsp.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("prevState undefined → falls back to full parse and emits a populated state", async () => {
+    const initial = recordsToJsonl(buildSyntheticRecords().slice(0, 8));
+    await fsp.writeFile(jsonlPath, initial, "utf8");
+    const r = await parseJsonlFileIncremental(jsonlPath, undefined);
+    expect(r.usedIncremental).toBe(false);
+    expect(r.state.records.length).toBeGreaterThan(0);
+    expect(r.state.byteSize).toBe(initial.length);
+    expect(r.state.pendingFragment).toBe("");
+    // ChatFlow shape matches a full parse on the same input.
+    const fullRef = await parseJsonlFile(jsonlPath);
+    expect(r.chatFlow.chatNodes.length).toBe(fullRef.chatFlow.chatNodes.length);
+  });
+
+  it("matching state + appended bytes → records = prev ++ new and chatFlow equals fresh full parse", async () => {
+    const all = buildSyntheticRecords();
+    const head = recordsToJsonl(all.slice(0, 6));
+    await fsp.writeFile(jsonlPath, head, "utf8");
+    const first = await parseJsonlFileIncremental(jsonlPath, undefined);
+
+    // Append the rest atomically so awaitWriteFinish-style semantics
+    // aren't a concern for the test (we're not running chokidar here).
+    const tail = recordsToJsonl(all.slice(6));
+    await fsp.appendFile(jsonlPath, tail, "utf8");
+
+    const second = await parseJsonlFileIncremental(jsonlPath, first.state);
+    expect(second.usedIncremental).toBe(true);
+    expect(second.state.records.length).toBe(first.state.records.length + (all.length - 6));
+    expect(second.state.byteSize).toBe(head.length + tail.length);
+    // Equivalence: incremental result should match a clean full parse
+    // of the same final file.
+    const fresh = await parseJsonlFile(jsonlPath);
+    expect(second.chatFlow.chatNodes.length).toBe(fresh.chatFlow.chatNodes.length);
+    for (let i = 0; i < fresh.chatFlow.chatNodes.length; i += 1) {
+      expect(second.chatFlow.chatNodes[i].id).toBe(fresh.chatFlow.chatNodes[i].id);
+    }
+  });
+
+  it("unchanged file (size matches state) → reuses prev records, still emits a fresh chatFlow", async () => {
+    const txt = recordsToJsonl(buildSyntheticRecords().slice(0, 5));
+    await fsp.writeFile(jsonlPath, txt, "utf8");
+    const first = await parseJsonlFileIncremental(jsonlPath, undefined);
+    const second = await parseJsonlFileIncremental(jsonlPath, first.state);
+    expect(second.usedIncremental).toBe(true);
+    expect(second.state.records.length).toBe(first.state.records.length);
+    expect(second.chatFlow.chatNodes.length).toBe(first.chatFlow.chatNodes.length);
+  });
+
+  it("file shrunk → falls back to full parse (truncation/rewrite scenario)", async () => {
+    const big = recordsToJsonl(buildSyntheticRecords().slice(0, 8));
+    await fsp.writeFile(jsonlPath, big, "utf8");
+    const first = await parseJsonlFileIncremental(jsonlPath, undefined);
+
+    // Replace with a strictly smaller file (truncation / rewrite).
+    const small = recordsToJsonl(buildSyntheticRecords().slice(0, 3));
+    await fsp.writeFile(jsonlPath, small, "utf8");
+    const second = await parseJsonlFileIncremental(jsonlPath, first.state);
+    expect(second.usedIncremental).toBe(false);
+    expect(second.state.byteSize).toBe(small.length);
+    // records count should match a fresh parse of the small file, not
+    // be (first.records ++ partial).
+    const fresh = await parseJsonlFile(jsonlPath);
+    expect(second.chatFlow.chatNodes.length).toBe(fresh.chatFlow.chatNodes.length);
+  });
+
+  it("partial-line tail (no trailing \\n) is buffered into pendingFragment and consumed on the next call", async () => {
+    const recs = buildSyntheticRecords();
+    const head = recordsToJsonl(recs.slice(0, 4));
+    await fsp.writeFile(jsonlPath, head, "utf8");
+    const first = await parseJsonlFileIncremental(jsonlPath, undefined);
+
+    // Append a half-written line — no trailing \n. Incremental should
+    // hold it in pendingFragment and emit no new records yet.
+    const halfRecord = JSON.stringify(recs[4]);
+    const halfChunk = halfRecord.slice(0, Math.floor(halfRecord.length / 2));
+    await fsp.appendFile(jsonlPath, halfChunk, "utf8");
+    const second = await parseJsonlFileIncremental(jsonlPath, first.state);
+    expect(second.usedIncremental).toBe(true);
+    expect(second.state.pendingFragment.length).toBeGreaterThan(0);
+    expect(second.state.records.length).toBe(first.state.records.length);
+
+    // Complete the line + add the rest.
+    const completion = halfRecord.slice(halfChunk.length) + "\n" + recordsToJsonl(recs.slice(5));
+    await fsp.appendFile(jsonlPath, completion, "utf8");
+    const third = await parseJsonlFileIncremental(jsonlPath, second.state);
+    expect(third.usedIncremental).toBe(true);
+    expect(third.state.pendingFragment).toBe("");
+    // All records present + equivalent to a fresh parse.
+    const fresh = await parseJsonlFile(jsonlPath);
+    expect(third.chatFlow.chatNodes.length).toBe(fresh.chatFlow.chatNodes.length);
+  });
+
+  it("does not mutate the prevState's records array (caller may keep stale snapshots)", async () => {
+    const head = recordsToJsonl(buildSyntheticRecords().slice(0, 4));
+    await fsp.writeFile(jsonlPath, head, "utf8");
+    const first = await parseJsonlFileIncremental(jsonlPath, undefined);
+    const beforeLen = first.state.records.length;
+    const sharedRef: IncrementalParseState = first.state;
+
+    const tail = recordsToJsonl(buildSyntheticRecords().slice(4, 8));
+    await fsp.appendFile(jsonlPath, tail, "utf8");
+    const second = await parseJsonlFileIncremental(jsonlPath, first.state);
+    // Original state's array length unchanged — caller's prevState
+    // reference must remain stable.
+    expect(sharedRef.records.length).toBe(beforeLen);
+    expect(second.state.records.length).toBeGreaterThan(beforeLen);
   });
 });

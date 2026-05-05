@@ -101,6 +101,18 @@ export async function parseJsonlFile(
   jsonlPath: string,
   options: ParseOptions = {},
 ): Promise<ParseResult> {
+  const { records, parseFailures } = await readRecordsFromFile(jsonlPath);
+  const chatFlow = buildChatFlow(records, jsonlPath, options);
+  return { chatFlow, parseFailures };
+}
+
+// Internal helper: stream a jsonl and parse each line. Used by both
+// `parseJsonlFile` (full read) and `parseJsonlFileIncremental` (full
+// fallback path). Memory-friendly via readline — never buffers the
+// whole file as a single string.
+async function readRecordsFromFile(
+  jsonlPath: string,
+): Promise<{ records: RawRecord[]; parseFailures: number }> {
   const records: RawRecord[] = [];
   let parseFailures = 0;
   const stream = fs.createReadStream(jsonlPath, { encoding: "utf8" });
@@ -111,8 +123,165 @@ export async function parseJsonlFile(
     if (r) records.push(r);
     else parseFailures += 1;
   }
+  return { records, parseFailures };
+}
+
+// ─── Incremental parse (v0.10 收尾 / v0.11 prep) ──────────────────────
+//
+// Live-tail SSE invalidates currently force a full reparse on every
+// jsonl change — fine at 25 MB / ~340 ms but painful past 200 MB. The
+// incremental entry lets a caller hand back the previous parse state
+// (records[] + last byteSize + mtime) so we only read [byteSize, EOF)
+// and append the new records before re-running buildChatFlow. ChatFlow
+// build is byte-equivalent to a full reparse: buildChatFlow is a pure
+// function of records[].
+//
+// Fallbacks (caller transparent — `usedIncremental` flag reports which
+// path ran):
+//   - prevState undefined → full parse (first visit / cache eviction)
+//   - file shrunk (curSize < prevState.byteSize) → full parse
+//     (truncation / rewrite — incremental would diverge from truth)
+//   - any read error inside the tail stream → full parse
+//
+// Fork closure changes (a new fork sibling appears, an ancestor jsonl
+// gets a record) are NOT handled here — the caller (chatFlowCache /
+// sessions.ts) gates incremental on closure.length ≤ 1. Multi-jsonl
+// merge with uuid-dedup is a different beast and stays full-reparse
+// until the v∞.3 fork composer ships and we revisit.
+//
+// Partial-line tail: chokidar's `awaitWriteFinish: 80 ms` makes mid-
+// flush reads rare, but the format isn't bounded. If the trailing
+// bytes don't end with `\n`, we save them in `pendingFragment` and
+// re-prepend on the next incremental call. A torn write that completes
+// mid-record between snapshots survives intact.
+//
+// 中: 增量 parse 入口。state 含 records[] / byteSize / mtimeMs /
+// pendingFragment（尾部不带 \n 的残片）。文件长大 → 只读尾部新 bytes
+// 拼老 records 再 build；文件缩短 / 首次访问 / fork closure>1 → fallback
+// 全量。chokidar 80ms awaitWriteFinish 已大幅降低撕裂写入概率，
+// pendingFragment 兜底其余情况。
+
+export interface IncrementalParseState {
+  /** Records seen so far across all parse passes. */
+  records: RawRecord[];
+  /** Cumulative parseLine failures. */
+  parseFailures: number;
+  /** File size in bytes when this state was last written. The next
+   * incremental call reads `[byteSize, fs.stat.size)`. */
+  byteSize: number;
+  /** mtime when state was written — debug/sanity only; we trigger on
+   * size growth, not mtime delta (writes that don't grow size aren't
+   * meaningful for an append-only jsonl). */
+  mtimeMs: number;
+  /** Partial-line tail from a previous incremental tail-read (no `\n`
+   * yet). "" for state produced by `readRecordsFromFile` since
+   * readline emits any final fragment as a "complete" line. */
+  pendingFragment: string;
+}
+
+export interface IncrementalParseResult {
+  chatFlow: ChatFlow;
+  parseFailures: number;
+  /** Snapshot to feed back into the next call. */
+  state: IncrementalParseState;
+  /** True if we read [prevState.byteSize, curSize) only; false on full
+   * reparse (no prevState / file shrunk / read error). Useful for
+   * benchmarks + tests; not consumed by production callers. */
+  usedIncremental: boolean;
+}
+
+export async function parseJsonlFileIncremental(
+  jsonlPath: string,
+  prevState: IncrementalParseState | undefined,
+  options: ParseOptions = {},
+): Promise<IncrementalParseResult> {
+  const stat = await fs.promises.stat(jsonlPath);
+  const curSize = stat.size;
+  const curMtime = stat.mtimeMs;
+
+  // Decide path: incremental requires a prevState whose recorded size
+  // is no greater than current. Equal size means "no growth" — we
+  // still re-build ChatFlow (cheap relative to file IO) so callers get
+  // a fresh ChatFlow object even when nothing appended; the records
+  // array reuses the prevState slice without re-reading the file.
+  const canIncremental = !!prevState && prevState.byteSize <= curSize;
+
+  if (!canIncremental) {
+    const { records, parseFailures } = await readRecordsFromFile(jsonlPath);
+    const chatFlow = buildChatFlow(records, jsonlPath, options);
+    return {
+      chatFlow,
+      parseFailures,
+      state: {
+        records,
+        parseFailures,
+        byteSize: curSize,
+        mtimeMs: curMtime,
+        pendingFragment: "",
+      },
+      usedIncremental: false,
+    };
+  }
+
+  // Incremental path. Copy records so we don't mutate the cached
+  // state's array — callers keep stale snapshots around.
+  const records = prevState!.records.slice();
+  let parseFailures = prevState!.parseFailures;
+  let pendingFragment = prevState!.pendingFragment;
+
+  if (prevState!.byteSize < curSize) {
+    try {
+      const stream = fs.createReadStream(jsonlPath, {
+        encoding: "utf8",
+        start: prevState!.byteSize,
+      });
+      for await (const chunk of stream) {
+        pendingFragment += chunk as string;
+        let nl = pendingFragment.indexOf("\n");
+        while (nl >= 0) {
+          const line = pendingFragment.slice(0, nl);
+          pendingFragment = pendingFragment.slice(nl + 1);
+          if (line) {
+            const r = parseLine(line);
+            if (r) records.push(r);
+            else parseFailures += 1;
+          }
+          nl = pendingFragment.indexOf("\n");
+        }
+      }
+    } catch {
+      // File races (deletion mid-read, permission flap, etc.) — fall
+      // back to a full parse rather than poisoning the cache.
+      const full = await readRecordsFromFile(jsonlPath);
+      const chatFlow = buildChatFlow(full.records, jsonlPath, options);
+      return {
+        chatFlow,
+        parseFailures: full.parseFailures,
+        state: {
+          records: full.records,
+          parseFailures: full.parseFailures,
+          byteSize: curSize,
+          mtimeMs: curMtime,
+          pendingFragment: "",
+        },
+        usedIncremental: false,
+      };
+    }
+  }
+
   const chatFlow = buildChatFlow(records, jsonlPath, options);
-  return { chatFlow, parseFailures };
+  return {
+    chatFlow,
+    parseFailures,
+    state: {
+      records,
+      parseFailures,
+      byteSize: curSize,
+      mtimeMs: curMtime,
+      pendingFragment,
+    },
+    usedIncremental: true,
+  };
 }
 
 // ─── Core builder ────────────────────────────────────────────────────────────
