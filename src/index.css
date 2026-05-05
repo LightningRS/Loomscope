@@ -1,13 +1,15 @@
+/* @import MUST come before any other rules per CSS spec — Vite 8 /
+   Rolldown enforce this strictly (Vite 5 was lenient). Putting it at
+   the top ensures the highlight.js theme loads.
+   github-dark matches typography's default `pre` background
+   (gray-800) so fenced code blocks read as a coherent dark code
+   surface. rehype-highlight (in MarkdownView) adds `language-X` +
+   per-token `hljs-*` spans that this stylesheet colorizes. */
+@import "highlight.js/styles/github-dark.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-/* v0.10 polish: syntax-highlight theme for fenced code blocks. github-dark
-   matches typography's default `pre` background (gray-800) so blocks read
-   as a coherent dark code surface. rehype-highlight (in MarkdownView)
-   adds `hljs language-X` + per-token `hljs-*` spans that this stylesheet
-   colorizes. */
-@import "highlight.js/styles/github-dark.css";
 
 :root {
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
