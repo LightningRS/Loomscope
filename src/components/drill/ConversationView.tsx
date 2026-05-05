@@ -21,7 +21,7 @@
 // which both flips selectedNodeId AND persists the leaf for next
 // re-entry.
 
-import { Fragment, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, Fragment, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { useCanvasPanShim } from "@/canvas/CanvasPanContext";
 import { ConversationScrollContext } from "@/canvas/ConversationScrollContext";
@@ -71,6 +71,16 @@ const SCROLL_TOP_THRESHOLD = 200;
 // shorter and casual scroll-throughs trigger pans; longer and the
 // "I'm pointing at this" intent feels delayed.
 const HOVER_PAN_DELAY_MS = 250;
+
+// v0.9.2 d: shared IntersectionObserver instance for viewport-driven
+// workflow fetching. ConversationView creates the observer; each
+// MessageBubble reads it from context and observes its own DOM root.
+// Null means observer not ready yet (initial render before useEffect
+// runs) — bubble useEffect short-circuits, then re-runs once context
+// flips to the real instance.
+const ConversationObserverContext = createContext<IntersectionObserver | null>(
+  null,
+);
 
 export function ConversationView({ sessionId, chatFlow }: Props) {
   const selectedId = useStore(
@@ -284,53 +294,137 @@ export function ConversationView({ sessionId, chatFlow }: Props) {
   );
   const hasMoreAbove = startIdx > 0;
 
-  // EN (v0.9.2 c+, "Option A on B"): progressive reveal of visible-slice
-  // workflows.
+  // EN (v0.9.2 d): viewport-driven fetch with look-ahead margin.
   //
-  // Why the previous setTimeout(0) stagger didn't work: every
-  // MessageBubble's `useChatNodeWorkflow` ran its own auto-fetch
-  // useEffect on mount, and all N children mount BEFORE the parent's
-  // useEffect — so all N ids hit `loadChatNodeWorkflows` in the same
-  // tick and got collapsed by its microtask coalescing buffer into
-  // ONE batch request. By the time this effect ran, every id was
-  // already pending → staggered calls were no-ops.
+  // The previous "fetch every visible-slice id newest-first" approach
+  // worked but was wasteful — a 50-bubble session triggered 50 HTTP
+  // requests on session open even though the user might only ever
+  // look at the bottom 5. Now an IntersectionObserver with a 1000 px
+  // rootMargin watches each bubble's DOM root: a bubble's workflow
+  // is fetched only when it enters (or comes within ≈ 3-5 bubbles
+  // of) the viewport. Bubbles further up stay text-only — the lite
+  // payload's `summary.assistantText` already carries their full
+  // text; only the inline tool-pill row needs `workflow.nodes`,
+  // and those pills materialise as the user scrolls them into view.
   //
-  // Fix: MessageBubble now passes `disableAutoFetch={true}` (which
-  // forwards to the hook as `{ autoFetch: false }`), turning the hook
-  // into a pure read. This effect becomes the SOLE owner of fetch
-  // sequencing for the conversation list: it walks the visible slice
-  // in REVERSE (newest first) and `await`s each `loadWorkflows` call
-  // before firing the next. Each iteration is its own tick, so each
-  // call gets its own coalesce buffer, its own HTTP request, and its
-  // own store update — bubbles fill in tool pills strictly newest →
-  // oldest. Server LRU makes all-but-first request near-free.
+  // Order preservation: the observer pushes ids into a Set and a
+  // sequential drainer pops the highest-visible-path-index id first
+  // → newest-first request order, even when N entries fire in the
+  // same observer batch (initial mount + stick-to-bottom puts the
+  // entire bottom viewport into view at once). Drainer awaits each
+  // load before the next, so every call gets its own
+  // `loadChatNodeWorkflows` coalesce buffer / one HTTP request.
   //
-  // Cancellation: re-runs (visiblePath grew via extendUp, or session
-  // switched) flip the cancelled flag so the in-flight loop stops
-  // queuing further fetches. Already-cached ids early-exit inside
-  // `loadChatNodeWorkflows` so the loop replay is cheap.
+  // F-optimisation: skip the fetch entirely when
+  // `summary.toolCount === 0 && assistantText.length > 0` — the
+  // bubble's text-only fallback rounds (synthesised from
+  // `assistantText`) render identically to what a full
+  // `buildConversationRounds` walk would produce when the workflow
+  // has no tool_call / delegate nodes. Eliminates ~30-50 % of fetches
+  // on typical reading-heavy sessions.
   //
-  // 中: "选项 A 落在 B 上"的渐进 reveal。之前的 setTimeout(0) stagger
-  // 失效是因为子组件 hook 在父 useEffect 之前同 tick fire，被 microtask
-  // 合并成一次请求。现在 MessageBubble 传 disableAutoFetch=true 让 hook
-  // 变成纯读，这个 useEffect 独占 fetch 时序：倒序 await 每个 id 的
-  // load，每次都在新 tick 里各自一个请求 / 一次 store 更新，bubble 严格
-  // 由新到旧依次填充。session 切换 / 上滑加载用 cancelled flag 中断。
+  // 中: 视口驱动的按需加载 + 提前量。IntersectionObserver 带 1000 px
+  // rootMargin（≈ 3-5 个气泡的预读），气泡进入视口附近才 fetch；远离
+  // 视口的气泡只显示 summary.assistantText 文本，不拉 workflow.nodes。
+  // 队列 + 顺序 drain 保证 newest-first 不被合批冲掉。
+  // F: summary.toolCount===0 且有 assistantText 时直接跳过 fetch（rounds
+  // fallback 等价于 buildConversationRounds 的结果），常态省 30-50% 请求。
   const loadWorkflows = useStore((s) => s.loadChatNodeWorkflows);
+  const visiblePathRef = useRef(visiblePath);
+  const byIdRef = useRef(byId);
   useEffect(() => {
-    if (visiblePath.length === 0) return;
-    const ordered = [...visiblePath].reverse(); // newest first
-    let cancelled = false;
-    void (async () => {
-      for (const id of ordered) {
-        if (cancelled) return;
-        await loadWorkflows(sessionId, [id]);
+    visiblePathRef.current = visiblePath;
+    byIdRef.current = byId;
+  });
+
+  // Observer + queue + drainer state. Refs (not state) so the
+  // observer effect doesn't re-create on every render — recreating
+  // would lose all `.observe(el)` registrations and re-fire all
+  // entries.
+  const fetchedRef = useRef<Set<string>>(new Set());
+  const queueRef = useRef<Set<string>>(new Set());
+  const drainingRef = useRef(false);
+
+  const drain = useCallback(async () => {
+    if (drainingRef.current) return;
+    drainingRef.current = true;
+    try {
+      while (queueRef.current.size > 0) {
+        const vp = visiblePathRef.current;
+        const bm = byIdRef.current;
+        // Pick highest-index (= newest) id so the bubble closest to
+        // the user's eye fills in first. Linear scan is fine — queue
+        // size is bounded by the look-ahead window (a few bubbles).
+        let pick: string | null = null;
+        let pickIdx = -1;
+        for (const id of queueRef.current) {
+          const i = vp.indexOf(id);
+          if (i > pickIdx) {
+            pick = id;
+            pickIdx = i;
+          }
+        }
+        if (!pick) break;
+        queueRef.current.delete(pick);
+        if (fetchedRef.current.has(pick)) continue;
+        fetchedRef.current.add(pick);
+        const summary = bm.get(pick)?.workflow.summary;
+        const skipFetch =
+          !!summary &&
+          summary.toolCount === 0 &&
+          (summary.assistantText?.length ?? 0) > 0;
+        if (skipFetch) continue;
+        try {
+          await loadWorkflows(sessionId, [pick]);
+        } catch {
+          // Hook surfaces error state from cached.error — drainer
+          // shouldn't crash other ids in the queue.
+        }
       }
-    })();
+    } finally {
+      drainingRef.current = false;
+    }
+  }, [sessionId, loadWorkflows]);
+
+  // Observer instance is exposed via context to MessageBubbles. We
+  // hold it in state so MessageBubble re-renders + re-observes when
+  // the instance changes (session switch). One observer per session
+  // — recreating on session change also auto-resets fetched/queue
+  // state via the cleanup below.
+  const [observer, setObserver] = useState<IntersectionObserver | null>(null);
+  useEffect(() => {
+    fetchedRef.current = new Set();
+    queueRef.current = new Set();
+    drainingRef.current = false;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        let added = false;
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          const id = (e.target as HTMLElement).dataset.cnid;
+          if (!id) continue;
+          if (fetchedRef.current.has(id)) {
+            obs.unobserve(e.target);
+            continue;
+          }
+          queueRef.current.add(id);
+          obs.unobserve(e.target);
+          added = true;
+        }
+        if (added) void drain();
+      },
+      // 1000 px above + below ≈ 3-5 typical bubble heights of look-
+      // ahead. Trades a small amount of "speculative fetch" cost
+      // (cheap given server LRU) for never showing a tool-pill
+      // skeleton during normal reading-speed scroll.
+      { rootMargin: "1000px 0px 1000px 0px" },
+    );
+    setObserver(obs);
     return () => {
-      cancelled = true;
+      obs.disconnect();
+      setObserver(null);
     };
-  }, [sessionId, visiblePath, loadWorkflows]);
+  }, [sessionId, drain]);
 
   // Stable callbacks for MessageBubble props. Without these, every
   // re-render of ConversationView creates fresh arrow functions in the
@@ -389,6 +483,7 @@ export function ConversationView({ sessionId, chatFlow }: Props) {
   }
 
   return (
+    <ConversationObserverContext.Provider value={observer}>
     <div
       ref={containerRef}
       data-testid="conversation-view"
@@ -454,6 +549,7 @@ export function ConversationView({ sessionId, chatFlow }: Props) {
       {/* v0.8.1 #3: scroll-to-bottom anchor. */}
       <div ref={bottomMarkerRef} data-testid="conversation-bottom-marker" />
     </div>
+    </ConversationObserverContext.Provider>
   );
 }
 
@@ -605,6 +701,19 @@ function MessageBubbleImpl({
   // 容滚到视口。仅在"我是 running bubble"时 fire，避免历史 bubble
   // 因为偶发刷新而被强制滚到底部。
   const bubbleRef = useRef<HTMLDivElement | null>(null);
+  // v0.9.2 d: register with the conversation's IntersectionObserver
+  // so the parent can fetch this bubble's workflow.nodes only when
+  // it's near the viewport. `data-cnid` lets the observer callback
+  // recover the chatNode id from the entry without an extra Map.
+  const observer = useContext(ConversationObserverContext);
+  useEffect(() => {
+    if (!observer) return;
+    const el = bubbleRef.current;
+    if (!el) return;
+    observer.observe(el);
+    return () => observer.unobserve(el);
+  }, [observer]);
+
   const prevContentSizeRef = useRef(0);
   useEffect(() => {
     const totalEntries = rounds.reduce(
@@ -634,6 +743,7 @@ function MessageBubbleImpl({
     <div
       ref={bubbleRef}
       data-testid={`conversation-bubble-${chatNode.id}`}
+      data-cnid={chatNode.id}
       data-selected={isSelected ? "true" : "false"}
       data-dimmed={isDimmed ? "true" : "false"}
       data-running={isRunning ? "true" : "false"}
