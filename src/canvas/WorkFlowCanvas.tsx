@@ -14,7 +14,7 @@
 // ChatFlow rendered by ChatFlowCanvas (recursive), not chatNodes[0]
 // here — so the v0.5 amber multiChatNodeNotice banner is gone.
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 
 import {
   Background,
@@ -99,12 +99,16 @@ function CanvasInner({ chatNode, sessionId }: WorkFlowCanvasProps) {
     [setSelected, sessionId],
   );
 
-  // Double-click on a delegate WorkNode → drill into its sub-WorkFlow.
-  // Other kinds ignore double-click (no behavior change). The store
-  // action handles the agentId resolution + lazy load + dedupe.
-  const onNodeDoubleClick = useCallback(
-    (_e: unknown, node: { id: string; type?: string }) => {
+  // Right-click on a delegate WorkNode → drill into its sub-WorkFlow.
+  // (v0.5 originally bound this to double-click but React Flow's
+  // built-in zoom-on-double-click ate the event before our handler
+  // ran. Right-click has no canvas-level competitor — preventDefault
+  // suppresses the browser context menu so the gesture is purely
+  // ours.) Other kinds ignore right-click (no behavior change).
+  const onNodeContextMenu = useCallback(
+    (e: React.MouseEvent, node: { id: string; type?: string }) => {
       if (node.type !== "delegate") return;
+      e.preventDefault();
       enterSubWorkflow(sessionId, node.id);
     },
     [enterSubWorkflow, sessionId],
@@ -194,7 +198,7 @@ function CanvasInner({ chatNode, sessionId }: WorkFlowCanvasProps) {
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
       onNodeClick={onNodeClick}
-      onNodeDoubleClick={onNodeDoubleClick}
+      onNodeContextMenu={onNodeContextMenu}
       minZoom={0.1}
       maxZoom={2}
       proOptions={{ hideAttribution: true }}

@@ -1,5 +1,5 @@
 // delegate (sub-agent) WorkNode card. v0.3 shipped the folded rich
-// card; v0.5 surfaces the "double-click to drill" affordance + an
+// card; v0.5 surfaces the "右键进入" affordance + an
 // auto-compact badge for harness-spawned agents (agentId starts with
 // ``acompact-``). The double-click handler itself lives on
 // WorkFlowCanvas — here we just hint the affordance.
@@ -82,13 +82,13 @@ export function DelegateCard({ id, data }: NodeProps<DelegateRFNode>) {
         </div>
       )}
       {/* Drill affordance — small text hint at the bottom right. The
-          actual handler is wired on WorkFlowCanvas's onNodeDoubleClick
-          so it works whether the user double-clicks the card body or
-          this hint specifically. Hidden when the delegate has no
-          agentId (sidecar can't be located). */}
+          actual handler is wired on WorkFlowCanvas's onNodeContextMenu
+          (right-click). Double-click is left to React Flow's default
+          zoom-to-fit. Hidden when the delegate has no agentId
+          (sidecar can't be located). */}
       {n.agentId && (
         <div className="mt-1 text-[9px] text-purple-500 italic text-right">
-          ⤢ double-click to drill
+          ⤢ 右键进入
         </div>
       )}
       {numOrNull(n.totalTokens) != null && (

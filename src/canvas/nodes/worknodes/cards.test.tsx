@@ -216,8 +216,10 @@ describe("DelegateCard", () => {
     // emits 49.6k too, so getAllByText keeps the assertion non-ambiguous.
     expect(screen.getAllByText(/49\.6k/).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/🔧 21/)).toBeTruthy();
-    // v0.5: drill affordance hint visible when agentId present.
-    expect(screen.getByText(/double-click to drill/)).toBeTruthy();
+    // v0.9.1: drill affordance hint visible when agentId present.
+    // Switched from double-click to right-click in v0.9.1 because RF's
+    // default zoom-on-double-click ate the gesture.
+    expect(screen.getByText(/右键进入/)).toBeTruthy();
     // v0.6 redo M4: TokenBar (totalTokens=49560) + NodeIdLine present.
     expect(screen.getByTestId("node-id-d1")).toBeTruthy();
   });
@@ -266,7 +268,7 @@ describe("DelegateCard", () => {
         />,
       ),
     );
-    expect(screen.queryByText(/double-click to drill/)).toBeNull();
+    expect(screen.queryByText(/右键进入/)).toBeNull();
   });
 });
 

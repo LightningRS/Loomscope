@@ -361,7 +361,7 @@ export function sessionsRouter(opts: SessionsRouteOptions) {
 
   // Sub-agent sidecar loader. Returns the parsed ChatFlow JSON for one
   // sub-agent jsonl, plus its meta.json (when available). Used by v0.5
-  // double-click-to-drill into sub-agent's WorkFlow.
+  // right-click-to-drill into sub-agent's WorkFlow.
   //
   // Same two-layer path-traversal guard as tool-results:
   //   1. zod regex restricts agentId / subdir to [A-Za-z0-9_-]
