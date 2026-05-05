@@ -196,7 +196,7 @@ describe("GET /api/sessions/:id — lite vs full (v0.10 lazy ChatFlow)", () => {
 });
 
 // Batch workflow fetch — fills lazy clients in a single round-trip.
-describe("POST /api/sessions/:id/chatnodes/workflows (v0.10 lazy ChatFlow)", () => {
+describe("GET /api/sessions/:id/chatnodes/workflows (v0.10 lazy ChatFlow)", () => {
   async function seedTwoTurns(): Promise<{ sid: string; cnIds: string[] }> {
     const projectDir = path.join(tmpRoot, "-home-user-Batch");
     const sid = "44444444-4444-4000-8000-000000000004";
@@ -249,11 +249,9 @@ describe("POST /api/sessions/:id/chatnodes/workflows (v0.10 lazy ChatFlow)", () 
   it("returns nodes/edges keyed by ChatNode id for the requested ids", async () => {
     const { sid, cnIds } = await seedTwoTurns();
     expect(cnIds.length).toBe(2);
-    const res = await app.request(`/api/sessions/${sid}/chatnodes/workflows`, {
-      method: "POST",
-      headers: { "content-type": "application/json", origin: ORIGIN, "x-loomscope-token": TOKEN },
-      body: JSON.stringify({ ids: cnIds }),
-    });
+    const res = await app.request(
+      `/api/sessions/${sid}/chatnodes/workflows?ids=${cnIds.join(",")}`,
+    );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       workflows: Record<string, { nodes: Array<{ kind: string }>; edges: unknown[] }>;
@@ -268,23 +266,19 @@ describe("POST /api/sessions/:id/chatnodes/workflows (v0.10 lazy ChatFlow)", () 
 
   it("omits unknown ids from the result (no error)", async () => {
     const { sid, cnIds } = await seedTwoTurns();
-    const res = await app.request(`/api/sessions/${sid}/chatnodes/workflows`, {
-      method: "POST",
-      headers: { "content-type": "application/json", origin: ORIGIN, "x-loomscope-token": TOKEN },
-      body: JSON.stringify({ ids: [cnIds[0], "ghost-id-not-real"] }),
-    });
+    const res = await app.request(
+      `/api/sessions/${sid}/chatnodes/workflows?ids=${cnIds[0]},ghost-id-not-real`,
+    );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { workflows: Record<string, unknown> };
     expect(Object.keys(body.workflows)).toEqual([cnIds[0]]);
   });
 
-  it("400s on empty ids array", async () => {
+  it("400s on empty ids query param", async () => {
     const sid = (await seedTwoTurns()).sid;
-    const res = await app.request(`/api/sessions/${sid}/chatnodes/workflows`, {
-      method: "POST",
-      headers: { "content-type": "application/json", origin: ORIGIN, "x-loomscope-token": TOKEN },
-      body: JSON.stringify({ ids: [] }),
-    });
+    const res = await app.request(
+      `/api/sessions/${sid}/chatnodes/workflows?ids=`,
+    );
     expect(res.status).toBe(400);
   });
 });

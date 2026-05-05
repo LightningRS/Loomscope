@@ -52,6 +52,7 @@ function seed(cf: ChatFlow, selectedId: string | null): void {
       drillStack: [],
       branchMemory: {},
       subAgentCache: new Map(),
+      workflowCache: new Map(),
       isLoading: false,
       error: null,
       lastUpdated: Date.now(),

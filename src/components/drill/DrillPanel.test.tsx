@@ -52,6 +52,7 @@ beforeEach(() => {
       drillStack: [],
       branchMemory: {},
       subAgentCache: new Map(),
+      workflowCache: new Map(),
       isLoading: false,
       error: null,
       lastUpdated: 0,

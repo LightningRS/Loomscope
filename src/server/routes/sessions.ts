@@ -113,27 +113,32 @@ export function sessionsRouter(opts: SessionsRouteOptions) {
   );
 
   // v0.10 polish (lazy ChatFlow B1): batch fetch of workflow.nodes /
-  // workflow.edges for a set of ChatNode ids. POST body shape:
-  //   { ids: ["uuid1", "uuid2", ...] }
-  // Response shape:
-  //   { workflows: { "uuid1": { nodes, edges }, ... } }
-  // Missing ids (typo / stale) are simply omitted from the result —
-  // client should treat absence as "not found, don't retry".
-  // Reads from the same LRU cache the lite endpoint uses, so
-  // typically zero parse cost. Only re-parses when the cache evicted
-  // (same key would also miss for the lite endpoint anyway).
-  app.post(
+  // workflow.edges for a set of ChatNode ids. Read-only data lookup
+  // — keeping it as GET both matches HTTP semantics and bypasses
+  // CSRF (which is intended for mutations). IDs travel as a
+  // comma-separated query param (`?ids=uuid1,uuid2,...`); typical URL
+  // budget is 8 KB which fits ~200 36-char uuids. Clients with more
+  // should batch in chunks of ~100 to leave headroom.
+  //
+  // Response shape: `{ workflows: { "uuid1": { nodes, edges }, ... } }`.
+  // Missing ids (typo / stale) are silently omitted — client should
+  // treat absence as "not found, don't retry". Reads from the same
+  // LRU cache the lite endpoint uses, so typically zero parse cost.
+  app.get(
     "/:id/chatnodes/workflows",
     zValidator("param", z.object({ id: z.string().regex(SESSION_ID_RE) })),
     zValidator(
-      "json",
+      "query",
       z.object({
-        ids: z.array(z.string()).min(1).max(500),
+        ids: z.string().min(1),
       }),
     ),
     async (c) => {
       const { id } = c.req.valid("param");
-      const { ids } = c.req.valid("json");
+      const { ids: idsStr } = c.req.valid("query");
+      const ids = idsStr.split(",").filter(Boolean);
+      if (ids.length === 0) return c.json({ error: "no ids" }, 400);
+      if (ids.length > 200) return c.json({ error: "too many ids (max 200)" }, 400);
       const jsonlPath = await locateSessionJsonl(opts.rootDir, id);
       if (!jsonlPath) return c.json({ error: "session not found" }, 404);
       const projectDir = path.dirname(jsonlPath);

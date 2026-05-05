@@ -113,6 +113,7 @@ function seedSession(cf: ChatFlow = makeChatFlow()) {
       drillStack: [],
       branchMemory: {},
       subAgentCache: new Map(),
+      workflowCache: new Map(),
       isLoading: false,
       error: null,
       lastUpdated: Date.now(),

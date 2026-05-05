@@ -1,6 +1,6 @@
 import type { StateCreator } from "zustand";
 
-import type { ChatFlow, ChatNode, DelegateNode } from "@/data/types";
+import type { ChatFlow, ChatNode, DelegateNode, WorkFlow } from "@/data/types";
 import type { AgentMetadata } from "@/parse/sidecar";
 import type {
   DrillFrame,
@@ -8,6 +8,7 @@ import type {
   SessionSlice,
   SessionState,
   SubAgentCacheEntry,
+  WorkflowCacheEntry,
 } from "@/store/types";
 
 const EMPTY_VIEWPORT = { x: 0, y: 0, zoom: 1 };
@@ -23,6 +24,7 @@ function blankSessionState(): SessionState {
     drillStack: [],
     branchMemory: {},
     subAgentCache: new Map<string, SubAgentCacheEntry>(),
+    workflowCache: new Map<string, WorkflowCacheEntry>(),
     isLoading: false,
     error: null,
     lastUpdated: 0,
@@ -104,6 +106,50 @@ export function hydrateFoldedCompactIds(
 // outside the store because Promises aren't serializable and we want
 // cheap dedupe without re-rendering subscribers.
 const loadInFlight = new Map<string, Promise<SubAgentCacheEntry>>();
+
+// In-flight loadChatNodeWorkflow promises, keyed ``sessionId/cnId``.
+// Same rationale as ``loadInFlight`` above. Multiple components can
+// fire `loadChatNodeWorkflows` concurrently for overlapping ChatNode
+// id sets; dedupe so each unique (sessionId, cnId) tuple has at most
+// one in-flight fetch.
+const workflowLoadInFlight = new Map<string, Promise<void>>();
+
+// Helper used by `loadChatNodeWorkflows`. Splits the id list into
+// chunks the server accepts (<= 200 ids per query) and concatenates
+// the resulting workflow maps. Network failures in any chunk reject
+// the whole call — caller is responsible for marking each requested
+// id as `error` in that case.
+async function fetchWorkflowBatch(
+  sessionId: string,
+  ids: string[],
+): Promise<Record<string, WorkFlow>> {
+  const CHUNK = 100;
+  const merged: Record<string, WorkFlow> = {};
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const slice = ids.slice(i, i + CHUNK);
+    const url = `/api/sessions/${sessionId}/chatnodes/workflows?ids=${slice.join(",")}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`fetch ${url} → ${res.status}`);
+    const body = (await res.json()) as {
+      workflows: Record<string, { nodes: WorkFlow["nodes"]; edges: WorkFlow["edges"] }>;
+    };
+    for (const [id, wf] of Object.entries(body.workflows)) {
+      // Server doesn't ship `summary` on the per-cn response (it
+      // already lives on the lite ChatFlow's workflow.summary). We
+      // reconstruct a complete WorkFlow object here so consumers
+      // reading `entry.workflow.summary` after lazy load see the
+      // same shape as before lazy load.
+      merged[id] = {
+        // summary will be back-filled by `loadChatNodeWorkflows`
+        // from the existing chatFlow.chatNodes[id].workflow.summary.
+        summary: undefined,
+        nodes: wf.nodes,
+        edges: wf.edges,
+      };
+    }
+  }
+  return merged;
+}
 
 async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
@@ -266,6 +312,128 @@ export const createSessionSlice: StateCreator<LoomscopeStore, [], [], SessionSli
     const cur = updated.get(sessionId) ?? blankSessionState();
     updated.set(sessionId, { ...cur, workflowSelectedNodeId: nodeId });
     set({ sessions: updated });
+  },
+
+  // ── v0.10 lazy ChatFlow B2: per-ChatNode workflow lazy load ────────
+  loadChatNodeWorkflows: async (sessionId, chatNodeIds) => {
+    if (chatNodeIds.length === 0) return;
+    const sess0 = get().sessions.get(sessionId);
+    if (!sess0) return;
+
+    // Filter to ids that are NOT already ready or pending. ``error``
+    // entries get retried — caller decides retry policy.
+    const cache = sess0.workflowCache;
+    const toFetch: string[] = [];
+    for (const id of chatNodeIds) {
+      const e = cache.get(id);
+      if (!e) {
+        toFetch.push(id);
+        continue;
+      }
+      if (e.status === "ready") continue;
+      if (e.status === "pending") continue;
+      toFetch.push(id); // error → retry
+    }
+    if (toFetch.length === 0) return;
+
+    // Mark all to-fetch ids as pending in one set call so subscribers
+    // re-render only once.
+    {
+      const sessions = new Map(get().sessions);
+      const cur = sessions.get(sessionId);
+      if (!cur) return;
+      const next = new Map(cur.workflowCache);
+      for (const id of toFetch) {
+        next.set(id, { status: "pending", workflow: null, error: null });
+      }
+      sessions.set(sessionId, { ...cur, workflowCache: next });
+      set({ sessions });
+    }
+
+    // Dedupe in-flight: if any of `toFetch` is already mid-fetch from
+    // another concurrent caller, await that promise rather than firing
+    // a duplicate request. We dedupe per-id, so two callers with
+    // overlapping id sets coalesce on the overlap and each only
+    // fetches their unique remainder.
+    const flightKey = (id: string) => `${sessionId}/${id}`;
+    const alreadyFlying = toFetch.filter((id) =>
+      workflowLoadInFlight.has(flightKey(id)),
+    );
+    const needsFetch = toFetch.filter(
+      (id) => !workflowLoadInFlight.has(flightKey(id)),
+    );
+
+    let fetchPromise: Promise<void> | null = null;
+    if (needsFetch.length > 0) {
+      fetchPromise = (async () => {
+        try {
+          const map = await fetchWorkflowBatch(sessionId, needsFetch);
+          const sessions = new Map(get().sessions);
+          const cur = sessions.get(sessionId);
+          if (!cur) return;
+          const next = new Map(cur.workflowCache);
+          // Back-fill summary from the lite ChatFlow's existing
+          // workflow.summary so post-load shape mirrors the old
+          // pre-lazy world.
+          const cnIndex = new Map(
+            (cur.chatFlow?.chatNodes ?? []).map((cn) => [cn.id, cn]),
+          );
+          for (const id of needsFetch) {
+            const wf = map[id];
+            if (wf) {
+              const existing = cnIndex.get(id);
+              const summary =
+                existing?.workflow.summary ?? wf.summary ?? undefined;
+              next.set(id, {
+                status: "ready",
+                workflow: { ...wf, summary },
+                error: null,
+              });
+            } else {
+              // Server omitted this id → treat as error. Client can
+              // retry by calling loadChatNodeWorkflows again.
+              next.set(id, {
+                status: "error",
+                workflow: null,
+                error: "not found in batch response",
+              });
+            }
+          }
+          sessions.set(sessionId, { ...cur, workflowCache: next });
+          set({ sessions });
+        } catch (err) {
+          const sessions = new Map(get().sessions);
+          const cur = sessions.get(sessionId);
+          if (!cur) return;
+          const next = new Map(cur.workflowCache);
+          const msg = err instanceof Error ? err.message : String(err);
+          for (const id of needsFetch) {
+            next.set(id, { status: "error", workflow: null, error: msg });
+          }
+          sessions.set(sessionId, { ...cur, workflowCache: next });
+          set({ sessions });
+        } finally {
+          for (const id of needsFetch) workflowLoadInFlight.delete(flightKey(id));
+        }
+      })();
+      for (const id of needsFetch) {
+        workflowLoadInFlight.set(flightKey(id), fetchPromise);
+      }
+    }
+
+    // Wait on overlapping in-flight promises (each unique value),
+    // plus the fetch we just kicked off if any.
+    const wait: Promise<void>[] = [];
+    if (fetchPromise) wait.push(fetchPromise);
+    const seenPromises = new Set<Promise<void>>();
+    for (const id of alreadyFlying) {
+      const p = workflowLoadInFlight.get(flightKey(id));
+      if (p && !seenPromises.has(p)) {
+        seenPromises.add(p);
+        wait.push(p);
+      }
+    }
+    await Promise.all(wait);
   },
 
   // ── v0.5 sub-agent nesting ─────────────────────────────────────────

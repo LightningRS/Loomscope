@@ -100,6 +100,17 @@ export type DrillFrame =
 // ``(sessionId, agentId)`` and dropped on session unload — sub-agents
 // from a different session would have stale parentChatNodeId / uuid
 // references anyway, so cross-session sharing isn't valuable.
+// v0.10 lazy ChatFlow B2: per-ChatNode workflow lazy cache. Status
+// machine mirrors SubAgentCacheEntry — `pending` while a fetch is in
+// flight, `ready` once nodes/edges are populated, `error` on
+// network/parse failure. Components reading workflow check status
+// before iterating; pending → render skeleton, error → show retry.
+export interface WorkflowCacheEntry {
+  status: "pending" | "ready" | "error";
+  workflow: import("@/data/types").WorkFlow | null;
+  error: string | null;
+}
+
 export interface SubAgentCacheEntry {
   status: "loading" | "ready" | "error";
   chatFlow: ChatFlow | null;
@@ -148,6 +159,12 @@ export interface SessionState {
   // everything in memory; eviction policy (LRU / max-size) is v0.10
   // backlog.
   subAgentCache: Map<string, SubAgentCacheEntry>;
+  // v0.10 lazy ChatFlow B2: per-ChatNode workflow cache, keyed on
+  // ChatNode.id. Populated by `loadChatNodeWorkflows` (batch fetch
+  // against POST /api/sessions/:id/chatnodes/workflows). Empty on
+  // session load — components trigger lazy loads as they need
+  // workflows.
+  workflowCache: Map<string, WorkflowCacheEntry>;
   isLoading: boolean;
   error: string | null;
   lastUpdated: number;
@@ -165,6 +182,14 @@ export interface SessionSlice {
   exitWorkflow: (sessionId: string) => void;
   truncateDrillStack: (sessionId: string, depth: number) => void;
   setWorkflowSelected: (sessionId: string, nodeId: string | null) => void;
+  // ── v0.10 lazy ChatFlow B2: per-ChatNode workflow lazy load ──
+  // Batch-fetch workflows for the given ChatNode ids. Dedupes against
+  // currently-pending fetches and skips ids whose entry is already
+  // `ready`. Returns when the batch resolves; per-id status updates
+  // land in `workflowCache` so subscribers re-render incrementally.
+  // Server endpoint: POST /api/sessions/:id/chatnodes/workflows.
+  loadChatNodeWorkflows: (sessionId: string, chatNodeIds: string[]) => Promise<void>;
+
   // ── v0.5 sub-agent nesting ──
   // Lazy-load a sub-agent's ChatFlow + meta and cache it. In-flight
   // calls dedupe (multiple double-clicks on the same delegate fold
