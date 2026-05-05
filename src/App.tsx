@@ -96,6 +96,32 @@ export default function App() {
     };
   }, [activeId]);
 
+  // v0.9.1: workspace-level SSE. Single global connection (lifetime =
+  // app lifetime), independent of activeSession. On workspace-changed,
+  // refetch the workspace summary list and any expanded session
+  // listings (lazy-loaded sublists in the sidebar). New sessions
+  // appear without manual refresh; deleted sessions disappear.
+  useEffect(() => {
+    const es = new EventSource("/api/workspaces/events");
+    es.addEventListener("workspace-changed", () => {
+      const store = useStore.getState();
+      void store.refreshWorkspaces();
+      // Also refresh any expanded workspace's session list — the new
+      // (or removed) jsonl might belong to one of them, and a fresh
+      // listSessions reflects the current filesystem.
+      for (const cwd of store.expandedCwds) {
+        void store.loadSessions(cwd);
+      }
+    });
+    es.addEventListener("hello", () => {});
+    es.addEventListener("ping", () => {});
+    es.onerror = () => {
+      // eslint-disable-next-line no-console
+      console.warn("[loomscope] workspaces sse error (auto-retry)");
+    };
+    return () => es.close();
+  }, []);
+
   // Resolve which view to show. Sub-agent drill frames pull the
   // sub ChatFlow out of the cache, so the resolver returns null
   // (= ChatFlow view fallback) until the cache fills.
