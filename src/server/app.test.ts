@@ -662,6 +662,37 @@ describe("CORS middleware", () => {
     const res = await app.request("/api/health", { headers: { origin: ORIGIN } });
     expect(res.status).toBe(200);
   });
+
+  it("supports comma-separated allowedOrigin list (dev mode 5174 + 5175)", async () => {
+    // v∞.0 PR 3 fix: in dev, Vite at 5175 proxies to Hono at 5174 but
+    // browser POSTs carry Origin: localhost:5175. CORS must accept
+    // both ports without weakening prod (which still uses one).
+    const dualApp = createApp({
+      rootDir: tmpRoot,
+      csrfToken: TOKEN,
+      allowedOrigin: "http://localhost:5174,http://localhost:5175",
+      hookSecret: HOOK_SECRET,
+    });
+    const r5174 = await dualApp.request("/api/health", {
+      headers: { origin: "http://localhost:5174" },
+    });
+    expect(r5174.status).toBe(200);
+    expect(r5174.headers.get("access-control-allow-origin")).toBe(
+      "http://localhost:5174",
+    );
+    const r5175 = await dualApp.request("/api/health", {
+      headers: { origin: "http://localhost:5175" },
+    });
+    expect(r5175.status).toBe(200);
+    expect(r5175.headers.get("access-control-allow-origin")).toBe(
+      "http://localhost:5175",
+    );
+    // Origin not in the list still gets rejected.
+    const rOther = await dualApp.request("/api/health", {
+      headers: { origin: "http://localhost:9999" },
+    });
+    expect(rOther.status).toBe(403);
+  });
 });
 
 // v0.10 收尾 / v0.11 prep: incremental parser through the route layer.
