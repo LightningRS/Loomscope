@@ -180,6 +180,17 @@ export interface SessionSlice {
   // drillStack / foldedCompactIds — and clears `workflowCache` so the
   // lazy hooks pull fresh per-ChatNode workflow data.
   refreshSession: (id: string) => Promise<void>;
+  // v0.9.1: SSE `invalidate` with kind='subagent' fires when a sidecar
+  // sub-agent jsonl ticked over (CC delegated tool, sub-agent appended
+  // a turn). Drops the cached entry then re-fetches if it was ready —
+  // viewers currently looking at this sub-agent see a brief loading
+  // flash then fresh content. If the entry wasn't loaded yet (cold),
+  // does nothing — next loadSubAgent picks up fresh.
+  refreshSubAgent: (
+    sessionId: string,
+    agentId: string,
+    subdir?: string,
+  ) => Promise<void>;
   setActiveSession: (id: string | null) => void;
   setSelected: (sessionId: string, nodeId: string | null) => void;
   setViewport: (sessionId: string, vp: { x: number; y: number; zoom: number }) => void;

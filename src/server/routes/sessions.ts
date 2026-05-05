@@ -24,6 +24,7 @@ import { SidecarLoader, type AgentMetadata } from "@/parse/sidecar";
 import { getOrLoad as getOrLoadCachedChatFlow } from "@/server/services/chatFlowCache";
 import { findForkClosure, type ClosureMember } from "@/server/services/forkTree";
 import {
+  sidecarSubagentsDir,
   watchSessionClosure,
   unwatchSession,
 } from "@/server/services/sessionWatcher";
@@ -227,7 +228,10 @@ export function sessionsRouter(opts: SessionsRouteOptions) {
       });
       const closurePaths =
         closure.length > 0 ? closure.map((m) => m.jsonlPath) : [jsonlPath];
+      // Watcher auto-extends each main jsonl to its sidecar `subagents/`
+      // dir — caller doesn't have to enumerate sub-agents.
       watchSessionClosure(id, closurePaths);
+      const sidecarDirs = closurePaths.map(sidecarSubagentsDir);
       return streamSSE(c, async (stream) => {
         const sub: SseSubscriber = {
           send: (msg) => {
@@ -249,7 +253,10 @@ export function sessionsRouter(opts: SessionsRouteOptions) {
         });
         await stream.writeSSE({
           event: "hello",
-          data: JSON.stringify({ sessionId: id, watching: closurePaths }),
+          data: JSON.stringify({
+            sessionId: id,
+            watching: { main: closurePaths, sidecar: sidecarDirs },
+          }),
         });
         // Heartbeat loop. stream.sleep is abort-aware; the while-loop
         // exits on disconnect and the onAbort handler fires.

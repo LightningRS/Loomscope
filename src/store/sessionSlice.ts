@@ -269,6 +269,28 @@ export const createSessionSlice: StateCreator<LoomscopeStore, [], [], SessionSli
     }
   },
 
+  // v0.9.1: re-fetch a single sub-agent in response to SSE invalidate
+  // with kind='subagent'. Strategy: only act if the entry was already
+  // ready (= someone is presumably looking at it); for cold entries
+  // the next loadSubAgent will pick up fresh on demand.
+  refreshSubAgent: async (sessionId, agentId, subdir) => {
+    const sess = get().sessions.get(sessionId);
+    const cached = sess?.subAgentCache.get(agentId);
+    if (!cached || cached.status !== "ready") return;
+    // Mark as loading so consumers see the transition; loadSubAgent
+    // would short-circuit on `ready` so we have to demote first.
+    setSubAgentCacheEntry(get, set, sessionId, agentId, {
+      ...cached,
+      status: "loading",
+      lastAccess: Date.now(),
+    });
+    try {
+      await get().loadSubAgent(sessionId, agentId, subdir);
+    } catch (err) {
+      console.error("[loomscope] refreshSubAgent failed:", err);
+    }
+  },
+
   setActiveSession: (id) => {
     // Evict the previous session's sub-agent cache. Cross-session
     // sharing isn't valuable (uuids belong to different jsonls) and

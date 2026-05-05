@@ -56,8 +56,23 @@ export default function App() {
       try {
         const payload = JSON.parse((ev as MessageEvent).data) as {
           sessionId: string;
+          // v0.9.1: server now classifies the change source. Older
+          // payloads without `kind` are treated as main (back compat
+          // for any in-flight stream during deploy).
+          kind?: "main" | "subagent";
+          agentId?: string;
+          subdir?: string | null;
         };
-        if (payload.sessionId === activeId) {
+        if (payload.sessionId !== activeId) return;
+        if (payload.kind === "subagent" && payload.agentId) {
+          void useStore
+            .getState()
+            .refreshSubAgent(
+              activeId,
+              payload.agentId,
+              payload.subdir ?? undefined,
+            );
+        } else {
           void useStore.getState().refreshSession(activeId);
         }
       } catch (err) {

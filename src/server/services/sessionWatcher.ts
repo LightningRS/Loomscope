@@ -1,4 +1,5 @@
-// v0.9 file-tail: refcounted chokidar watcher for session JSONLs.
+// v0.9 file-tail: refcounted chokidar watcher for session JSONLs +
+// sidecar dirs.
 //
 // Why a refcounted single watcher instead of one chokidar per session:
 // fork closures overlap (sibling forks share most ancestor jsonls), so
@@ -6,19 +7,26 @@
 // fire one event handler per fs change and fan out to every interested
 // session without redundant watchers.
 //
+// v0.9.1 extension: each watched main jsonl auto-extends to its sidecar
+// `subagents/` directory. chokidar recursive watch on the dir means new
+// sub-agent jsonls appearing during the watch lifetime fire `add`,
+// modifications fire `change` — both translate to a sub-agent-specific
+// invalidate event so the client can refresh just that sub-agent's
+// cache entry rather than the whole session.
+//
+// Event payload kinds (broadcast via sseHub.ts → /:id/events):
+//   { sessionId, kind: "main",     reason, path }
+//   { sessionId, kind: "subagent", reason, path, agentId, subdir? }
+//
 // Lifecycle:
 //   - sessions.ts /:id/events route calls `watchSessionClosure(id, paths)`
-//     before subscribing the SSE stream
-//   - on `change` event: invalidate LRU cache + broadcast to subscribers
-//     of every session that owns this path
+//     before subscribing the SSE stream — paths = closure jsonl paths;
+//     sidecar dirs are derived per main jsonl
+//   - on change/add: classify by path, invalidate LRU cache (only on
+//     `main` — sub-agent route doesn't go through LRU), broadcast
 //   - when the last SSE subscriber for a session disconnects, route
 //     calls `unwatchSession(id)`; paths still owned by other sessions
 //     stay watched
-//
-// Spike scope: only listens for `change` (file modify). New session
-// files appearing in the project dir aren't auto-discovered — that's
-// for v0.9.1 once we decide whether the workspace scanner subscribes
-// to a global "new session" event.
 //
 // chokidar config:
 //   - persistent: true   — keep the event loop alive while watching
@@ -32,17 +40,45 @@
 //     polling, but ~/.claude/projects is on the Linux side, so native
 //     watch wins.
 
+import * as path from "node:path";
+
 import { FSWatcher, watch } from "chokidar";
 
+import { parseAgentId } from "@/parse/sidecar";
 import { invalidateSession } from "@/server/services/chatFlowCache";
 import { broadcast } from "@/server/services/sseHub";
+
+type WatchedPathKind = "main" | "sidecar-dir";
 
 let watcher: FSWatcher | null = null;
 
 // path → set of sessionIds that care about this path
 const pathToSessions = new Map<string, Set<string>>();
-// sessionId → set of paths it owns (for cleanup)
+// sessionId → set of paths it owns (for cleanup). Includes both main
+// jsonls and sidecar dirs.
 const sessionToPaths = new Map<string, Set<string>>();
+// path → kind (so the change/add handler routes events correctly)
+const pathKind = new Map<string, WatchedPathKind>();
+// Sorted list of sidecar dir prefixes — used for "is this changed file
+// under any watched sidecar dir" lookup. Refreshed lazily.
+let sidecarDirsCache: string[] | null = null;
+
+function refreshSidecarDirsCache(): void {
+  sidecarDirsCache = [];
+  for (const [p, kind] of pathKind) {
+    if (kind === "sidecar-dir") sidecarDirsCache.push(p);
+  }
+}
+
+function getSidecarDirs(): string[] {
+  if (!sidecarDirsCache) refreshSidecarDirsCache();
+  return sidecarDirsCache!;
+}
+
+/** Convention: sidecar dir for `<sid>.jsonl` lives at `<sid>/subagents`. */
+export function sidecarSubagentsDir(jsonlPath: string): string {
+  return path.join(jsonlPath.replace(/\.jsonl$/, ""), "subagents");
+}
 
 function ensureWatcher(): FSWatcher {
   if (watcher) return watcher;
@@ -54,46 +90,111 @@ function ensureWatcher(): FSWatcher {
       pollInterval: 30,
     },
   });
-  watcher.on("change", (filePath: string) => {
-    const ids = pathToSessions.get(filePath);
-    if (!ids || ids.size === 0) return;
-    for (const sessionId of ids) {
-      invalidateSession(sessionId);
-      broadcast(sessionId, {
-        event: "invalidate",
-        data: { sessionId, reason: "fs-change", path: filePath },
-      });
-    }
-  });
+  // change = existing file modified; add = new file appeared. For
+  // main jsonl, only `change` matters (file already existed when we
+  // started watching). For sidecar dir, both matter — a brand-new
+  // sub-agent shows up as `add`, subsequent appends as `change`.
+  watcher.on("change", (filePath: string) => handleEvent(filePath, "change"));
+  watcher.on("add", (filePath: string) => handleEvent(filePath, "add"));
   watcher.on("error", (err) => {
     console.error("[sessionWatcher] chokidar error:", err);
   });
   return watcher;
 }
 
+function handleEvent(filePath: string, reason: "change" | "add"): void {
+  // Direct hit: this is a main-jsonl path we explicitly watched.
+  const directOwners = pathToSessions.get(filePath);
+  if (directOwners && pathKind.get(filePath) === "main") {
+    for (const sessionId of directOwners) {
+      invalidateSession(sessionId);
+      broadcast(sessionId, {
+        event: "invalidate",
+        data: { sessionId, kind: "main", reason, path: filePath },
+      });
+    }
+    return;
+  }
+
+  // Otherwise, check if `filePath` lies under any watched sidecar dir.
+  // Sub-agent jsonls have shape `agent-<id>.jsonl`, optionally inside
+  // a single subdir level. Anything else (e.g., meta.json files,
+  // tool-results/*) is ignored — clients don't subscribe to those.
+  const filename = path.basename(filePath);
+  if (!filename.startsWith("agent-") || !filename.endsWith(".jsonl")) {
+    return;
+  }
+  for (const sidecarDir of getSidecarDirs()) {
+    if (!filePath.startsWith(sidecarDir + path.sep)) continue;
+    const sessions = pathToSessions.get(sidecarDir);
+    if (!sessions || sessions.size === 0) continue;
+    const rel = path.relative(sidecarDir, filePath);
+    const parts = rel.split(path.sep);
+    const subdir = parts.length > 1 ? parts[0] : undefined;
+    const agentId = parseAgentId(filename);
+    for (const sessionId of sessions) {
+      // Sub-agent doesn't touch LRU (loadSubAgent route parses fresh
+      // each time). Just broadcast so the client refreshes its
+      // subAgentCache entry.
+      broadcast(sessionId, {
+        event: "invalidate",
+        data: {
+          sessionId,
+          kind: "subagent",
+          reason,
+          path: filePath,
+          agentId,
+          subdir: subdir ?? null,
+        },
+      });
+    }
+    return;
+  }
+}
+
+function addPath(
+  sessionId: string,
+  p: string,
+  kind: WatchedPathKind,
+  ownedRef: Set<string>,
+): void {
+  if (ownedRef.has(p)) return;
+  ownedRef.add(p);
+  let seen = pathToSessions.get(p);
+  if (!seen) {
+    seen = new Set();
+    pathToSessions.set(p, seen);
+    pathKind.set(p, kind);
+    if (kind === "sidecar-dir") sidecarDirsCache = null;
+    // First subscriber for this path → tell chokidar to watch it.
+    // chokidar tolerates non-existent paths (sidecar dirs may not
+    // exist yet for sessions with no sub-agents) — when the dir
+    // appears, watcher picks it up.
+    watcher!.add(p);
+  }
+  seen.add(sessionId);
+}
+
 /**
- * Add `paths` to the watch set on behalf of `sessionId`. Idempotent —
- * paths already owned by this session are skipped; paths new to chokidar
- * are added.
+ * Add `closurePaths` (main jsonls) to the watch set on behalf of
+ * `sessionId`. For each main jsonl, also watches its sidecar
+ * `subagents/` directory so sub-agent jsonl changes fire too.
+ *
+ * Idempotent — paths already owned by this session are skipped.
  */
-export function watchSessionClosure(sessionId: string, paths: string[]): void {
-  const w = ensureWatcher();
+export function watchSessionClosure(
+  sessionId: string,
+  closurePaths: string[],
+): void {
+  ensureWatcher();
   let owned = sessionToPaths.get(sessionId);
   if (!owned) {
     owned = new Set();
     sessionToPaths.set(sessionId, owned);
   }
-  for (const p of paths) {
-    if (owned.has(p)) continue;
-    owned.add(p);
-    let seen = pathToSessions.get(p);
-    if (!seen) {
-      seen = new Set();
-      pathToSessions.set(p, seen);
-      // First subscriber for this path → tell chokidar to watch it.
-      w.add(p);
-    }
-    seen.add(sessionId);
+  for (const p of closurePaths) {
+    addPath(sessionId, p, "main", owned);
+    addPath(sessionId, sidecarSubagentsDir(p), "sidecar-dir", owned);
   }
 }
 
@@ -110,6 +211,9 @@ export function unwatchSession(sessionId: string): void {
     seen.delete(sessionId);
     if (seen.size === 0) {
       pathToSessions.delete(p);
+      const kind = pathKind.get(p);
+      pathKind.delete(p);
+      if (kind === "sidecar-dir") sidecarDirsCache = null;
       watcher?.unwatch(p);
     }
   }
@@ -124,15 +228,19 @@ export async function _resetForTests(): Promise<void> {
   }
   pathToSessions.clear();
   sessionToPaths.clear();
+  pathKind.clear();
+  sidecarDirsCache = null;
 }
 
 /** Test helper: peek state. */
 export function _peekStateForTests(): {
   watchedPaths: string[];
   sessions: string[];
+  kinds: Array<{ path: string; kind: WatchedPathKind }>;
 } {
   return {
     watchedPaths: [...pathToSessions.keys()],
     sessions: [...sessionToPaths.keys()],
+    kinds: [...pathKind.entries()].map(([p, k]) => ({ path: p, kind: k })),
   };
 }
