@@ -221,6 +221,18 @@ export interface WorkFlow {
 export interface WorkflowSummary {
   // Last-llm_call's text (truncated for the card preview).
   assistantPreview: string;
+  // EN (v0.9.2): full text from EVERY llm_call in DAG-array order.
+  // Renders the conversation bubble's multi-round text without the
+  // workflow.nodes lazy-fetch window — user message and assistant
+  // message arrive together when the lite ChatFlow lands. Tool
+  // pills (input/output JSON, thinking traces) still come from
+  // workflow.nodes via lazy load. Cost: ~5-15% increase to lite
+  // payload (200-CN session estimate +200KB-1MB), still vastly
+  // smaller than the 22MB full ChatFlow.
+  // 中: 每个 llm_call 的完整 text 数组（按 DAG 顺序）。让 bubble 的
+  // 多轮 assistant 文本随 lite ChatFlow 一起到达，不用等 workflow
+  // lazy fetch。tool pill 仍懒加载。代价 ~5-15% lite 体积增长。
+  assistantText: string[];
   llmCount: number;
   // Number of CONNECTED llm_call chains in the WorkFlow DAG. A chain
   // is a maximal run of llm_call nodes linked by continuation

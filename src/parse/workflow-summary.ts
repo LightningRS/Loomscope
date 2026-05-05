@@ -53,6 +53,16 @@ export function computeWorkflowSummary(
   );
   const lastReal = llms.length > 0 ? llms[llms.length - 1] : undefined;
 
+  // EN (v0.9.2): full text per llm_call (DAG order = turn order
+  // since the parser appends nodes as records arrive). Empty
+  // strings dropped — those rounds were tool-only.
+  // 中: 每条 llm_call 的完整 text 数组（按解析顺序 = 时间顺序），
+  // 空文本跳过（那是纯工具调用 round）。
+  const assistantText: string[] = [];
+  for (const n of llms) {
+    if (n.text && n.text.trim().length > 0) assistantText.push(n.text);
+  }
+
   const assistantPreviewSource = (() => {
     // Prefer the *last* llm_call's text (the agent's final reply this
     // turn). Falls back to earlier llm_calls if last has empty text.
@@ -99,6 +109,7 @@ export function computeWorkflowSummary(
 
   return {
     assistantPreview: truncate(assistantPreviewSource, ASSISTANT_PREVIEW_LEN),
+    assistantText,
     llmCount,
     chainCount,
     toolCount,

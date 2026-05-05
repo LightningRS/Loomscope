@@ -553,6 +553,7 @@ export function stripChatFlowToLite(chatFlow: ChatFlow): ChatFlow {
         // wire format is always well-formed.
         summary: cn.workflow.summary ?? {
           assistantPreview: "",
+          assistantText: [],
           llmCount: 0,
           chainCount: 0,
           toolCount: 0,

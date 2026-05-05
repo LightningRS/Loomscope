@@ -420,10 +420,25 @@ function MessageBubbleImpl({
   // flips to ready. Failure → fall back to the preview + show error
   // chip in the meta row.
   const access = useChatNodeWorkflow(sessionId, chatNode);
-  const rounds = useMemo(
-    () => buildConversationRounds(access.workflow),
-    [access.workflow],
-  );
+  const rounds = useMemo(() => {
+    // EN (v0.9.2): when workflow is loaded, build rounds with full
+    // structure (text + tool_call + delegate). When NOT loaded yet,
+    // synthesize text-only rounds from summary.assistantText so the
+    // bubble shows complete assistant text immediately on session
+    // open — tool pills fill in below when the lazy workflow fetch
+    // lands. Keeps user message + assistant message visually
+    // coupled instead of staggered.
+    // 中: workflow 已加载 → 完整 round（含工具）；未加载时用
+    // summary.assistantText 临时合成纯文本 round，让 bubble 即时显
+    // 示完整助手文本。Tool pill 在 workflow 真正到达时再补进来。
+    if (access.workflow) return buildConversationRounds(access.workflow);
+    const texts = chatNode.workflow.summary?.assistantText ?? [];
+    return texts.map((text, llmIndex) => ({
+      llmIndex,
+      text,
+      tools: [],
+    }));
+  }, [access.workflow, chatNode]);
   // EN: Inline-content fallback for ChatNodes whose payload lives
   // OUTSIDE workflow.nodes — compact summary, slash command stdout.
   // Both are stored directly on the ChatNode (compactMetadata /
@@ -1216,16 +1231,24 @@ function allAssistantTextsFromWorkflow(
   return out;
 }
 
-// Resolve the assistant text(s) for a ChatNode given an optional
-// already-loaded workflow. Resolution priority:
-//   1. ALL llm_call.text from the loaded workflow (full markdown,
-//      one element per assistant round)
-//   2. compactMetadata.summaryText (compact ChatNodes — inline)
-//   3. slashCommand.stdout (slash command ChatNodes — inline)
-//   4. [summary.assistantPreview] (single-element fallback while
-//      lazy-load pending; the bubble re-renders multi-round once
-//      cache lands)
-//   5. [] (nothing to show)
+// EN: Resolve the assistant text(s) for a ChatNode. Priority:
+//   1. workflow.nodes (loaded → most authoritative)
+//   2. summary.assistantText[] (v0.9.2 — full per-round text shipped
+//      with lite ChatFlow; bubble renders WITHOUT waiting for the
+//      workflow lazy fetch, so user message + assistant message
+//      arrive together)
+//   3. compactMetadata.summaryText (compact ChatNodes — inline)
+//   4. slashCommand.stdout (slash command ChatNodes — inline)
+//   5. [] (skeleton path)
+//
+// `summary.assistantPreview` (80-char truncated) was REMOVED from
+// the fallback chain in v0.9.1 — it caused the "shrink-then-expand"
+// flash on every session open. v0.9.2's full assistantText[]
+// replaces both the placeholder role AND the lazy-fetch round trip.
+//
+// 中: 优先级 (1) 已 load 的 workflow → (2) lite summary.assistantText
+// 全文 → (3) compact / (4) slash → (5) 空（走 skeleton）。bubble
+// 不再需要等 workflow lazy fetch 就能展示完整 assistant 文本。
 function assistantTextsForChatNode(
   workflow: WorkFlow | null,
   cn: ChatNode,
@@ -1234,11 +1257,10 @@ function assistantTextsForChatNode(
     const all = allAssistantTextsFromWorkflow(workflow);
     if (all.length > 0) return all;
   }
+  const fromSummary = cn.workflow.summary?.assistantText;
+  if (fromSummary && fromSummary.length > 0) return fromSummary;
   if (cn.compactMetadata?.summaryText) return [cn.compactMetadata.summaryText];
   if (cn.slashCommand?.stdout) return [cn.slashCommand.stdout];
-  if (cn.workflow.summary?.assistantPreview) {
-    return [cn.workflow.summary.assistantPreview];
-  }
   return [];
 }
 

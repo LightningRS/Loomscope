@@ -21,6 +21,7 @@ const SID = "00000000-0000-4000-8000-0000000000cc";
 function summary(over: Partial<WorkFlow["summary"] & object> = {}) {
   return {
     assistantPreview: "preview",
+        assistantText: [],
     llmCount: 1,
     chainCount: 1,
     toolCount: 0,

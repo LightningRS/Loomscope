@@ -19,6 +19,7 @@ function chatNode(id: string, parent: string | null = null): ChatNode {
     workflow: {
       summary: {
         assistantPreview: `${id} reply preview`,
+        assistantText: [],
         llmCount: 1,
         chainCount: 1,
         toolCount: 0,
