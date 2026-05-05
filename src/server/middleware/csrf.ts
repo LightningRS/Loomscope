@@ -9,10 +9,24 @@
 
 import type { MiddlewareHandler } from "hono";
 
+// EN (v∞.0 PR 1): the CC hook endpoint is server-to-server (CC's
+// axios → our localhost), with no browser cookies in play, so CSRF
+// doesn't apply. It uses `X-Loomscope-Secret` (LOOMSCOPE_SECRET via
+// CC's allowedEnvVars) for auth instead. Skip the CSRF check here so
+// CC doesn't need to know about the CSRF token at all — it only
+// knows about the secret.
+// 中: CC hook 是 server-to-server，没浏览器 cookie 风险，CSRF 不适用；
+// hook 自己用 X-Loomscope-Secret 验权。CSRF middleware 直接放过这条路
+// 径，CC 端不用关心 CSRF token。
+const CSRF_BYPASS_PATHS = new Set(["/api/cc-hook"]);
+
 export function csrfMiddleware(token: string): MiddlewareHandler {
   return async (c, next) => {
     const method = c.req.method.toUpperCase();
     if (method === "GET" || method === "HEAD" || method === "OPTIONS") {
+      return next();
+    }
+    if (CSRF_BYPASS_PATHS.has(c.req.path)) {
       return next();
     }
     const provided = c.req.header("x-loomscope-token");

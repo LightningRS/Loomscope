@@ -17,13 +17,19 @@ let tmpRoot: string;
 let app: ReturnType<typeof createApp>;
 const TOKEN = "test-token";
 const ORIGIN = "http://localhost:5174";
+const HOOK_SECRET = "0".repeat(64); // 64 hex chars matches loomscopeSecret format
 
 beforeEach(async () => {
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "loomscope-app-test-"));
   // Pin disk cache to tmpRoot so getOrLoad's fire-and-forget writes
   // don't pollute the developer's real ~/.loomscope/cache/.
   _setCacheRootForTests(path.join(tmpRoot, "disk-cache"));
-  app = createApp({ rootDir: tmpRoot, csrfToken: TOKEN, allowedOrigin: ORIGIN });
+  app = createApp({
+    rootDir: tmpRoot,
+    csrfToken: TOKEN,
+    allowedOrigin: ORIGIN,
+    hookSecret: HOOK_SECRET,
+  });
 });
 
 afterEach(async () => {
