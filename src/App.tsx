@@ -42,6 +42,45 @@ export default function App() {
     }
   }, [activeId, session]);
 
+  // v0.9 file-tail spike: subscribe to the active session's SSE event
+  // stream. On `invalidate`, call refreshSession — re-fetches lite
+  // ChatFlow + clears workflowCache so the lazy hooks pull fresh.
+  // EventSource auto-reconnects on transient network drops; we only
+  // need to tear down on activeSession change. `hello` / `ping` are
+  // logged at debug-volume and otherwise ignored.
+  useEffect(() => {
+    if (!activeId) return;
+    const url = `/api/sessions/${activeId}/events`;
+    const es = new EventSource(url);
+    es.addEventListener("invalidate", (ev) => {
+      try {
+        const payload = JSON.parse((ev as MessageEvent).data) as {
+          sessionId: string;
+        };
+        if (payload.sessionId === activeId) {
+          void useStore.getState().refreshSession(activeId);
+        }
+      } catch (err) {
+        console.error("[loomscope] sse invalidate parse failed:", err);
+      }
+    });
+    es.addEventListener("hello", () => {
+      // Connected. Could surface a "live" indicator in the UI later.
+    });
+    es.addEventListener("ping", () => {
+      // Heartbeat — no-op.
+    });
+    es.onerror = () => {
+      // EventSource auto-retries; we just log so devtools shows the
+      // error rather than silent reconnect attempts.
+      // eslint-disable-next-line no-console
+      console.warn("[loomscope] sse error (EventSource will auto-retry)");
+    };
+    return () => {
+      es.close();
+    };
+  }, [activeId]);
+
   // Resolve which view to show. Sub-agent drill frames pull the
   // sub ChatFlow out of the cache, so the resolver returns null
   // (= ChatFlow view fallback) until the cache fills.

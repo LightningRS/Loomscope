@@ -224,6 +224,51 @@ export const createSessionSlice: StateCreator<LoomscopeStore, [], [], SessionSli
     }
   },
 
+  // v0.9 file-tail: live re-fetch on SSE `invalidate`. Differs from
+  // loadSession in two ways:
+  //   1. No isLoading flag flip — the user shouldn't see a full-screen
+  //      "Parsing JSONL…" spinner just because the session ticked over;
+  //      cards get briefly stale until the network round-trip lands,
+  //      which is fine.
+  //   2. Reconciliation rather than overwrite: keeps selectedNodeId,
+  //      workflowSelectedNodeId, viewport, drillStack, branchMemory.
+  //      foldedCompactIds is re-hydrated against the new chatFlow so
+  //      newly-appeared compacts default-fold and disappeared ones drop
+  //      out (same intersection logic as initial load).
+  // The workflowCache is cleared because lite ChatFlow's per-cn summary
+  // may have shifted (turn count, contextTokens, etc.) — we want lazy
+  // hooks to refetch on next visibility. ChatNodes that weren't being
+  // viewed pay nothing; visible cards briefly re-enter `pending` then
+  // swap back to `ready` once the batch lands.
+  refreshSession: async (id) => {
+    try {
+      const cf = await fetchJson<ChatFlow>(`/api/sessions/${id}`);
+      const updated = new Map(get().sessions);
+      const cur = updated.get(id) ?? blankSessionState();
+      updated.set(id, {
+        ...cur,
+        chatFlow: cf,
+        foldedCompactIds: hydrateFoldedCompactIds(id, cf),
+        workflowCache: new Map<string, WorkflowCacheEntry>(),
+        // subAgentCache stays — sub-agent ids are sidecar-rooted; if the
+        // user has a sub-agent drill frame open, we'd rather they keep
+        // seeing the cached content than flicker to a loading state on
+        // an unrelated parent-jsonl tick. v0.9.1 will subscribe to
+        // sidecar paths too and only invalidate the specific sub-agent.
+        isLoading: false,
+        error: null,
+        lastUpdated: Date.now(),
+      });
+      set({ sessions: updated });
+    } catch (err) {
+      // Failure on a refresh is non-fatal — the previous chatFlow is
+      // still valid; we just log and let the next SSE invalidate try
+      // again. Don't surface as session-level error (that's reserved
+      // for initial-load failures).
+      console.error("[loomscope] refreshSession failed:", err);
+    }
+  },
+
   setActiveSession: (id) => {
     // Evict the previous session's sub-agent cache. Cross-session
     // sharing isn't valuable (uuids belong to different jsonls) and

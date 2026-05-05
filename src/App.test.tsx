@@ -29,6 +29,24 @@ beforeEach(() => {
     "fetch",
     vi.fn(async () => new Response("[]", { status: 200 })),
   );
+  // v0.9 file-tail spike: App opens an EventSource to /api/sessions/:id/
+  // events whenever activeSessionId is set. happy-dom's EventSource
+  // tries a real network connect (defaulting to localhost:3000),
+  // which floods the test output with ECONNREFUSED noise. Stub it
+  // out — tests don't exercise live-update paths.
+  vi.stubGlobal(
+    "EventSource",
+    class MockEventSource {
+      url: string;
+      onerror: (() => void) | null = null;
+      constructor(url: string) {
+        this.url = url;
+      }
+      addEventListener() {}
+      removeEventListener() {}
+      close() {}
+    },
+  );
 });
 
 afterEach(() => {

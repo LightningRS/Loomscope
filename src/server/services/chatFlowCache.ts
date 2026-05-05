@@ -84,6 +84,19 @@ export function getCached(key: string): ChatFlow | null {
   return cf;
 }
 
+/**
+ * v0.9 file-tail: drop every cached entry whose key starts with
+ * ``${sessionId}:`` — i.e. the same session under any closure mtime.
+ * Called from the file watcher when an underlying jsonl appends so the
+ * next request re-parses the now-larger file.
+ */
+export function invalidateSession(sessionId: string): void {
+  const prefix = `${sessionId}:`;
+  for (const key of [...cache.keys()]) {
+    if (key.startsWith(prefix)) cache.delete(key);
+  }
+}
+
 /** Insert and apply LRU eviction if we exceed MAX_ENTRIES. */
 export function setCached(key: string, chatFlow: ChatFlow): void {
   // If key already exists, delete first so the re-insert puts it at

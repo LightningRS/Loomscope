@@ -14,6 +14,7 @@ import { createReadStream } from "node:fs";
 import readline from "node:readline";
 
 import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 
@@ -22,7 +23,26 @@ import { parseLine, type RawRecord } from "@/parse/raw-record";
 import { SidecarLoader, type AgentMetadata } from "@/parse/sidecar";
 import { getOrLoad as getOrLoadCachedChatFlow } from "@/server/services/chatFlowCache";
 import { findForkClosure, type ClosureMember } from "@/server/services/forkTree";
+import {
+  watchSessionClosure,
+  unwatchSession,
+} from "@/server/services/sessionWatcher";
+import {
+  subscribe,
+  subscriberCount,
+  type SseSubscriber,
+} from "@/server/services/sseHub";
 import type { ChatFlow } from "@/data/types";
+
+// Heartbeat cadence. Two reasons it exists:
+//   1) Reverse proxies (nginx default 60s) close idle SSE — sub-60s
+//      pings keep the connection warm.
+//   2) Lets us notice a half-open socket: writeSSE rejects, the catch
+//      tears down. Without ping a dead client could linger until next
+//      real broadcast.
+// 25 s is the conventional value (well under typical 60 s proxy
+// timeouts, infrequent enough that overhead is negligible).
+const SSE_HEARTBEAT_MS = 25_000;
 
 export interface SessionsRouteOptions {
   rootDir: string;
@@ -170,6 +190,77 @@ export function sessionsRouter(opts: SessionsRouteOptions) {
         };
       }
       return c.json({ workflows });
+    },
+  );
+
+  // v0.9 file-tail spike: SSE stream for live invalidation.
+  //
+  // Connect → server resolves the session's fork closure, asks the
+  // watcher to monitor every closure jsonl path, subscribes this
+  // connection to the SSE hub. On any underlying file `change`, the
+  // watcher invalidates the LRU cache + broadcasts an `invalidate`
+  // event; this stream forwards it as `event: invalidate`. Client
+  // reacts by re-fetching the lite ChatFlow and clearing the
+  // workflowCache so lazy hooks refetch.
+  //
+  // Heartbeat every 25 s; client treats it as a no-op.
+  //
+  // Disconnect: stream.onAbort tears down the subscriber. If this was
+  // the last subscriber for this session, we also drop the session's
+  // path watches (other sessions sharing the same paths via fork
+  // closure keep them alive).
+  //
+  // GET-only ⇒ skips CSRF middleware; safe because the endpoint is
+  // read-only data delivery (no state mutation beyond the watcher
+  // refcount, which is server-internal).
+  app.get(
+    "/:id/events",
+    zValidator("param", z.object({ id: z.string().regex(SESSION_ID_RE) })),
+    async (c) => {
+      const { id } = c.req.valid("param");
+      const jsonlPath = await locateSessionJsonl(opts.rootDir, id);
+      if (!jsonlPath) return c.json({ error: "session not found" }, 404);
+      const projectDir = path.dirname(jsonlPath);
+      const closure = await findForkClosure({
+        projectDir,
+        entrySessionId: id,
+      });
+      const closurePaths =
+        closure.length > 0 ? closure.map((m) => m.jsonlPath) : [jsonlPath];
+      watchSessionClosure(id, closurePaths);
+      return streamSSE(c, async (stream) => {
+        const sub: SseSubscriber = {
+          send: (msg) => {
+            void stream
+              .writeSSE({
+                event: msg.event,
+                data: JSON.stringify(msg.data),
+              })
+              .catch(() => {
+                // If the write fails the stream is already gone; the
+                // onAbort handler will run shortly.
+              });
+          },
+        };
+        const unsubscribe = subscribe(id, sub);
+        stream.onAbort(() => {
+          unsubscribe();
+          if (subscriberCount(id) === 0) unwatchSession(id);
+        });
+        await stream.writeSSE({
+          event: "hello",
+          data: JSON.stringify({ sessionId: id, watching: closurePaths }),
+        });
+        // Heartbeat loop. stream.sleep is abort-aware; the while-loop
+        // exits on disconnect and the onAbort handler fires.
+        while (!stream.aborted) {
+          await stream.sleep(SSE_HEARTBEAT_MS);
+          if (stream.aborted) break;
+          await stream
+            .writeSSE({ event: "ping", data: "{}" })
+            .catch(() => {});
+        }
+      });
     },
   );
 

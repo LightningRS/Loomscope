@@ -174,6 +174,12 @@ export interface SessionSlice {
   sessions: Map<string, SessionState>;
   activeSessionId: string | null;
   loadSession: (id: string) => Promise<void>;
+  // v0.9 file-tail: re-fetch the lite ChatFlow for `id` triggered by
+  // an SSE `invalidate` event (underlying jsonl appended). Reconciles
+  // into the existing SessionState — preserves selection / viewport /
+  // drillStack / foldedCompactIds — and clears `workflowCache` so the
+  // lazy hooks pull fresh per-ChatNode workflow data.
+  refreshSession: (id: string) => Promise<void>;
   setActiveSession: (id: string | null) => void;
   setSelected: (sessionId: string, nodeId: string | null) => void;
   setViewport: (sessionId: string, vp: { x: number; y: number; zoom: number }) => void;
