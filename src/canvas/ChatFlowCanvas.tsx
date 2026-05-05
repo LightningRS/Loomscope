@@ -390,6 +390,41 @@ function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasIn
     pendingPanRef.current = null;
   }, [nodes, rf]);
 
+  // v0.9.1: capture / restore viewport across drill in ⇄ out. ChatFlow
+  // canvas is kept-mounted (display:none) when the user enters a
+  // WorkFlow drill; React Flow's internal viewport SHOULD persist
+  // across display flips but doesn't reliably (the ResizeObserver
+  // fires when display goes none→block with a 0×0 → real-size jump,
+  // and at certain timings the viewport resets to origin). Stash
+  // {x,y,zoom} on entry, write it back after the next layout commit
+  // on exit. ResizeObserver re-fit happens AFTER our restore so we
+  // override the reset.
+  const drillDepth = useStore(
+    (s) => s.sessions.get(sessionId)?.drillStack.length ?? 0,
+  );
+  const stashedViewportRef = useRef<{ x: number; y: number; zoom: number } | null>(
+    null,
+  );
+  const prevDepthRef = useRef(drillDepth);
+  useEffect(() => {
+    const prev = prevDepthRef.current;
+    if (prev === 0 && drillDepth > 0) {
+      // Just entered a drill — stash the current viewport.
+      stashedViewportRef.current = rf.getViewport();
+    } else if (prev > 0 && drillDepth === 0 && stashedViewportRef.current) {
+      // Just exited — restore on the next paint so the display flip
+      // and React Flow's internal resize handling settle first. A
+      // single rAF is enough; without it the restore lands BEFORE
+      // RF's ResizeObserver-driven viewport adjust and gets clobbered.
+      const stash = stashedViewportRef.current;
+      stashedViewportRef.current = null;
+      requestAnimationFrame(() => {
+        rf.setViewport(stash, { duration: 0 });
+      });
+    }
+    prevDepthRef.current = drillDepth;
+  }, [drillDepth, rf]);
+
   // Apply the captured fold anchor: after every layout commit (= nodes
   // identity changed), if a fold/unfold has just stashed an anchor,
   // shift the viewport so the host compact lands at its previous
