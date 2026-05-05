@@ -987,3 +987,81 @@ describe("parseJsonlFileIncremental (M0 — v0.10 收尾 / v0.11 prep)", () => {
     expect(second.state.records.length).toBeGreaterThan(beforeLen);
   });
 });
+
+describe("buildChatFlow reuse hint (M2 — v0.10 收尾 / v0.11 prep)", () => {
+  // EN: the reuse hint is the M2 perf knob — a per-bucket short-
+  // circuit that lets buildChatFlow skip the expensive
+  // buildChatNode call for buckets that didn't accumulate new
+  // records since the prev snapshot. The CRITICAL invariant: at
+  // any split point of any record list, the M2 reuse path must
+  // produce a ChatFlow that's byte-equivalent (= JSON.stringify-
+  // equal) to a fresh full rebuild of the same records. Anything
+  // less is silent corruption.
+  // 中: 关键不变量 —— 任意 split 点上 M2 跟全量 rebuild 必须 JSON
+  // 字节级相等。这条挂掉 = 数据 silent corrupt。
+  const FIXTURE = "/synthetic/main.jsonl";
+  const ALL_RECORDS = buildSyntheticRecords();
+
+  function assertReuseEquivalent(splitAt: number): void {
+    const head = ALL_RECORDS.slice(0, splitAt);
+    const headCf = buildChatFlow(head, FIXTURE);
+    const m2Cf = buildChatFlow(ALL_RECORDS, FIXTURE, undefined, {
+      prevChatFlow: headCf,
+      prevRecordCount: splitAt,
+    });
+    const fullCf = buildChatFlow(ALL_RECORDS, FIXTURE);
+    expect(JSON.stringify(m2Cf)).toBe(JSON.stringify(fullCf));
+  }
+
+  it("equivalence at split=0 (empty prev → all buckets rebuild)", () => {
+    assertReuseEquivalent(0);
+  });
+
+  it("equivalence at split=ALL.length (no new records → all buckets reuse)", () => {
+    assertReuseEquivalent(ALL_RECORDS.length);
+  });
+
+  it("equivalence at every split point in the synthetic fixture", () => {
+    // Brute-force: iterate every split. The synthetic fixture is
+    // small enough (<100 records) that O(N²) buildChatFlow calls
+    // is sub-second. If any split point fails we get a precise
+    // pinpoint of where the M2 path diverges from full rebuild.
+    for (let s = 0; s <= ALL_RECORDS.length; s += 1) {
+      try {
+        assertReuseEquivalent(s);
+      } catch (err) {
+        throw new Error(
+          `M2 reuse diverges from full rebuild at split=${s}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+  });
+
+  it("appends survive a parseJsonlFileIncremental → parseJsonlFileIncremental round-trip with M2 active", async () => {
+    const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "loomscope-m2-"));
+    try {
+      const filePath = path.join(tmpDir, "session.jsonl");
+      const head = recordsToJsonl(ALL_RECORDS.slice(0, Math.floor(ALL_RECORDS.length / 2)));
+      await fsp.writeFile(filePath, head, "utf8");
+      const first = await parseJsonlFileIncremental(filePath, undefined);
+      expect(first.state.chatFlow).not.toBeNull();
+
+      // Append the rest. This call should hit the M2 path: reuse
+      // unchanged old buckets, rebuild only the dirty ones.
+      const tail = recordsToJsonl(ALL_RECORDS.slice(Math.floor(ALL_RECORDS.length / 2)));
+      await fsp.appendFile(filePath, tail, "utf8");
+      const second = await parseJsonlFileIncremental(filePath, first.state);
+      expect(second.usedIncremental).toBe(true);
+
+      // Equivalence to a clean full reparse.
+      const fresh = await parseJsonlFile(filePath);
+      expect(JSON.stringify(second.chatFlow)).toBe(
+        JSON.stringify(fresh.chatFlow),
+      );
+    } finally {
+      await fsp.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+});

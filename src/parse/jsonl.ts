@@ -177,6 +177,12 @@ export interface IncrementalParseState {
    * yet). "" for state produced by `readRecordsFromFile` since
    * readline emits any final fragment as a "complete" line. */
   pendingFragment: string;
+  /** v0.10 收尾 / M2: most recent ChatFlow snapshot. Threaded back
+   * to `buildChatFlow` as the `reuse` hint so unchanged buckets
+   * skip the per-bucket WorkFlow build + summary recompute. Null
+   * on the very first state (full parse path); always non-null on
+   * subsequent incremental states. */
+  chatFlow: ChatFlow | null;
 }
 
 export interface IncrementalParseResult {
@@ -218,6 +224,7 @@ export async function parseJsonlFileIncremental(
         byteSize: curSize,
         mtimeMs: curMtime,
         pendingFragment: "",
+        chatFlow,
       },
       usedIncremental: false,
     };
@@ -263,13 +270,23 @@ export async function parseJsonlFileIncremental(
           byteSize: curSize,
           mtimeMs: curMtime,
           pendingFragment: "",
+          chatFlow,
         },
         usedIncremental: false,
       };
     }
   }
 
-  const chatFlow = buildChatFlow(records, jsonlPath, options);
+  // M2: thread prev ChatFlow + the record-count it was built against
+  // into buildChatFlow so unchanged buckets skip rebuild. The slice
+  // index is the prev state's `records.length` BEFORE we appended new
+  // tail records — call it `prevRecordCount`.
+  const prevRecordCount = prevState!.records.length;
+  const reuseHint =
+    prevState!.chatFlow != null
+      ? { prevChatFlow: prevState!.chatFlow, prevRecordCount }
+      : undefined;
+  const chatFlow = buildChatFlow(records, jsonlPath, options, reuseHint);
   return {
     chatFlow,
     parseFailures,
@@ -279,6 +296,7 @@ export async function parseJsonlFileIncremental(
       byteSize: curSize,
       mtimeMs: curMtime,
       pendingFragment,
+      chatFlow,
     },
     usedIncremental: true,
   };
@@ -286,10 +304,37 @@ export async function parseJsonlFileIncremental(
 
 // ─── Core builder ────────────────────────────────────────────────────────────
 
+// EN (v0.10 收尾 / M2): optional reuse hint for incremental rebuilds.
+// `prevChatFlow` carries the most recent ChatFlow snapshot from a
+// successful build; `prevRecordCount` is the number of records that
+// went into that snapshot. A buckets's `buildChatNode` (the
+// expensive per-bucket call: WorkFlow construction + summary
+// computation) is skipped iff:
+//   1. Its promptId already has a cached ChatNode in `prevChatFlow`,
+//      AND
+//   2. None of `records.slice(prevRecordCount)` resolved to that
+//      promptId — i.e. the bucket got no new records this round.
+//
+// Pass 1 (indexRecords), Pass 2 (bucketing), Pass 4
+// (linkChatNodeParents), and post-process all still walk the full
+// list — they're O(N) and cheap (~50 ms on 100 MB). The dominant
+// cost (per-bucket WorkFlow build + summary) becomes O(dirty), and
+// dirty is typically 1-2 buckets per SSE-driven append.
+//
+// 中: 给 buildChatFlow 提供"复用旧 ChatNode"的开关。pass1/2/4 仍然
+// 全表扫（每条 ~50 ms 不痛）；省的是逐 bucket 的 WorkFlow 构建 +
+// summary，N=1500 砍到 N=1-2，对应大 session 的 live refresh 从
+// ~500 ms 降到 ~100 ms 量级。
+export interface BuildChatFlowReuseHint {
+  prevChatFlow: ChatFlow;
+  prevRecordCount: number;
+}
+
 export function buildChatFlow(
   records: RawRecord[],
   mainJsonlPath: string,
   options: ParseOptions = {},
+  reuse?: BuildChatFlowReuseHint,
 ): ChatFlow {
   const sidecarDir =
     options.sidecarDir ??
@@ -526,9 +571,36 @@ export function buildChatFlow(
     });
   }
 
-  // Build ChatNodes.
+  // Build ChatNodes. M2: when a `reuse` hint is provided, skip the
+  // per-bucket buildChatNode call for buckets that didn't accumulate
+  // any new records since the prev snapshot. Otherwise this is the
+  // expensive part (WorkFlow build + summary per bucket).
+  //
+  // Dirty-bucket detection: walk only the new records (= those after
+  // `reuse.prevRecordCount`), resolve each one's promptId via the
+  // existing memoised `resolvePromptId` chain (which sees the FULL
+  // indexByUuid built from full records, so cross-bucket parentUuid
+  // resolution still works). The set of resolved promptIds = the
+  // buckets that got new content.
+  const dirtyPromptIds = new Set<string>();
+  let reusable: Map<string, ChatNode> | null = null;
+  if (reuse) {
+    const newRecords = records.slice(reuse.prevRecordCount);
+    for (const r of newRecords) {
+      const pid = promptIdOf(r);
+      if (pid) dirtyPromptIds.add(pid);
+    }
+    reusable = new Map(reuse.prevChatFlow.chatNodes.map((cn) => [cn.id, cn]));
+  }
   const chatNodes: ChatNode[] = [];
   for (const bucket of bucketsByPid.values()) {
+    if (reusable && !dirtyPromptIds.has(bucket.promptId)) {
+      const prev = reusable.get(bucket.promptId);
+      if (prev) {
+        chatNodes.push(prev);
+        continue;
+      }
+    }
     const cn = buildChatNode(
       bucket,
       indexByUuid,
