@@ -253,10 +253,21 @@ export interface SessionSlice {
   toggleFold: (sessionId: string, nodeId: string) => void;
 }
 
-// ─── Live event slice (stub for v∞.0) ────────────────────────────────────────
+// ─── Live event slice ────────────────────────────────────────────────────────
+
+// v0.9.1: per-channel SSE connection state. App.tsx owns the
+// EventSource lifecycle and pokes this slot so the Header indicator
+// reflects reality. `idle` = no EventSource open (e.g., no active
+// session for the session channel); `connecting` = constructed but
+// no `hello` yet; `open` = received hello / readyState 1; `error` =
+// readyState != 0/1 (browser will auto-retry).
+export type LiveChannelState = "idle" | "connecting" | "open" | "error";
+export type LiveChannelName = "session" | "workspaces";
 
 export interface LiveEventSlice {
   ssePending: Map<string, unknown>;
+  liveStatus: Record<LiveChannelName, LiveChannelState>;
+  setLiveStatus: (channel: LiveChannelName, state: LiveChannelState) => void;
   subscribeSession: (sessionId: string) => void;
   unsubscribeSession: (sessionId: string) => void;
 }

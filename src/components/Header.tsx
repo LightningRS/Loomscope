@@ -9,11 +9,13 @@ import { useState } from "react";
 
 import { copyToClipboardWithFallback } from "@/lib/clipboard";
 import { useStore } from "@/store/index";
+import type { LiveChannelState } from "@/store/types";
 
 export function Header() {
   const activeId = useStore((s) => s.activeSessionId);
   const session = useStore((s) => (activeId ? s.sessions.get(activeId) : null));
   const cf = session?.chatFlow ?? null;
+  const liveStatus = useStore((s) => s.liveStatus);
 
   return (
     <header
@@ -48,6 +50,10 @@ export function Header() {
       </div>
 
       <div className="flex items-center gap-2 flex-shrink-0">
+        <LiveIndicator
+          sessionState={activeId ? liveStatus.session : "idle"}
+          workspacesState={liveStatus.workspaces}
+        />
         {session?.isLoading && (
           <span className="inline-flex items-center gap-1.5 rounded bg-teal-200/80 px-1.5 py-0.5 text-[10px] font-semibold text-teal-900">
             <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-teal-500" />
@@ -119,6 +125,54 @@ function SessionIdButton({ sessionId }: { sessionId: string }) {
     >
       {label}
     </button>
+  );
+}
+
+// v0.9.1: SSE liveness pill. Two channels (session + workspaces);
+// combined display pickselector worst-non-idle state:
+//   any 'error'      → red dot + "reconnecting"
+//   any 'connecting' → amber dot + "connecting"
+//   all 'open'/'idle' (with at least one open) → green dot + "live"
+//   both idle        → grey dot + "offline"  (shouldn't happen in
+//                       practice — workspaces channel is always open)
+//
+// Rationale for one combined pill rather than two: user only cares
+// "is live update working." Detail is in the tooltip.
+function LiveIndicator({
+  sessionState,
+  workspacesState,
+}: {
+  sessionState: LiveChannelState;
+  workspacesState: LiveChannelState;
+}) {
+  const states = [sessionState, workspacesState];
+  let dot: string;
+  let label: string;
+  if (states.includes("error")) {
+    dot = "bg-rose-500 animate-pulse";
+    label = "重连中";
+  } else if (states.includes("connecting")) {
+    dot = "bg-amber-400 animate-pulse";
+    label = "连接中";
+  } else if (states.includes("open")) {
+    dot = "bg-emerald-500";
+    label = "live";
+  } else {
+    dot = "bg-gray-300";
+    label = "offline";
+  }
+  const title = `live: session=${sessionState}, workspaces=${workspacesState}`;
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-[10px] text-gray-500 font-mono cursor-help"
+      title={title}
+      data-testid="live-indicator"
+      data-state-session={sessionState}
+      data-state-workspaces={workspacesState}
+    >
+      <span className={`inline-block h-1.5 w-1.5 rounded-full ${dot}`} />
+      <span>{label}</span>
+    </span>
   );
 }
 

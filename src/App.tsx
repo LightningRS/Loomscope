@@ -46,12 +46,22 @@ export default function App() {
   // stream. On `invalidate`, call refreshSession — re-fetches lite
   // ChatFlow + clears workflowCache so the lazy hooks pull fresh.
   // EventSource auto-reconnects on transient network drops; we only
-  // need to tear down on activeSession change. `hello` / `ping` are
-  // logged at debug-volume and otherwise ignored.
+  // need to tear down on activeSession change.
+  //
+  // Liveness state machine (used by Header indicator):
+  //   no activeId → channel stays 'idle'
+  //   constructed → 'connecting'
+  //   onopen / hello received → 'open'
+  //   onerror → 'error' (browser will auto-retry; we don't reconstruct)
   useEffect(() => {
-    if (!activeId) return;
+    if (!activeId) {
+      useStore.getState().setLiveStatus("session", "idle");
+      return;
+    }
+    useStore.getState().setLiveStatus("session", "connecting");
     const url = `/api/sessions/${activeId}/events`;
     const es = new EventSource(url);
+    es.onopen = () => useStore.getState().setLiveStatus("session", "open");
     es.addEventListener("invalidate", (ev) => {
       try {
         const payload = JSON.parse((ev as MessageEvent).data) as {
@@ -80,12 +90,15 @@ export default function App() {
       }
     });
     es.addEventListener("hello", () => {
-      // Connected. Could surface a "live" indicator in the UI later.
+      // Belt-and-suspenders: some browsers fire onopen before the
+      // hello frame arrives; mark open on either signal.
+      useStore.getState().setLiveStatus("session", "open");
     });
     es.addEventListener("ping", () => {
       // Heartbeat — no-op.
     });
     es.onerror = () => {
+      useStore.getState().setLiveStatus("session", "error");
       // EventSource auto-retries; we just log so devtools shows the
       // error rather than silent reconnect attempts.
       // eslint-disable-next-line no-console
@@ -93,6 +106,7 @@ export default function App() {
     };
     return () => {
       es.close();
+      useStore.getState().setLiveStatus("session", "idle");
     };
   }, [activeId]);
 
@@ -102,7 +116,9 @@ export default function App() {
   // listings (lazy-loaded sublists in the sidebar). New sessions
   // appear without manual refresh; deleted sessions disappear.
   useEffect(() => {
+    useStore.getState().setLiveStatus("workspaces", "connecting");
     const es = new EventSource("/api/workspaces/events");
+    es.onopen = () => useStore.getState().setLiveStatus("workspaces", "open");
     es.addEventListener("workspace-changed", () => {
       const store = useStore.getState();
       void store.refreshWorkspaces();
@@ -113,13 +129,19 @@ export default function App() {
         void store.loadSessions(cwd);
       }
     });
-    es.addEventListener("hello", () => {});
+    es.addEventListener("hello", () => {
+      useStore.getState().setLiveStatus("workspaces", "open");
+    });
     es.addEventListener("ping", () => {});
     es.onerror = () => {
+      useStore.getState().setLiveStatus("workspaces", "error");
       // eslint-disable-next-line no-console
       console.warn("[loomscope] workspaces sse error (auto-retry)");
     };
-    return () => es.close();
+    return () => {
+      es.close();
+      useStore.getState().setLiveStatus("workspaces", "idle");
+    };
   }, []);
 
   // Resolve which view to show. Sub-agent drill frames pull the
