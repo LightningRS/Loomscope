@@ -45,6 +45,22 @@ export default {
               overflowWrap: "anywhere",
               wordBreak: "break-word",
             },
+            // CRITICAL: typography plugin's default `pre code` reset
+            // only undoes the DEFAULT inline-code props. The extended
+            // props above (padding / font-size / font-weight / border-
+            // radius / background-color) leak into fenced blocks
+            // unless we reset them here too — otherwise the github-
+            // dark code block ends up with chip-shaped padding +
+            // shrunk font + medium weight text, layered visibly on
+            // top of the dark surface.
+            "pre code": {
+              backgroundColor: "transparent",
+              color: "inherit",
+              fontWeight: "inherit",
+              fontSize: "inherit",
+              padding: "0",
+              borderRadius: "0",
+            },
             // Tables: half the default cell padding.
             "thead th": {
               paddingTop: "0.35em",
