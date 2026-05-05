@@ -107,12 +107,36 @@ export function hydrateFoldedCompactIds(
 // cheap dedupe without re-rendering subscribers.
 const loadInFlight = new Map<string, Promise<SubAgentCacheEntry>>();
 
-// In-flight loadChatNodeWorkflow promises, keyed ``sessionId/cnId``.
-// Same rationale as ``loadInFlight`` above. Multiple components can
-// fire `loadChatNodeWorkflows` concurrently for overlapping ChatNode
-// id sets; dedupe so each unique (sessionId, cnId) tuple has at most
-// one in-flight fetch.
-const workflowLoadInFlight = new Map<string, Promise<void>>();
+// v0.10 lazy ChatFlow B5 polish: microtask-coalesced flush buffer for
+// `loadChatNodeWorkflows`. React's effect lifecycle fires children's
+// useEffects BEFORE the parent's, so a ConversationView showing 50
+// MessageBubbles produces 50 individual `loadChatNodeWorkflows([id])`
+// calls (one per child hook) before the parent's batch
+// `loadChatNodeWorkflows(sessionId, visiblePath)` runs. Without
+// coalescing, that's 50 separate HTTP requests — observed in
+// DevTools Network tab.
+//
+// Coalescing strategy:
+//   - Synchronously mark each requested id as `pending` in the cache
+//     so concurrent same-tick callers see them and skip re-adding.
+//   - Accumulate ids into a per-session buffer.
+//   - First caller schedules `queueMicrotask` to flush; later callers
+//     in the same tick add to the existing buffer's id set.
+//   - At microtask flush, fire ONE fetchWorkflowBatch with all
+//     accumulated ids → 1 HTTP request total (or 2+ if > 100 ids,
+//     since the helper still chunks at 100 per server URL limit).
+//
+// Side effect: the old per-id `workflowLoadInFlight` map is gone.
+// Mid-fetch dedupe is now handled implicitly by the synchronous
+// pending mark + the per-session buffer.
+const workflowFlushBuffers = new Map<
+  string,
+  {
+    ids: Set<string>;
+    promise: Promise<void>;
+    resolve: () => void;
+  }
+>();
 
 // Helper used by `loadChatNodeWorkflows`. Splits the id list into
 // chunks the server accepts (<= 200 ids per query) and concatenates
@@ -314,7 +338,7 @@ export const createSessionSlice: StateCreator<LoomscopeStore, [], [], SessionSli
     set({ sessions: updated });
   },
 
-  // ── v0.10 lazy ChatFlow B2: per-ChatNode workflow lazy load ────────
+  // ── v0.10 lazy ChatFlow B2 + B5 polish: per-ChatNode workflow lazy load ──
   loadChatNodeWorkflows: async (sessionId, chatNodeIds) => {
     if (chatNodeIds.length === 0) return;
     const sess0 = get().sessions.get(sessionId);
@@ -336,8 +360,11 @@ export const createSessionSlice: StateCreator<LoomscopeStore, [], [], SessionSli
     }
     if (toFetch.length === 0) return;
 
-    // Mark all to-fetch ids as pending in one set call so subscribers
-    // re-render only once.
+    // Mark to-fetch ids as `pending` synchronously so other callers
+    // in the same tick (typically: 50 child useEffects firing before
+    // the parent's batch effect) see them and skip re-adding to the
+    // toFetch list. This is the visible signal `useChatNodeWorkflow`
+    // reads.
     {
       const sessions = new Map(get().sessions);
       const cur = sessions.get(sessionId);
@@ -350,27 +377,33 @@ export const createSessionSlice: StateCreator<LoomscopeStore, [], [], SessionSli
       set({ sessions });
     }
 
-    // Dedupe in-flight: if any of `toFetch` is already mid-fetch from
-    // another concurrent caller, await that promise rather than firing
-    // a duplicate request. We dedupe per-id, so two callers with
-    // overlapping id sets coalesce on the overlap and each only
-    // fetches their unique remainder.
-    const flightKey = (id: string) => `${sessionId}/${id}`;
-    const alreadyFlying = toFetch.filter((id) =>
-      workflowLoadInFlight.has(flightKey(id)),
-    );
-    const needsFetch = toFetch.filter(
-      (id) => !workflowLoadInFlight.has(flightKey(id)),
-    );
-
-    let fetchPromise: Promise<void> | null = null;
-    if (needsFetch.length > 0) {
-      fetchPromise = (async () => {
+    // Coalesce into the per-session microtask buffer. First caller in
+    // a tick schedules the flush; subsequent callers add to the
+    // existing buffer's id set and share its promise. Net effect: N
+    // synchronous calls in the same tick produce 1 HTTP request (or
+    // ceil(N/100) if > 100 unique ids — fetchWorkflowBatch chunks
+    // for the server URL length limit).
+    let buf = workflowFlushBuffers.get(sessionId);
+    if (!buf) {
+      let resolveFn!: () => void;
+      const promise = new Promise<void>((res) => {
+        resolveFn = res;
+      });
+      buf = { ids: new Set(toFetch), promise, resolve: resolveFn };
+      workflowFlushBuffers.set(sessionId, buf);
+      queueMicrotask(async () => {
+        const flush = workflowFlushBuffers.get(sessionId);
+        if (!flush) return;
+        workflowFlushBuffers.delete(sessionId);
+        const allIds = [...flush.ids];
         try {
-          const map = await fetchWorkflowBatch(sessionId, needsFetch);
+          const map = await fetchWorkflowBatch(sessionId, allIds);
           const sessions = new Map(get().sessions);
           const cur = sessions.get(sessionId);
-          if (!cur) return;
+          if (!cur) {
+            flush.resolve();
+            return;
+          }
           const next = new Map(cur.workflowCache);
           // Back-fill summary from the lite ChatFlow's existing
           // workflow.summary so post-load shape mirrors the old
@@ -378,7 +411,7 @@ export const createSessionSlice: StateCreator<LoomscopeStore, [], [], SessionSli
           const cnIndex = new Map(
             (cur.chatFlow?.chatNodes ?? []).map((cn) => [cn.id, cn]),
           );
-          for (const id of needsFetch) {
+          for (const id of allIds) {
             const wf = map[id];
             if (wf) {
               const existing = cnIndex.get(id);
@@ -404,36 +437,24 @@ export const createSessionSlice: StateCreator<LoomscopeStore, [], [], SessionSli
         } catch (err) {
           const sessions = new Map(get().sessions);
           const cur = sessions.get(sessionId);
-          if (!cur) return;
-          const next = new Map(cur.workflowCache);
-          const msg = err instanceof Error ? err.message : String(err);
-          for (const id of needsFetch) {
-            next.set(id, { status: "error", workflow: null, error: msg });
+          if (cur) {
+            const next = new Map(cur.workflowCache);
+            const msg = err instanceof Error ? err.message : String(err);
+            for (const id of allIds) {
+              next.set(id, { status: "error", workflow: null, error: msg });
+            }
+            sessions.set(sessionId, { ...cur, workflowCache: next });
+            set({ sessions });
           }
-          sessions.set(sessionId, { ...cur, workflowCache: next });
-          set({ sessions });
         } finally {
-          for (const id of needsFetch) workflowLoadInFlight.delete(flightKey(id));
+          flush.resolve();
         }
-      })();
-      for (const id of needsFetch) {
-        workflowLoadInFlight.set(flightKey(id), fetchPromise);
-      }
+      });
+    } else {
+      for (const id of toFetch) buf.ids.add(id);
     }
 
-    // Wait on overlapping in-flight promises (each unique value),
-    // plus the fetch we just kicked off if any.
-    const wait: Promise<void>[] = [];
-    if (fetchPromise) wait.push(fetchPromise);
-    const seenPromises = new Set<Promise<void>>();
-    for (const id of alreadyFlying) {
-      const p = workflowLoadInFlight.get(flightKey(id));
-      if (p && !seenPromises.has(p)) {
-        seenPromises.add(p);
-        wait.push(p);
-      }
-    }
-    await Promise.all(wait);
+    await buf.promise;
   },
 
   // ── v0.5 sub-agent nesting ─────────────────────────────────────────
