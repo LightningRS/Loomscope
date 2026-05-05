@@ -29,7 +29,7 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import { CanvasPanContext } from "@/canvas/CanvasPanContext";
-import { layoutChatFlow } from "@/canvas/layoutDag";
+import { NODE_HEIGHT, NODE_WIDTH, layoutChatFlow } from "@/canvas/layoutDag";
 import { ModelRibbonLayer } from "@/canvas/ModelRibbonLayer";
 import { ChatFoldNodeCard } from "@/canvas/nodes/ChatFoldNodeCard";
 import { ChatNodeCard } from "@/canvas/nodes/ChatNodeCard";
@@ -151,6 +151,28 @@ function EdgeModelTooltip({
 interface CanvasInnerProps extends ChatFlowCanvasProps {
   hoveredEdge: HoveredEdgeState | null;
   onEdgeHover: (e: HoveredEdgeState | null) => void;
+}
+
+// Pan the viewport so the node's CENTER lands at the screen center,
+// preserving zoom. RF's `node.position` is the top-left corner; for
+// `setCenter` we need the center, so add half the node's measured
+// dimensions. When the node hasn't been measured yet (just unfolded
+// + DOM not yet sized), fall back to the layout constants — same
+// dimensions dagre used for placement, so the estimate is close to
+// the real card. Without the fallback, missing measurements collapse
+// to 0 and the viewport centers on the top-left → card visually
+// lands in the bottom-right quadrant.
+function panToNodeCenter(
+  rf: ReturnType<typeof useReactFlow>,
+  node: { position: { x: number; y: number }; measured?: { width?: number; height?: number } },
+): void {
+  const w = node.measured?.width ?? NODE_WIDTH;
+  const h = node.measured?.height ?? NODE_HEIGHT;
+  const vp = rf.getViewport();
+  rf.setCenter(node.position.x + w / 2, node.position.y + h / 2, {
+    zoom: vp.zoom,
+    duration: 200,
+  });
 }
 
 function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasInnerProps) {
@@ -349,14 +371,7 @@ function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasIn
       // it up after layoutChatFlow re-runs.
       if (chain.length === 0) {
         const node = rf.getNode(targetId);
-        if (node) {
-          const vp = rf.getViewport();
-          rf.setCenter(
-            node.position.x + (node.measured?.width ?? 0) / 2,
-            node.position.y + (node.measured?.height ?? 0) / 2,
-            { zoom: vp.zoom, duration: 200 },
-          );
-        }
+        if (node) panToNodeCenter(rf, node);
         pendingPanRef.current = null;
       }
     };
@@ -371,12 +386,7 @@ function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasIn
     if (!target) return;
     const node = rf.getNode(target);
     if (!node) return; // Still hidden — wait for the next layout.
-    const vp = rf.getViewport();
-    rf.setCenter(
-      node.position.x + (node.measured?.width ?? 0) / 2,
-      node.position.y + (node.measured?.height ?? 0) / 2,
-      { zoom: vp.zoom, duration: 200 },
-    );
+    panToNodeCenter(rf, node);
     pendingPanRef.current = null;
   }, [nodes, rf]);
 
