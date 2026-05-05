@@ -407,6 +407,24 @@ function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasIn
   // file-tail lands, this dependency should narrow to chatFlow.id so
   // incremental updates don't yank the viewport away from the user.
   const focusedSessionRef = useRef<string | null>(null);
+  // EN (v0.10 收尾): hide the canvas until first-paint fitView lands.
+  // Without this, ReactFlow paints one frame at the default viewport
+  // (origin, zoom=1) BEFORE the ResizeObserver-driven measurement
+  // arrives + this useEffect fires fitView. On a tiny ChatFlow that
+  // frame shows the root and looks fine. On a 244 MB session with
+  // hundreds of ChatNodes laid out left-to-right with parallel forks,
+  // the user briefly sees the entire spread (= "复杂的树形 workflow
+  // 闪过" in the user repro) before the camera jumps to the leaf.
+  // Opacity gate is enough — the canvas is rendered, sized, ready;
+  // we just don't show it until fitView has centred. Reset to false
+  // when chatFlow.id changes so a session switch re-runs the gate.
+  // 中: 隐藏画布直到 fitView 完成，避免大 session 切换时一帧默认视
+  // 口（zoom=1，原点）暴露整张 dagre 展开图的"树状闪过"。session 切
+  // 换时把闸门重置回 false。
+  const [firstPaintReady, setFirstPaintReady] = useState(false);
+  useEffect(() => {
+    setFirstPaintReady(false);
+  }, [chatFlow.id]);
   useEffect(() => {
     if (!latestNodeMeasured) return;
     if (!latestNodeId) return;
@@ -419,6 +437,7 @@ function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasIn
       duration: 0,
     });
     focusedSessionRef.current = chatFlow.id;
+    setFirstPaintReady(true);
   }, [chatFlow.id, latestNodeId, latestNodeMeasured, rf]);
 
   // v0.8.1 #5: register a pan-to-chat-node handler that ConversationView
@@ -599,6 +618,17 @@ function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasIn
 
   return (
     <FoldAnchorContext.Provider value={foldAnchor}>
+    <div
+      className="absolute inset-0"
+      style={{
+        opacity: firstPaintReady ? 1 : 0,
+        // Brief fade so the appear isn't a hard pop. Long-enough sessions
+        // already paid a multi-second parse wait, an extra 80 ms is
+        // imperceptible.
+        transition: "opacity 80ms",
+      }}
+      data-loomscope-first-paint={firstPaintReady ? "ready" : "pending"}
+    >
     <ReactFlow
       nodes={nodes}
       edges={edges}
@@ -639,6 +669,7 @@ function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasIn
         }
       />
     </ReactFlow>
+    </div>
     </FoldAnchorContext.Provider>
   );
 }
