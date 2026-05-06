@@ -271,8 +271,8 @@ function LlmCallDetail({
       )}
 
       {node.usage && (
-        <Section title="Usage">
-          <JsonView value={node.usage} />
+        <Section title="Usage" testId="llm-usage">
+          <UsageBlock node={node} chainHistory={chainHistory} />
         </Section>
       )}
 
@@ -358,6 +358,86 @@ function describeNodeForNav(n: WorkNode): string {
   }
   if (n.kind === "compact") return `compact (${n.summaryText.slice(0, 60)})`;
   return n.id.slice(0, 8);
+}
+
+// PR 2.3: usage block summarising the call's token cost + a delta
+// row showing how much *more* context this llm_call sent compared to
+// the previous llm_call in the chain. Why useful: `usage.input_tokens`
+// is cumulative (CC sends the entire messages array each call), so
+// the on-card TokenBar shows monotonically-rising context fill across
+// the chain. The per-node "what did THIS turn add" answer requires
+// the delta — surfaced here so users can answer "did this round
+// pile in 30k tokens of tool_results, or just a small thinking?".
+function UsageBlock({
+  node,
+  chainHistory,
+}: {
+  node: LlmCallNode;
+  chainHistory: WorkNode[];
+}) {
+  const ctxTokens = computeCtxTokens(node.usage);
+  const outputTokens = numericField(node.usage, "output_tokens");
+  // Find most recent llm_call predecessor in chain (chainHistory is
+  // ordered most-recent-first per walkChainBackward's contract).
+  const prevLlm = chainHistory.find((n) => n.kind === "llm_call");
+  const prevCtx = prevLlm
+    ? computeCtxTokens((prevLlm as LlmCallNode).usage)
+    : null;
+  const delta = prevCtx != null ? ctxTokens - prevCtx : null;
+  return (
+    <div className="space-y-2">
+      <ul className="text-[11px] text-gray-700 font-mono space-y-0.5">
+        <li>
+          ctx (input + cache): <strong>{formatTokens(ctxTokens)}</strong>
+          <span className="text-gray-400"> · 这是 CC 此次 API call 送给 Anthropic 的总 input</span>
+        </li>
+        <li>output: {formatTokens(outputTokens)}</li>
+        {delta != null && (
+          <li data-testid="llm-usage-delta">
+            delta vs 链内上一节点:{" "}
+            <strong className={delta >= 0 ? "text-amber-700" : "text-emerald-700"}>
+              {delta >= 0 ? "+" : ""}
+              {formatTokens(delta)}
+            </strong>
+            <span className="text-gray-400"> · 本节点新增上下文体量</span>
+          </li>
+        )}
+      </ul>
+      <details className="text-[10px]">
+        <summary className="cursor-pointer text-gray-500 hover:text-gray-700">
+          查看完整 usage 字段
+        </summary>
+        <div className="mt-1.5">
+          <JsonView value={node.usage} />
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function computeCtxTokens(usage: Record<string, unknown> | undefined): number {
+  return (
+    numericField(usage, "input_tokens") +
+    numericField(usage, "cache_read_input_tokens") +
+    numericField(usage, "cache_creation_input_tokens")
+  );
+}
+
+function numericField(
+  usage: Record<string, unknown> | undefined,
+  key: string,
+): number {
+  if (!usage) return 0;
+  const v = usage[key];
+  return typeof v === "number" ? v : 0;
+}
+
+function formatTokens(n: number): string {
+  const sign = n < 0 ? "-" : "";
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${sign}${(abs / 1_000).toFixed(1)}k`;
+  return `${sign}${abs}`;
 }
 
 // PR 2.1: chain-internal accumulation toggle. Renders inline inside

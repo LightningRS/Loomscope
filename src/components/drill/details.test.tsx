@@ -892,3 +892,61 @@ describe("LlmCallDetail PR 2.2 — chain_position metadata", () => {
     expect(panSpy).toHaveBeenCalledWith("l1");
   });
 });
+
+describe("LlmCallDetail PR 2.3 — ctx tokens + delta", () => {
+  it("usage section shows ctx (input + cache_read + cache_creation) cumulative tokens", () => {
+    seedSession();
+    const node = llm("l1", null, {
+      usage: {
+        input_tokens: 1000,
+        output_tokens: 200,
+        cache_read_input_tokens: 5000,
+        cache_creation_input_tokens: 500,
+      },
+    });
+    renderWithPan(node, [node]);
+    const usage = screen.getByTestId("llm-usage");
+    // Cumulative ctx = 1000 + 5000 + 500 = 6500 → "6.5k".
+    expect(usage.textContent).toMatch(/6\.5k/);
+    // Output line still present (200 → "200" since < 1k).
+    expect(usage.textContent).toMatch(/output:.*200/);
+  });
+
+  it("delta row absent when node is the first llm_call in the chain (no predecessor)", () => {
+    seedSession();
+    const node = llm("l1", null, {
+      usage: { input_tokens: 1000, output_tokens: 200 },
+    });
+    renderWithPan(node, [node]);
+    expect(screen.queryByTestId("llm-usage-delta")).toBeNull();
+  });
+
+  it("delta row shows positive delta when next llm_call grew the context", () => {
+    seedSession();
+    // Chain: l1 (ctx 1000) → t1 → l2 (ctx 8500) — delta on l2 = +7.5k.
+    const l1 = llm("l1", null, { usage: { input_tokens: 1000, output_tokens: 100 } });
+    const t1 = tc("t1", "l1", "Bash", "u-res-1");
+    const l2 = llm("l2", "u-res-1", {
+      usage: {
+        input_tokens: 7500,
+        output_tokens: 200,
+        cache_read_input_tokens: 1000,
+      },
+    });
+    renderWithPan(l2, [l1, t1, l2]);
+    const delta = screen.getByTestId("llm-usage-delta");
+    // l2 ctx = 7500 + 1000 = 8500; l1 ctx = 1000; delta = 7500.
+    expect(delta.textContent).toMatch(/\+7\.5k/);
+  });
+
+  it("delta row negative when context shrank (e.g. mid-turn compact)", () => {
+    seedSession();
+    // l1 ctx 50k → l2 ctx 10k (post-compact: huge drop).
+    const l1 = llm("l1", null, { usage: { input_tokens: 50_000 } });
+    const t1 = tc("t1", "l1", "Bash", "u-res-1");
+    const l2 = llm("l2", "u-res-1", { usage: { input_tokens: 10_000 } });
+    renderWithPan(l2, [l1, t1, l2]);
+    const delta = screen.getByTestId("llm-usage-delta");
+    expect(delta.textContent).toMatch(/-40\.0k/);
+  });
+});

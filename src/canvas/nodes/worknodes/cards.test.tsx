@@ -75,7 +75,12 @@ describe("LlmCallCard", () => {
               text: "the answer is 42",
               thinking: [{ text: "let me think\nabout this" }],
               model: "claude-opus-4-7",
-              usage: { input_tokens: 1200, output_tokens: 350 },
+              usage: {
+                input_tokens: 1200,
+                output_tokens: 350,
+                cache_read_input_tokens: 8000,
+                cache_creation_input_tokens: 400,
+              },
             },
           })}
         />,
@@ -85,9 +90,12 @@ describe("LlmCallCard", () => {
     expect(screen.getByText("the answer is 42")).toBeTruthy();
     expect(screen.getByText(/2 lines/)).toBeTruthy();
     expect(screen.getByText("claude-opus-4-7")).toBeTruthy();
-    // v0.6 redo M4: TokenBar (1.6k = 1200+350) + NodeIdLine present.
+    // PR 2.3: TokenBar = cumulative input (input + cache_read +
+    // cache_creation) = 1200 + 8000 + 400 = 9600 → "9.6k" format.
+    // Output tokens are NO LONGER included in the bar; they sit on
+    // the per-call detail (LlmCallDetail) instead.
     expect(screen.getByTestId("node-id-l1")).toBeTruthy();
-    expect(screen.getByText(/1\.6k/i)).toBeTruthy();
+    expect(screen.getByText(/9\.6k/i)).toBeTruthy();
   });
 
   it("renders empty-text placeholder when text is empty", () => {

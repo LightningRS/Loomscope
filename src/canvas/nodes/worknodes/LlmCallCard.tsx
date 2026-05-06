@@ -24,11 +24,22 @@ export function LlmCallCard({ id, data }: NodeProps<LlmCallRFNode>) {
   const isError = (n.errors?.length ?? 0) > 0;
   const accent = isError ? "rose" : "blue";
   const selected = useIsWorkNodeSelected(id);
-  // Sum input + output (excluding cache lookups). v0.6 redo M4: model
-  // invocation occurred → draw TokenBar.
-  const inputTokens = numOrZero(n.usage?.input_tokens);
-  const outputTokens = numOrZero(n.usage?.output_tokens);
-  const totalTokens = inputTokens + outputTokens;
+  // PR 2.3: token bar = cumulative context tokens (input + cache_read +
+  // cache_creation), aligned with ChatNodeCard's contextTokens
+  // formula. Rationale: CC's `usage.input_tokens` is the entire
+  // messages array sent on this API call — already cumulative across
+  // the chain (each subsequent llm_call sees prior thinking + tool_use
+  // + tool_result). Adding output_tokens to that mixes accumulated
+  // input with per-call output, producing a number with no clear
+  // semantic meaning. Cumulative input (incl. cache hits) cleanly
+  // expresses "how much context was sent here", which monotonically
+  // grows along a chain and matches what users intuitively want.
+  // Per-call delta (current input − prior chain llm_call's input)
+  // lives in LlmCallDetail.
+  const ctxTokens =
+    numOrZero(n.usage?.input_tokens) +
+    numOrZero(n.usage?.cache_read_input_tokens) +
+    numOrZero(n.usage?.cache_creation_input_tokens);
   const isRunning = (data as { isRunning?: boolean }).isRunning === true;
 
   return (
@@ -71,7 +82,7 @@ export function LlmCallCard({ id, data }: NodeProps<LlmCallRFNode>) {
           ✗ {n.errors?.[0]?.type ?? "error"}
         </div>
       )}
-      {totalTokens > 0 && <TokenBar tokens={totalTokens} />}
+      {ctxTokens > 0 && <TokenBar tokens={ctxTokens} />}
       <NodeIdLine nodeId={n.id} />
       <Handle
         type="source"
