@@ -14,6 +14,7 @@ import {
 } from "@/canvas/layoutWorkflow";
 import { NodeIdLine } from "@/canvas/nodes/chrome/NodeIdLine";
 import { TokenBar } from "@/canvas/nodes/chrome/TokenBar";
+import { maxContextForModel } from "@/data/modelContext";
 import { useIsWorkNodeSelected } from "@/store/selectionHooks";
 import { handleStyle, workNodeChromeClass } from "./cardChrome";
 
@@ -40,6 +41,15 @@ export function LlmCallCard({ id, data }: NodeProps<LlmCallRFNode>) {
     numOrZero(n.usage?.input_tokens) +
     numOrZero(n.usage?.cache_read_input_tokens) +
     numOrZero(n.usage?.cache_creation_input_tokens);
+  // PR 2.3 follow-up: pass the model-specific context window as
+  // TokenBar's denominator. Without it the bar defaulted to 200k for
+  // every llm_call regardless of model, so a Claude Opus 4.7
+  // (actually 1M context) showed 498% clamped to 100% on a 997k call,
+  // and a 40k call on the SAME model showed 20% (40/200) — same
+  // ChatNode using a different denominator. modelContext.ts maps
+  // `claude-opus*` to 1M; CC strips the [1m] suffix in jsonl so we
+  // assume 1M for opus by default (per existing comment).
+  const maxCtxTokens = maxContextForModel(n.model);
   const isRunning = (data as { isRunning?: boolean }).isRunning === true;
 
   return (
@@ -82,7 +92,7 @@ export function LlmCallCard({ id, data }: NodeProps<LlmCallRFNode>) {
           ✗ {n.errors?.[0]?.type ?? "error"}
         </div>
       )}
-      {ctxTokens > 0 && <TokenBar tokens={ctxTokens} />}
+      {ctxTokens > 0 && <TokenBar tokens={ctxTokens} maxTokens={maxCtxTokens} />}
       <NodeIdLine nodeId={n.id} />
       <Handle
         type="source"
