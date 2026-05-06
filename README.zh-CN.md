@@ -38,6 +38,8 @@ CC CLI 是 agent 的运行时，Loomscope 是配套的**只读图形化阅读器
 
 ## 核心展示
 
+> **术语说明 —— `ChatFlow` / `WorkFlow` 是 Loomscope 的解读层，不是 Claude Code 的原生数据模型。** CC 在 session 里写的就是一条线性 `parentUuid` 链（`user` / `assistant` / `system` / `attachment` 全都串在这一条链上），`turn` 边界是隐式的（每条 user record 上的 `promptId` 标记）。Loomscope 的双层 DAG 视图是对这条链的一种**解读方式** —— turn 被建模成 `ChatNode`、turn 内部 assistant 的 tool 循环建模成 `WorkFlow` 里的 `WorkNode`。其它解读方式也成立；这一种是为了"展示每个 turn 做了什么工作的结构"而优化的。
+
 ### 1 · 双层 DAG 画布
 
 `ChatFlow`（每轮 turn 一个节点）drill 进 `WorkFlow`（turn 内部每个 `llm_call` / `tool_call` / `delegate` 一个节点）。子代理递归展开为各自的 ChatFlow。

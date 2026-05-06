@@ -38,6 +38,8 @@ The CC CLI is the canonical agent runtime; Loomscope is a **read-only graphical 
 
 ## What it shows
 
+> **Note on terminology — `ChatFlow` / `WorkFlow` are Loomscope's interpretive layer, not Claude Code's data model.** CC writes a single linear `parentUuid`-linked message chain (`user` / `assistant` / `system` / `attachment`) per session; the `turn` boundary is implicit (signalled by `promptId` on each user record). Loomscope's two-layer DAG view is one way of reading that chain — turns become `ChatNodes`, the assistant's tool loop within a turn becomes a `WorkFlow` of `WorkNodes`. Other readings are possible; this one optimises for "show me the structure of work done per turn."
+
 ### 1 · Two-layer DAG canvas
 
 `ChatFlow` (one node per turn) drilling into `WorkFlow` (one node per `llm_call` / `tool_call` / `delegate` inside that turn). Sub-agents recursively expand into their own ChatFlow.
