@@ -16,6 +16,7 @@ import { useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
 import { CanvasPanProvider } from "@/canvas/CanvasPanContext";
+import { WorkFlowPanProvider } from "@/canvas/WorkFlowPanContext";
 import { ConversationScrollProvider } from "@/canvas/ConversationScrollContext";
 import { ChatFlowCanvas } from "@/canvas/ChatFlowCanvas";
 import { WorkFlowCanvas } from "@/canvas/WorkFlowCanvas";
@@ -220,6 +221,7 @@ export default function App() {
 
   return (
     <CanvasPanProvider>
+    <WorkFlowPanProvider>
     <ConversationScrollProvider>
     <div className="h-screen w-screen flex flex-col bg-gray-50 text-gray-900">
       <Header />
@@ -280,6 +282,7 @@ export default function App() {
       </div>
     </div>
     </ConversationScrollProvider>
+    </WorkFlowPanProvider>
     </CanvasPanProvider>
   );
 }

@@ -1,14 +1,16 @@
 // Render tests for ChatNodeDetail + WorkNodeDetail. Each kind branch
 // gets a focused fixture verifying the spec'd fields surface.
 
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 import { ChatNodeDetail } from "@/components/drill/ChatNodeDetail";
 import {
   WorkNodeDetail,
   extractOverflowRefId,
 } from "@/components/drill/WorkNodeDetail";
+import { WorkFlowPanContext } from "@/canvas/WorkFlowPanContext";
+import { useStore } from "@/store/index";
 import type {
   AttachmentNode,
   ChatFlow,
@@ -17,6 +19,7 @@ import type {
   DelegateNode,
   LlmCallNode,
   ToolCallNode,
+  WorkNode,
 } from "@/data/types";
 
 // v0.8.1 #9: ChatNodeDetail now needs `chatFlow` for the "本节点
@@ -598,5 +601,198 @@ describe("WorkNodeDetail — attachment", () => {
     };
     render(<WorkNodeDetail workNode={node} sessionId="sid" />);
     expect(screen.queryByTestId("compact-file-reference-card")).toBeNull();
+  });
+});
+
+// ─── PR 2: LlmCallDetail input/output redesign + dual-track nav ───────
+
+const SID2 = "22222222-1111-4000-8000-000000000eee";
+
+function llm(id: string, parentUuid: string | null = null, extra: Partial<LlmCallNode> = {}): LlmCallNode {
+  return {
+    id,
+    kind: "llm_call",
+    parentUuid,
+    model: "claude-opus-4-7",
+    text: "",
+    thinking: [],
+    ...extra,
+  };
+}
+function tc(
+  id: string,
+  parentUuid: string | null,
+  toolName = "Bash",
+  resultUserUuid?: string,
+  input: Record<string, unknown> = { command: "echo" },
+): ToolCallNode {
+  return {
+    id,
+    kind: "tool_call",
+    parentUuid,
+    toolName,
+    input,
+    resultUserUuid,
+  };
+}
+
+function seedSession(): void {
+  useStore.setState((s) => {
+    const sessions = new Map(s.sessions);
+    sessions.set(SID2, {
+      chatFlow: null as unknown as ChatFlow,
+      foldedNodeIds: new Set(),
+      foldedCompactIds: new Set(),
+      viewport: { x: 0, y: 0, zoom: 1 },
+      selectedNodeId: null,
+      workflowSelectedNodeId: null,
+      drillStack: [],
+      branchMemory: {},
+      subAgentCache: new Map(),
+      workflowCache: new Map(),
+      workflowViewports: new Map(),
+      pendingPermission: null,
+      isLoading: false,
+      error: null,
+      lastUpdated: 0,
+      lastInvalidateAt: 0,
+    });
+    return { sessions, activeSessionId: SID2 };
+  });
+}
+
+function renderWithPan(workNode: WorkNode, workflowNodes: WorkNode[], panFn?: (id: string) => void) {
+  const ref = { current: panFn ?? null };
+  return render(
+    <WorkFlowPanContext.Provider value={{ ref }}>
+      <WorkNodeDetail
+        workNode={workNode}
+        sessionId={SID2}
+        workflowNodes={workflowNodes}
+      />
+    </WorkFlowPanContext.Provider>,
+  );
+}
+
+beforeEach(() => {
+  useStore.setState({ sessions: new Map(), activeSessionId: null });
+});
+afterEach(() => {
+  useStore.setState({ sessions: new Map(), activeSessionId: null });
+});
+
+describe("LlmCallDetail PR 2-A — input section", () => {
+  it("renders the Conversation jump button + system prompt note", () => {
+    seedSession();
+    const node = llm("l1");
+    renderWithPan(node, [node]);
+    expect(screen.getByTestId("llm-input-jump-conversation")).toBeTruthy();
+    const note = screen.getByTestId("llm-input-system-note");
+    expect(note.textContent).toMatch(/system prompt/);
+    expect(note.textContent).toMatch(/不写入 jsonl/);
+  });
+
+  it("clicking the jump button switches drillPanelTab to 'conversation'", () => {
+    seedSession();
+    useStore.setState({ drillPanelTab: "detail" });
+    const node = llm("l1");
+    renderWithPan(node, [node]);
+    fireEvent.click(screen.getByTestId("llm-input-jump-conversation"));
+    expect(useStore.getState().drillPanelTab).toBe("conversation");
+  });
+});
+
+describe("LlmCallDetail PR 2-B — spawned tool calls (dual-track)", () => {
+  it("lists tool_calls whose parentUuid === this llm_call's id", () => {
+    seedSession();
+    const root = llm("l-root");
+    const t1 = tc("t-1", "l-root", "Bash");
+    const t2 = tc("t-2", "l-root", "Read");
+    // Sibling tool_call NOT spawned by us — must be excluded.
+    const tOther = tc("t-other", "l-other-llm", "Glob");
+    renderWithPan(root, [root, t1, t2, tOther]);
+    const section = screen.getByTestId("llm-spawned-tools");
+    expect(section.textContent).toMatch(/触发的工具调用 \(2\)/);
+    expect(screen.getByTestId("llm-spawned-tool-row-t-1")).toBeTruthy();
+    expect(screen.getByTestId("llm-spawned-tool-row-t-2")).toBeTruthy();
+    expect(screen.queryByTestId("llm-spawned-tool-row-t-other")).toBeNull();
+  });
+
+  it("'panel' button selects the target WorkNode without panning the canvas", () => {
+    seedSession();
+    const root = llm("l-root");
+    const t1 = tc("t-1", "l-root", "Bash");
+    const panSpy = vi.fn();
+    renderWithPan(root, [root, t1], panSpy);
+    fireEvent.click(screen.getByTestId("llm-spawned-tool-panel-t-1"));
+    expect(useStore.getState().sessions.get(SID2)?.workflowSelectedNodeId).toBe("t-1");
+    expect(panSpy).not.toHaveBeenCalled();
+  });
+
+  it("'canvas' button selects AND pans the canvas", () => {
+    seedSession();
+    const root = llm("l-root");
+    const t1 = tc("t-1", "l-root", "Bash");
+    const panSpy = vi.fn();
+    renderWithPan(root, [root, t1], panSpy);
+    fireEvent.click(screen.getByTestId("llm-spawned-tool-canvas-t-1"));
+    expect(useStore.getState().sessions.get(SID2)?.workflowSelectedNodeId).toBe("t-1");
+    expect(panSpy).toHaveBeenCalledWith("t-1");
+  });
+
+  it("section absent when no tool_calls were spawned", () => {
+    seedSession();
+    const node = llm("l-only");
+    renderWithPan(node, [node]);
+    expect(screen.queryByTestId("llm-spawned-tools")).toBeNull();
+  });
+});
+
+describe("LlmCallDetail PR 2-C — chain accumulation", () => {
+  it("walks parentUuid back through tool_call.resultUserUuid + spawn edges", () => {
+    seedSession();
+    // Chain: l1 → t1 (parent=l1, resultUuid=u1) → l2 (parent=u1)
+    //        → t2 (parent=l2, resultUuid=u2) → l3 (parent=u2)
+    const l1 = llm("l1", null, { thinking: [{ text: "first thinking" }] });
+    const t1 = tc("t1", "l1", "Bash", "u1");
+    const l2 = llm("l2", "u1", { thinking: [{ text: "second thinking" }] });
+    const t2 = tc("t2", "l2", "Read", "u2");
+    const l3 = llm("l3", "u2");
+    renderWithPan(l3, [l1, t1, l2, t2, l3]);
+    // Section header surfaces aggregate counts (2 prior llm_calls,
+    // 2 prior tool_calls in the chain history).
+    const toggle = screen.getByTestId("llm-chain-history-toggle");
+    expect(toggle.textContent).toMatch(/2 次 thinking/);
+    expect(toggle.textContent).toMatch(/2 次 tool 交互/);
+  });
+
+  it("default-folded; expanding reveals the node list", () => {
+    seedSession();
+    const l1 = llm("l1");
+    const t1 = tc("t1", "l1", "Bash", "u1");
+    const l2 = llm("l2", "u1");
+    renderWithPan(l2, [l1, t1, l2]);
+    expect(screen.queryByTestId("llm-chain-history-list")).toBeNull();
+    fireEvent.click(screen.getByTestId("llm-chain-history-toggle"));
+    expect(screen.getByTestId("llm-chain-history-list")).toBeTruthy();
+    // Both predecessors listed.
+    expect(screen.getByTestId("llm-chain-history-row-l1")).toBeTruthy();
+    expect(screen.getByTestId("llm-chain-history-row-t1")).toBeTruthy();
+  });
+
+  it("section absent when llm_call has no chain predecessors (chain root)", () => {
+    seedSession();
+    const root = llm("l-root", null);
+    renderWithPan(root, [root]);
+    expect(screen.queryByTestId("llm-chain-history")).toBeNull();
+  });
+
+  it("chain walk stops at parentUuid pointing OUTSIDE the WorkFlow", () => {
+    seedSession();
+    // l2.parentUuid points at a uuid not in nodes → walk should stop
+    // immediately, no chain history rendered.
+    const l2 = llm("l2", "external-uuid-not-here");
+    renderWithPan(l2, [l2]);
+    expect(screen.queryByTestId("llm-chain-history")).toBeNull();
   });
 });

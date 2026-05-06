@@ -14,7 +14,12 @@
 // ChatFlow rendered by ChatFlowCanvas (recursive), not chatNodes[0]
 // here — so the v0.5 amber multiChatNodeNotice banner is gone.
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef } from "react";
+
+import {
+  WorkFlowPanContext,
+  type PanToWorkNodeFn,
+} from "@/canvas/WorkFlowPanContext";
 
 import {
   Background,
@@ -222,6 +227,31 @@ function CanvasInner({ chatNode, sessionId }: WorkFlowCanvasProps) {
     },
     [sessionId, chatNode.id, setWorkflowViewport],
   );
+
+  // PR 2 dual-track navigation: LlmCallDetail's "在画布定位" button
+  // calls panToWorkNode(id) via WorkFlowPanContext. Implementation
+  // centres the React Flow viewport on the requested node and
+  // preserves the user's current zoom level. Selection ring is set
+  // separately via setWorkflowSelected so the caller can decouple the
+  // two concerns ("在面板查看" only selects; "在画布定位" pans + selects).
+  const wfPanCtx = useContext(WorkFlowPanContext);
+  useEffect(() => {
+    if (!wfPanCtx) return;
+    const impl: PanToWorkNodeFn = (id) => {
+      const node = rf.getNode(id);
+      if (!node) return;
+      const w = node.measured?.width ?? 200;
+      const h = node.measured?.height ?? 80;
+      rf.setCenter(node.position.x + w / 2, node.position.y + h / 2, {
+        zoom: rf.getZoom(),
+        duration: 350,
+      });
+    };
+    wfPanCtx.ref.current = impl;
+    return () => {
+      if (wfPanCtx.ref.current === impl) wfPanCtx.ref.current = null;
+    };
+  }, [wfPanCtx, rf]);
 
   // v0.10 lazy ChatFlow B4: pending → loading overlay; error → error
   // hint. Distinguish from "genuinely empty WorkFlow" via `access.status`.

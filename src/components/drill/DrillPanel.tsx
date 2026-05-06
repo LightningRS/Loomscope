@@ -385,7 +385,11 @@ function DetailTabContent({
         <EmptyHint label="点 ChatNode 查看详情" />
       )}
       {focused.kind === "worknode" && focused.workNode && (
-        <WorkNodeDetail workNode={focused.workNode} sessionId={sessionId} />
+        <WorkNodeDetail
+          workNode={focused.workNode}
+          sessionId={sessionId}
+          workflowNodes={drilledWorkflowNodes}
+        />
       )}
       {focused.kind === "worknode" && !focused.workNode && (
         <EmptyHint label="点 WorkNode 查看详情" />
