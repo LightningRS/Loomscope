@@ -459,7 +459,28 @@ function walkChainBackward(
 // PR 2.2: chain_position — UI metadata about where this llm_call
 // sits in the WorkFlow's chain topology. Returns null when not a
 // chain root (= mid-chain llm_calls don't get this row).
-type BreakReason = "compact" | "unknown";
+//
+// Important caveats for inferring "why" the chain broke (revised after
+// reading CC source — src/services/compact/compact.ts +
+// utils/sessionStorage.ts:applyPreservedSegmentRelinks):
+//
+//   - CC compactions usually carry a preservedSegment that the loader
+//     uses to re-stitch parentUuid links across the boundary; a
+//     CompactNode appearing in a WorkFlow does NOT mean the chain
+//     actually broke there.
+//   - microcompact_boundary doesn't restructure the chain at all; it
+//     only clears tool_result caches.
+//   - api_error retries don't break the chain.
+//   - True breakpoints (`/clear`, `/escape` mid-turn, partial compact
+//     without preservedSegment, cross-session resume edge cases) often
+//     leave NO local WorkFlow signal that Loomscope can pin down.
+//
+// So the UI shows the chain-root status as a fact, lists ALL non-llm
+// WorkNodes between the previous-chain tail and this node as candidate
+// evidence, and explicitly says Loomscope cannot precisely identify
+// the cause.
+
+type ChainGapEvidence = CompactNode | AttachmentNode;
 
 interface ChainPositionFirstInWorkflow {
   kind: "first-in-workflow";
@@ -469,11 +490,11 @@ interface ChainPositionWithPrev {
   // The most recent llm_call in document order that belongs to a
   // DIFFERENT chain — i.e. the previous chain's tail.
   previousChainTail: LlmCallNode;
-  breakReason: BreakReason;
-  // ChainNodes seen between previousChainTail and this node — used
-  // by the UI to surface specific inline evidence (e.g. linking the
-  // CompactNode that triggered the break).
-  evidenceCompactNode: CompactNode | null;
+  // Every non-llm/non-tool WorkNode between previousChainTail and
+  // this node, in document order. Surfaced as a hint list — NOT a
+  // root-cause assertion. May be empty (= no local evidence; the
+  // break likely happened off-WorkFlow, e.g. /clear / cross-session).
+  gapEvidence: ChainGapEvidence[];
 }
 type ChainPosition = ChainPositionFirstInWorkflow | ChainPositionWithPrev;
 
@@ -512,24 +533,23 @@ function computeChainPosition(
     return { kind: "first-in-workflow" };
   }
 
-  // Best-effort break reason inference: scan nodes BETWEEN prevTail
-  // and node for a CompactNode (system/compact_boundary record).
-  // Other reasons (api_error retry, /escape resume) don't currently
-  // emit WorkNodes so we report 'unknown' for them.
+  // Collect ALL evidence between prevTail and node. CompactNode +
+  // AttachmentNode are the kinds Loomscope currently models that
+  // could plausibly correlate with a chain break (compact_boundary,
+  // attachment-based interventions). tool_call/delegate are part of
+  // normal turn shape — skipped.
   const prevTailIdx = nodes.indexOf(prevTail);
-  let evidenceCompact: CompactNode | null = null;
+  const gapEvidence: ChainGapEvidence[] = [];
   for (let i = prevTailIdx + 1; i < nodeIdx; i += 1) {
     const between = nodes[i];
-    if (between.kind === "compact") {
-      evidenceCompact = between;
-      break;
+    if (between.kind === "compact" || between.kind === "attachment") {
+      gapEvidence.push(between);
     }
   }
   return {
     kind: "chain-root-with-prev",
     previousChainTail: prevTail,
-    breakReason: evidenceCompact ? "compact" : "unknown",
-    evidenceCompactNode: evidenceCompact,
+    gapEvidence,
   };
 }
 
@@ -553,10 +573,6 @@ function ChainPositionRow({
     );
   }
   const tail = position.previousChainTail;
-  const evidenceLabel =
-    position.breakReason === "compact"
-      ? "因 compact 断链"
-      : "断链原因未知（可能是 api_error 重试或 /escape resume）";
   return (
     <div
       className="mt-1.5 flex flex-col gap-1 rounded border border-amber-200 bg-amber-50/60 px-2 py-1 text-[10px] text-amber-800"
@@ -577,21 +593,39 @@ function ChainPositionRow({
           {tail.id.slice(0, 8)}
         </button>
       </div>
-      <div className="flex flex-wrap items-center gap-x-1.5">
-        <span>{evidenceLabel}</span>
-        {position.evidenceCompactNode && (
-          <button
-            type="button"
-            onClick={() => onPanelView(position.evidenceCompactNode!.id)}
-            onDoubleClick={() => onCanvasLocate(position.evidenceCompactNode!.id)}
-            className="inline-flex items-center gap-1 rounded border border-amber-300 bg-white px-1.5 py-0.5 font-mono text-amber-900 hover:border-amber-500 hover:bg-amber-100 transition-colors"
-            title="单击：在面板查看 compact / 双击：在画布定位"
-            data-testid="llm-chain-position-compact-link"
-          >
-            compact {position.evidenceCompactNode.id.slice(0, 8)}
-          </button>
-        )}
-      </div>
+      {position.gapEvidence.length > 0 ? (
+        <div
+          className="flex flex-col gap-1"
+          data-testid="llm-chain-position-evidence-list"
+        >
+          <span>本 WorkFlow 内在两条链之间出现：</span>
+          <ul className="ml-3 flex flex-col gap-1 list-disc">
+            {position.gapEvidence.map((ev) => (
+              <li key={ev.id}>
+                <button
+                  type="button"
+                  onClick={() => onPanelView(ev.id)}
+                  onDoubleClick={() => onCanvasLocate(ev.id)}
+                  className="inline-flex items-center gap-1 rounded border border-amber-300 bg-white px-1.5 py-0.5 font-mono text-amber-900 hover:border-amber-500 hover:bg-amber-100 transition-colors"
+                  title="单击：在面板查看 / 双击：在画布定位"
+                  data-testid={`llm-chain-position-evidence-${ev.id}`}
+                >
+                  {ev.kind} {ev.id.slice(0, 8)}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <span data-testid="llm-chain-position-no-evidence">
+          本 WorkFlow 内在两条链之间没有可见证据。
+        </span>
+      )}
+      <p className="mt-0.5 text-amber-600/80 italic">
+        ⚠ Loomscope 无法精确判断断链原因 — 可能是 /clear、/escape mid-turn、
+        partial compact、cross-session resume 等。CC 的 compact 通常带
+        preservedSegment 接续 chain（见 CompactNode ≠ 断链）。
+      </p>
     </div>
   );
 }

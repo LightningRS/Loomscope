@@ -828,13 +828,12 @@ describe("LlmCallDetail PR 2.2 — chain_position metadata", () => {
     expect(screen.queryByTestId("llm-chain-position-with-prev")).toBeNull();
   });
 
-  it("chain root with previous chain in workflow shows tail link + unknown reason when no compact", () => {
+  it("chain root with previous chain in workflow + no gap evidence → 'no visible evidence' message", () => {
     seedSession();
-    // Chain 1: l1 (no preds) → t1 → l2 (parent=u-res-1) — chain
-    // continues l1 → t1 → l2.
+    // Chain 1: l1 → t1 → l2 (parent=u-res-1) — continuous chain.
     // Chain 2: l3 has parentUuid pointing at an external uuid (no
-    // resolution) — chain root. Should link back to l2 (chain 1's
-    // tail). No CompactNode between → break reason 'unknown'.
+    // resolution) — chain root. Tail = l2. No CompactNode/Attachment
+    // between → "本 WorkFlow 内在两条链之间没有可见证据".
     const l1 = llm("l1");
     const t1 = tc("t1", "l1", "Bash", "u-res-1");
     const l2 = llm("l2", "u-res-1");
@@ -843,14 +842,18 @@ describe("LlmCallDetail PR 2.2 — chain_position metadata", () => {
     const row = screen.getByTestId("llm-chain-position-with-prev");
     expect(row.textContent).toMatch(/新链起点/);
     expect(row.textContent).toMatch(/前一条链结束于/);
-    expect(row.textContent).toMatch(/原因未知/);
     // Tail link points at l2.
     const tailLink = screen.getByTestId("llm-chain-position-tail-link");
     expect(tailLink.textContent).toContain("l2");
-    expect(screen.queryByTestId("llm-chain-position-compact-link")).toBeNull();
+    // No evidence list rendered; sentinel text instead.
+    expect(screen.queryByTestId("llm-chain-position-evidence-list")).toBeNull();
+    expect(screen.getByTestId("llm-chain-position-no-evidence")).toBeTruthy();
+    // Caveat note is always rendered.
+    expect(row.textContent).toMatch(/Loomscope 无法精确判断/);
+    expect(row.textContent).toMatch(/CompactNode ≠ 断链/);
   });
 
-  it("chain root with intervening CompactNode → break reason 'compact' + compact link", () => {
+  it("chain root with intervening CompactNode lists it as evidence (NOT as the asserted cause)", () => {
     seedSession();
     // Chain 1: l1 (root). CompactNode c1 between. Chain 2: l2 (chain
     // root, parentUuid points outside).
@@ -859,9 +862,13 @@ describe("LlmCallDetail PR 2.2 — chain_position metadata", () => {
     const l2 = llm("l2", "external-uuid");
     renderWithPan(l2, [l1, c1, l2]);
     const row = screen.getByTestId("llm-chain-position-with-prev");
-    expect(row.textContent).toMatch(/因 compact 断链/);
-    const compactLink = screen.getByTestId("llm-chain-position-compact-link");
-    expect(compactLink.textContent).toContain("c1");
+    // Evidence list rendered with the compact node listed.
+    expect(screen.getByTestId("llm-chain-position-evidence-list")).toBeTruthy();
+    expect(screen.getByTestId("llm-chain-position-evidence-c1")).toBeTruthy();
+    // No assertive language like "因 compact 断链" — only descriptive.
+    expect(row.textContent).not.toMatch(/因 compact 断链/);
+    expect(row.textContent).not.toMatch(/原因未知/);
+    expect(row.textContent).toMatch(/Loomscope 无法精确判断/);
   });
 
   it("clicking tail link in panel mode selects via setWorkflowSelected (no canvas pan)", () => {
