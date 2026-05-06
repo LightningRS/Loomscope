@@ -47,6 +47,13 @@ function llmCallContextTokens(usage?: Record<string, unknown>): number {
 export function computeWorkflowSummary(
   nodes: WorkNode[],
   _edges: Edge[],
+  // Optional uuid → parentUuid index covering ALL chain participants
+  // in the bucket's raw records, including ones that don't become
+  // WorkNodes (task_reminder/hook_additional_context attachments,
+  // system/turn_duration / system/away_summary / etc.). Lets
+  // chainCount walk through transit records the parser otherwise
+  // drops, eliminating false-positive "chain breaks".
+  chainParentByUuid?: Map<string, string>,
 ): WorkflowSummary {
   const llms = nodes.filter(
     (n): n is LlmCallNode => n.kind === "llm_call" && isRealLlmCall(n),
@@ -77,7 +84,7 @@ export function computeWorkflowSummary(
     (n) => n.kind === "tool_call" || n.kind === "delegate",
   ).length;
   const llmCount = nodes.filter((n) => n.kind === "llm_call").length;
-  const chainCount = computeChainCount(nodes);
+  const chainCount = computeChainCount(nodes, chainParentByUuid);
   // EN (v0.9.2): data-shape "in flight" detection. Tool_call /
   // delegate without resultBlock = response not yet written; final
   // llm_call without stopReason = streaming response cut mid-stream.
@@ -202,36 +209,88 @@ function truncate(s: string, max: number): string {
 // 直到 end_turn）；>1 表示 CC harness 在 turn 中段插入了 gap
 // （auto-compact / 错误重试 / /escape 续接等）导致链断开。
 // ChatNodeCard 在 chainCount>1 时显示 🔗 N chip 提示。
-function computeChainCount(nodes: WorkNode[]): number {
+function computeChainCount(
+  nodes: WorkNode[],
+  chainParentByUuid?: Map<string, string>,
+): number {
   const llmIds = new Set<string>();
   for (const n of nodes) if (n.kind === "llm_call") llmIds.add(n.id);
   if (llmIds.size === 0) return 0;
-  // resultUserUuid → tool_call.id (the tool_result that bridges
-  // tool_call back to the next llm_call).
-  const toolByResultUuid = new Map<string, string>();
-  // tool_call.id → its parent llm_call id.
-  const toolParentLlm = new Map<string, string>();
-  for (const n of nodes) {
-    if (n.kind !== "tool_call" && n.kind !== "delegate") continue;
-    if (n.resultUserUuid) toolByResultUuid.set(n.resultUserUuid, n.id);
-    if (n.parentUuid && llmIds.has(n.parentUuid)) {
-      toolParentLlm.set(n.id, n.parentUuid);
-    }
-  }
   let roots = 0;
   for (const n of nodes) {
     if (n.kind !== "llm_call") continue;
-    const p = n.parentUuid;
-    if (!p) {
-      roots += 1;
-      continue;
-    }
-    // direct llm → llm continuation (rare but legal)
-    if (llmIds.has(p)) continue;
-    // indirect llm → tool_call → llm continuation via tool_result
-    const toolId = toolByResultUuid.get(p);
-    if (toolId && toolParentLlm.has(toolId)) continue;
-    roots += 1;
+    if (!hasInWorkflowLlmPredecessor(n, nodes, chainParentByUuid)) roots += 1;
   }
   return roots;
+}
+
+// EN: walk parentUuid backward through the WorkFlow's nodes until we
+// either hit another llm_call (= predecessor exists, NOT a chain root)
+// or run out of resolvable nodes (= chain root).
+//
+// CC's chain isn't a strict llm→tool→llm sequence in jsonl. The
+// canonical predecessor walk needs to handle these transit kinds
+// because each writes its own record between llm_N and llm_(N+1):
+//
+//   - tool_call / delegate: llm_(N+1).parentUuid = tool.resultUserUuid
+//     (the user record carrying the tool_result).
+//   - attachment: CC injects task_reminder / hook_additional_context
+//     style records on the chain (utils/sessionStorage.ts:154 says
+//     attachment IS a chain participant) → llm_(N+1).parentUuid =
+//     attachment.uuid.
+//   - compact: compact_boundary records sit on the chain too;
+//     post-compact assistants point their parentUuid at the boundary.
+//
+// Failing to walk through these (the pre-fix behaviour) made every
+// task_reminder look like a chain break — turning a clean 1-chain
+// turn into chainCount = 3 in real sessions. Mirrors CC's own
+// buildConversationChain (sessionStorage.ts:2069) which is just a
+// parentUuid linked-list walk with no transit-kind discrimination.
+//
+// 中: 走 parentUuid 反向链直到找到 llm_call（= 存在前驱，非链 root）或
+// 走光（= 链 root）。CC 的 chain 不是 llm→tool→llm 的纯交替序列：
+// attachment(task_reminder/hook_additional_context) 和 compact_boundary
+// 都是 chain participant，会写在 llm_(N) 和 llm_(N+1) 之间，需要把它们
+// 识别成 transit 节点跳过去。漏掉这步会把每个 task_reminder 误算成断链
+// （实际数据里观察到 1 条链被算成 3 条）。
+function hasInWorkflowLlmPredecessor(
+  llm: LlmCallNode,
+  nodes: WorkNode[],
+  chainParentByUuid?: Map<string, string>,
+): boolean {
+  const byId = new Map<string, WorkNode>(nodes.map((n) => [n.id, n]));
+  const byResultUserUuid = new Map<string, WorkNode>();
+  for (const n of nodes) {
+    if ((n.kind === "tool_call" || n.kind === "delegate") && n.resultUserUuid) {
+      byResultUserUuid.set(n.resultUserUuid, n);
+    }
+  }
+  const visited = new Set<string>([llm.id]);
+  let cursor: string | null = llm.parentUuid;
+  // Bound by 2 × records-ish so a malformed cycle can't wedge the walk.
+  // Use chainParentByUuid as the upper bound when present (covers
+  // transit records that don't become WorkNodes); fall back to nodes
+  // length when no map provided.
+  const limit = (chainParentByUuid?.size ?? nodes.length) + nodes.length;
+  for (let i = 0; i < limit && cursor; i += 1) {
+    const next = byId.get(cursor) ?? byResultUserUuid.get(cursor) ?? null;
+    if (next) {
+      if (visited.has(next.id)) return false;
+      if (next.kind === "llm_call") return true;
+      visited.add(next.id);
+      cursor = next.parentUuid;
+      continue;
+    }
+    // No WorkNode at this uuid — could be a transit record
+    // (task_reminder attachment / system/turn_duration / etc.) that
+    // the parser didn't materialise as a node. Continue the walk
+    // through chainParentByUuid if available; otherwise this is a
+    // dead end (chain leaves the WorkFlow).
+    const transitParent = chainParentByUuid?.get(cursor);
+    if (!transitParent) return false;
+    if (visited.has(cursor)) return false;
+    visited.add(cursor);
+    cursor = transitParent;
+  }
+  return false;
 }

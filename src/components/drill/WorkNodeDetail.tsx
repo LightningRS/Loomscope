@@ -502,8 +502,11 @@ function computeChainPosition(
   node: LlmCallNode,
   nodes: WorkNode[],
 ): ChainPosition | null {
-  // Reuse the same parent-resolver logic as walkChainBackward to
-  // determine whether `node` is a chain root.
+  // Walk parentUuid back through the WorkFlow until we hit another
+  // llm_call. Mirrors workflow-summary.ts:hasInWorkflowLlmPredecessor —
+  // attachment(task_reminder) + compact_boundary are chain transit
+  // nodes, NOT structural breaks. Without walking through them, every
+  // task_reminder would falsely register as a chain root.
   const byId = new Map<string, WorkNode>(nodes.map((n) => [n.id, n]));
   const byResultUserUuid = new Map<string, WorkNode>();
   for (const n of nodes) {
@@ -511,10 +514,20 @@ function computeChainPosition(
       byResultUserUuid.set(n.resultUserUuid, n);
     }
   }
-  const isChainRoot =
-    !node.parentUuid ||
-    (!byId.has(node.parentUuid) && !byResultUserUuid.has(node.parentUuid));
-  if (!isChainRoot) return null;
+  const visited = new Set<string>([node.id]);
+  let cursor = node.parentUuid;
+  let foundLlmPredecessor = false;
+  for (let i = 0; i < nodes.length && cursor && !foundLlmPredecessor; i += 1) {
+    const next = byId.get(cursor) ?? byResultUserUuid.get(cursor) ?? null;
+    if (!next || visited.has(next.id)) break;
+    if (next.kind === "llm_call") {
+      foundLlmPredecessor = true;
+      break;
+    }
+    visited.add(next.id);
+    cursor = next.parentUuid;
+  }
+  if (foundLlmPredecessor) return null; // mid-chain, not a root
 
   // Find the most recent earlier llm_call in document order. Since
   // walkChainBackward returned empty (= no in-chain predecessors),

@@ -767,10 +767,29 @@ function buildChatNode(
     compactRecord: compactUser,
     boundaryRecord: boundaryRec,
   });
+  // Build chain-participant uuid → parentUuid map for chainCount's
+  // transit walk. Drawn from the FULL record index (not just
+  // bucket.records) so transit records that the parser excludes from
+  // bucketing — compact_boundary (jsonl.ts:469 unpaired-skip),
+  // unbucketed user records (no promptId) — still appear here.
+  // Mirrors CC's isChainParticipant (utils/sessionStorage.ts:154):
+  // user / assistant / attachment / system are chain participants;
+  // progress is not. Walking too far (across ChatNode boundaries) is
+  // safe: byId lookup matches only THIS WorkFlow's WorkNodes, so a
+  // stray cross-bucket walk just continues until terminating.
+  const chainParentByUuid = new Map<string, string>();
+  for (const [uuid, ir] of index) {
+    if (ir.type === "progress") continue;
+    if (ir.parentUuid) chainParentByUuid.set(uuid, ir.parentUuid);
+  }
   // v0.10 polish (lazy ChatFlow B1): pre-compute summary stats so the
   // lite ChatFlow endpoint can ship them inline. ~100-200B per
   // ChatNode — negligible against the workflow.nodes payload.
-  workflow.summary = computeWorkflowSummary(workflow.nodes, workflow.edges);
+  workflow.summary = computeWorkflowSummary(
+    workflow.nodes,
+    workflow.edges,
+    chainParentByUuid,
+  );
 
   // Determine trigger by walking the user record's parentUuid back across
   // system records (away_summary, scheduled_task_fire, turn_duration).

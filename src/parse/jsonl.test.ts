@@ -497,6 +497,119 @@ describe("workflow-builder — buildWorkflow with split-assistant fixtures (B st
       expect(tool.parentUuid).toBe("split-0");
     }
   });
+
+  // Property #7 — chainCount transit walk: attachment(task_reminder)
+  // and compact_boundary records sit ON the chain (CC's
+  // sessionStorage.ts:isChainParticipant returns true for both). The
+  // next assistant's parentUuid points at the attachment/compact uuid,
+  // not at the prior tool_result. Pre-fix computeChainCount only
+  // recognised llm→llm and llm→tool→llm patterns, so each transit
+  // record falsely registered as a chain root. Real session
+  // (a02f707f-…f81e3e2f-) had a 1-chain turn rendered as 3 chains.
+  it("chainCount = 1 when an attachment(task_reminder) sits between tool_result and next llm_call", () => {
+    // Real CC: tool_result user records carry promptId (= the
+    // ChatNode's promptId) — without it the parser orphans them at
+    // bucketing. Mirroring the real shape so chainCount sees the
+    // full transit chain.
+    const records: RawRecord[] = [
+      { type: "user", uuid: "u-prompt", promptId: "p1", message: { role: "user", content: "" } } as RawRecord,
+      // llm_1 + tool_use(Bash)
+      {
+        type: "assistant",
+        uuid: "llm-1",
+        parentUuid: "u-prompt",
+        message: {
+          id: "msg_A",
+          role: "assistant",
+          content: [{ type: "tool_use", id: "tu-1", name: "Bash", input: { command: "ls" } }],
+        },
+      } as RawRecord,
+      // tool_result
+      {
+        type: "user",
+        uuid: "u-tr-1",
+        promptId: "p1",
+        parentUuid: "llm-1",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "tu-1", content: "ok" }],
+        },
+      } as RawRecord,
+      // attachment(task_reminder) injected by CC harness
+      {
+        type: "attachment",
+        uuid: "att-1",
+        parentUuid: "u-tr-1",
+        attachment: { type: "task_reminder", content: [] },
+      } as RawRecord,
+      // llm_2 with parentUuid pointing at the attachment, NOT at the tool_result
+      {
+        type: "assistant",
+        uuid: "llm-2",
+        parentUuid: "att-1",
+        message: { id: "msg_B", role: "assistant", content: [{ type: "text", text: "done" }], stop_reason: "end_turn" },
+      } as RawRecord,
+    ];
+    const cf = parseJsonlText(recordsToJsonl(records), FIXTURE_PATH).chatFlow;
+    expect(cf.chatNodes).toHaveLength(1);
+    const summary = cf.chatNodes[0].workflow.summary;
+    expect(summary?.llmCount).toBe(2);
+    // Pre-fix: chainCount=2 (attachment falsely splits chain).
+    // Post-fix: chainCount=1 — attachment is transit.
+    expect(summary?.chainCount).toBe(1);
+  });
+
+  it("chainCount = 1 when a compact_boundary sits between two llm_calls", () => {
+    const records: RawRecord[] = [
+      { type: "user", uuid: "u-prompt", promptId: "p1", message: { role: "user", content: "" } } as RawRecord,
+      {
+        type: "assistant",
+        uuid: "llm-1",
+        parentUuid: "u-prompt",
+        message: {
+          id: "msg_A",
+          role: "assistant",
+          content: [{ type: "tool_use", id: "tu-1", name: "Bash", input: {} }],
+        },
+      } as RawRecord,
+      {
+        type: "user",
+        uuid: "u-tr-1",
+        promptId: "p1",
+        parentUuid: "llm-1",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "tu-1", content: "ok" }],
+        },
+      } as RawRecord,
+      // compact_boundary on the chain. Carries promptId="p1" so it
+      // gets bucketed into this ChatNode (real compact_boundary
+      // records do — CC's bucketing rule on jsonl.ts:469 special-
+      // cases the unpaired boundary, but with promptId set the
+      // chain-walk sees it as a transit record).
+      {
+        type: "system",
+        subtype: "compact_boundary",
+        uuid: "cb-1",
+        promptId: "p1",
+        parentUuid: "u-tr-1",
+        content: "Conversation compacted",
+        compactMetadata: { trigger: "auto", preTokens: 100 },
+      } as RawRecord,
+      // llm_2.parentUuid points at the compact boundary
+      {
+        type: "assistant",
+        uuid: "llm-2",
+        parentUuid: "cb-1",
+        message: { id: "msg_B", role: "assistant", content: [{ type: "text", text: "done" }], stop_reason: "end_turn" },
+      } as RawRecord,
+    ];
+    const cf = parseJsonlText(recordsToJsonl(records), FIXTURE_PATH).chatFlow;
+    const summary = cf.chatNodes[0].workflow.summary;
+    expect(summary?.llmCount).toBe(2);
+    // compact transit through → still 1 chain.
+    expect(summary?.chainCount).toBe(1);
+  });
 });
 
 describe("workflow-builder", () => {
