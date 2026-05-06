@@ -31,6 +31,7 @@ import {
   getStashedState,
   setStashedState,
 } from "@/server/services/chatFlowCache";
+import { getPendingPermission } from "@/server/services/pendingPermissionTracker";
 import { findForkClosure, type ClosureMember } from "@/server/services/forkTree";
 import {
   sidecarSubagentsDir,
@@ -267,6 +268,28 @@ export function sessionsRouter(opts: SessionsRouteOptions) {
             watching: { main: closurePaths, sidecar: sidecarDirs },
           }),
         });
+        // v∞.0 hook catchup: if the server-side tracker recorded a
+        // PermissionRequest for this session that hasn't been
+        // resolved (no PermissionDenied / PostToolUse / SessionEnd
+        // since), emit a synthetic `cc-hook` frame so this
+        // late-joining subscriber sees the banner just as if the
+        // hook had fired live. Same payload shape `applyCcHookEvent`
+        // already consumes — client doesn't need to distinguish.
+        // 中: 服务器若记得该 session 当前有未结的 Permission 请求，
+        // 给新订阅者补一帧 cc-hook（合成的，但 payload 跟真 fire 同
+        // 形态）。late-join / 切回 / 多 tab 几个场景都一并修了。
+        const pendingPerm = getPendingPermission(id);
+        if (pendingPerm) {
+          await stream
+            .writeSSE({
+              event: "cc-hook",
+              data: JSON.stringify({
+                event: "PermissionRequest",
+                payload: pendingPerm,
+              }),
+            })
+            .catch(() => {});
+        }
         // Heartbeat loop. stream.sleep is abort-aware; the while-loop
         // exits on disconnect and the onAbort handler fires.
         while (!stream.aborted) {

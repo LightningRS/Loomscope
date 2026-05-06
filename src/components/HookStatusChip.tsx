@@ -34,7 +34,15 @@ export function HookStatusChip() {
         const res = await fetch("/api/cc-hook-onboarding/status");
         if (!res.ok) return;
         const data = (await res.json()) as MinimalHookStatus;
-        if (!cancelled) setStatus(data);
+        if (cancelled) return;
+        // Guard against malformed payloads — tests run with stub
+        // fetch returning `{}`, which lacks `configured`/`missing`.
+        // Without these defensives the chip crashes on
+        // `status.configured.length`.
+        if (!Array.isArray(data?.configured) || !Array.isArray(data?.missing)) {
+          return;
+        }
+        setStatus(data);
       } catch {
         // network flap — keep last known status, don't blank the chip
       }

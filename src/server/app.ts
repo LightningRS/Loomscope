@@ -12,6 +12,7 @@ import { ccHookOnboardingRouter } from "@/server/routes/ccHookOnboarding";
 import { sessionsRouter } from "@/server/routes/sessions";
 import { workspacesRouter } from "@/server/routes/workspaces";
 import { initHookSseForwarder } from "@/server/services/hookSseForwarder";
+import { initPendingPermissionTracker } from "@/server/services/pendingPermissionTracker";
 
 export interface AppOptions {
   rootDir: string; // e.g. ~/.claude/projects
@@ -40,6 +41,10 @@ export function createApp(opts: AppOptions) {
   // v∞.0 PR 2: idempotent — bridges hookEventBus → sseHub so CC
   // hook fires reach SSE-subscribed browser clients.
   initHookSseForwarder();
+  // v∞.0 hook catchup: idempotent — server-side per-session memory
+  // of unresolved PermissionRequest fires. SSE route reads this
+  // on subscribe to send a snapshot to late-joining clients.
+  initPendingPermissionTracker();
 
   app.get("/api/health", (c) =>
     c.json({ ok: true, version: "0.2.0", rootDir: opts.rootDir }),

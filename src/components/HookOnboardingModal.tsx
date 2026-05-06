@@ -58,6 +58,11 @@ export function HookOnboardingModal() {
         if (!res.ok) return;
         const data = (await res.json()) as HookStatus;
         if (cancelled) return;
+        // Guard against malformed payloads (test env stub returns
+        // `{}` without configured/missing arrays).
+        if (!Array.isArray(data?.configured) || !Array.isArray(data?.missing)) {
+          return;
+        }
         setStatus(data);
         if (data.missing.length > 0 || data.malformed) setOpen(true);
       } catch {
