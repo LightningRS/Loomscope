@@ -636,6 +636,15 @@ function tc(
   };
 }
 
+function compactNode(id: string, parentUuid: string | null = null): CompactNode {
+  return {
+    id,
+    kind: "compact",
+    parentUuid,
+    summaryText: "compacted earlier turns",
+  };
+}
+
 function seedSession(): void {
   useStore.setState((s) => {
     const sessions = new Map(s.sessions);
@@ -794,5 +803,85 @@ describe("LlmCallDetail PR 2-C — chain accumulation", () => {
     const l2 = llm("l2", "external-uuid-not-here");
     renderWithPan(l2, [l2]);
     expect(screen.queryByTestId("llm-chain-history")).toBeNull();
+  });
+});
+
+describe("LlmCallDetail PR 2.2 — chain_position metadata", () => {
+  it("first llm_call in WorkFlow shows 'WorkFlow 起点' label", () => {
+    seedSession();
+    const root = llm("l-root", null);
+    renderWithPan(root, [root]);
+    const first = screen.getByTestId("llm-chain-position-first");
+    expect(first.textContent).toMatch(/WorkFlow 起点/);
+    expect(first.textContent).toMatch(/第 1 条链/);
+    expect(screen.queryByTestId("llm-chain-position-with-prev")).toBeNull();
+  });
+
+  it("mid-chain llm_call (parent resolves inside WorkFlow) — no chain_position row", () => {
+    seedSession();
+    // l1 → t1 → l2: l2 is mid-chain, NOT a chain root.
+    const l1 = llm("l1");
+    const t1 = tc("t1", "l1", "Bash", "u-res");
+    const l2 = llm("l2", "u-res");
+    renderWithPan(l2, [l1, t1, l2]);
+    expect(screen.queryByTestId("llm-chain-position-first")).toBeNull();
+    expect(screen.queryByTestId("llm-chain-position-with-prev")).toBeNull();
+  });
+
+  it("chain root with previous chain in workflow shows tail link + unknown reason when no compact", () => {
+    seedSession();
+    // Chain 1: l1 (no preds) → t1 → l2 (parent=u-res-1) — chain
+    // continues l1 → t1 → l2.
+    // Chain 2: l3 has parentUuid pointing at an external uuid (no
+    // resolution) — chain root. Should link back to l2 (chain 1's
+    // tail). No CompactNode between → break reason 'unknown'.
+    const l1 = llm("l1");
+    const t1 = tc("t1", "l1", "Bash", "u-res-1");
+    const l2 = llm("l2", "u-res-1");
+    const l3 = llm("l3", "external-uuid");
+    renderWithPan(l3, [l1, t1, l2, l3]);
+    const row = screen.getByTestId("llm-chain-position-with-prev");
+    expect(row.textContent).toMatch(/新链起点/);
+    expect(row.textContent).toMatch(/前一条链结束于/);
+    expect(row.textContent).toMatch(/原因未知/);
+    // Tail link points at l2.
+    const tailLink = screen.getByTestId("llm-chain-position-tail-link");
+    expect(tailLink.textContent).toContain("l2");
+    expect(screen.queryByTestId("llm-chain-position-compact-link")).toBeNull();
+  });
+
+  it("chain root with intervening CompactNode → break reason 'compact' + compact link", () => {
+    seedSession();
+    // Chain 1: l1 (root). CompactNode c1 between. Chain 2: l2 (chain
+    // root, parentUuid points outside).
+    const l1 = llm("l1");
+    const c1 = compactNode("c1");
+    const l2 = llm("l2", "external-uuid");
+    renderWithPan(l2, [l1, c1, l2]);
+    const row = screen.getByTestId("llm-chain-position-with-prev");
+    expect(row.textContent).toMatch(/因 compact 断链/);
+    const compactLink = screen.getByTestId("llm-chain-position-compact-link");
+    expect(compactLink.textContent).toContain("c1");
+  });
+
+  it("clicking tail link in panel mode selects via setWorkflowSelected (no canvas pan)", () => {
+    seedSession();
+    const l1 = llm("l1");
+    const l2 = llm("l2", "external-uuid");
+    const panSpy = vi.fn();
+    renderWithPan(l2, [l1, l2], panSpy);
+    fireEvent.click(screen.getByTestId("llm-chain-position-tail-link"));
+    expect(useStore.getState().sessions.get(SID2)?.workflowSelectedNodeId).toBe("l1");
+    expect(panSpy).not.toHaveBeenCalled();
+  });
+
+  it("double-clicking tail link triggers canvas pan", () => {
+    seedSession();
+    const l1 = llm("l1");
+    const l2 = llm("l2", "external-uuid");
+    const panSpy = vi.fn();
+    renderWithPan(l2, [l1, l2], panSpy);
+    fireEvent.doubleClick(screen.getByTestId("llm-chain-position-tail-link"));
+    expect(panSpy).toHaveBeenCalledWith("l1");
   });
 });

@@ -152,6 +152,17 @@ function LlmCallDetail({
     (n) => n.kind === "tool_call" || n.kind === "delegate",
   ).length;
 
+  // PR 2.2: chain_position metadata. When this llm_call is a chain
+  // root (its parentUuid doesn't resolve inside this WorkFlow) AND
+  // there's an earlier llm_call in document order that belongs to a
+  // different chain, surface the previous chain's tail as a clickable
+  // jump target + a best-effort break reason. Pure UI metadata — does
+  // not represent anything in the API request payload.
+  const chainPosition = useMemo(
+    () => computeChainPosition(node, workflowNodes),
+    [node, workflowNodes],
+  );
+
   const onPanelView = useCallback(
     (id: string) => setWorkflowSelected(sessionId, id),
     [setWorkflowSelected, sessionId],
@@ -173,6 +184,13 @@ function LlmCallDetail({
           {node.stopReason && <li>stop_reason: {node.stopReason}</li>}
           {node.parentUuid && <li>parentUuid: {node.parentUuid}</li>}
         </ul>
+        {chainPosition && (
+          <ChainPositionRow
+            position={chainPosition}
+            onPanelView={onPanelView}
+            onCanvasLocate={onCanvasLocate}
+          />
+        )}
       </Section>
 
       <Section title="Input · 上下文">
@@ -436,6 +454,146 @@ function walkChainBackward(
         : null;
   }
   return out;
+}
+
+// PR 2.2: chain_position — UI metadata about where this llm_call
+// sits in the WorkFlow's chain topology. Returns null when not a
+// chain root (= mid-chain llm_calls don't get this row).
+type BreakReason = "compact" | "unknown";
+
+interface ChainPositionFirstInWorkflow {
+  kind: "first-in-workflow";
+}
+interface ChainPositionWithPrev {
+  kind: "chain-root-with-prev";
+  // The most recent llm_call in document order that belongs to a
+  // DIFFERENT chain — i.e. the previous chain's tail.
+  previousChainTail: LlmCallNode;
+  breakReason: BreakReason;
+  // ChainNodes seen between previousChainTail and this node — used
+  // by the UI to surface specific inline evidence (e.g. linking the
+  // CompactNode that triggered the break).
+  evidenceCompactNode: CompactNode | null;
+}
+type ChainPosition = ChainPositionFirstInWorkflow | ChainPositionWithPrev;
+
+function computeChainPosition(
+  node: LlmCallNode,
+  nodes: WorkNode[],
+): ChainPosition | null {
+  // Reuse the same parent-resolver logic as walkChainBackward to
+  // determine whether `node` is a chain root.
+  const byId = new Map<string, WorkNode>(nodes.map((n) => [n.id, n]));
+  const byResultUserUuid = new Map<string, WorkNode>();
+  for (const n of nodes) {
+    if ((n.kind === "tool_call" || n.kind === "delegate") && n.resultUserUuid) {
+      byResultUserUuid.set(n.resultUserUuid, n);
+    }
+  }
+  const isChainRoot =
+    !node.parentUuid ||
+    (!byId.has(node.parentUuid) && !byResultUserUuid.has(node.parentUuid));
+  if (!isChainRoot) return null;
+
+  // Find the most recent earlier llm_call in document order. Since
+  // walkChainBackward returned empty (= no in-chain predecessors),
+  // any earlier llm_call necessarily belongs to a different chain.
+  const nodeIdx = nodes.findIndex((n) => n.id === node.id);
+  let prevTail: LlmCallNode | null = null;
+  for (let i = nodeIdx - 1; i >= 0; i -= 1) {
+    const candidate = nodes[i];
+    if (candidate.kind === "llm_call") {
+      prevTail = candidate;
+      break;
+    }
+  }
+
+  if (!prevTail) {
+    return { kind: "first-in-workflow" };
+  }
+
+  // Best-effort break reason inference: scan nodes BETWEEN prevTail
+  // and node for a CompactNode (system/compact_boundary record).
+  // Other reasons (api_error retry, /escape resume) don't currently
+  // emit WorkNodes so we report 'unknown' for them.
+  const prevTailIdx = nodes.indexOf(prevTail);
+  let evidenceCompact: CompactNode | null = null;
+  for (let i = prevTailIdx + 1; i < nodeIdx; i += 1) {
+    const between = nodes[i];
+    if (between.kind === "compact") {
+      evidenceCompact = between;
+      break;
+    }
+  }
+  return {
+    kind: "chain-root-with-prev",
+    previousChainTail: prevTail,
+    breakReason: evidenceCompact ? "compact" : "unknown",
+    evidenceCompactNode: evidenceCompact,
+  };
+}
+
+function ChainPositionRow({
+  position,
+  onPanelView,
+  onCanvasLocate,
+}: {
+  position: ChainPosition;
+  onPanelView: (id: string) => void;
+  onCanvasLocate: (id: string) => void;
+}) {
+  if (position.kind === "first-in-workflow") {
+    return (
+      <p
+        className="mt-1.5 text-[10px] italic text-gray-500"
+        data-testid="llm-chain-position-first"
+      >
+        chain_position: WorkFlow 起点（这是本 ChatNode 的第 1 条链）
+      </p>
+    );
+  }
+  const tail = position.previousChainTail;
+  const evidenceLabel =
+    position.breakReason === "compact"
+      ? "因 compact 断链"
+      : "断链原因未知（可能是 api_error 重试或 /escape resume）";
+  return (
+    <div
+      className="mt-1.5 flex flex-col gap-1 rounded border border-amber-200 bg-amber-50/60 px-2 py-1 text-[10px] text-amber-800"
+      data-testid="llm-chain-position-with-prev"
+    >
+      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+        <span className="font-mono uppercase tracking-wide">chain_position:</span>
+        <span>新链起点 ←</span>
+        <span>前一条链结束于</span>
+        <button
+          type="button"
+          onClick={() => onPanelView(tail.id)}
+          onDoubleClick={() => onCanvasLocate(tail.id)}
+          className="inline-flex items-center gap-1 rounded border border-amber-300 bg-white px-1.5 py-0.5 font-mono text-amber-900 hover:border-amber-500 hover:bg-amber-100 transition-colors"
+          title="单击：在面板查看 / 双击：在画布定位"
+          data-testid="llm-chain-position-tail-link"
+        >
+          {tail.id.slice(0, 8)}
+        </button>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-1.5">
+        <span>{evidenceLabel}</span>
+        {position.evidenceCompactNode && (
+          <button
+            type="button"
+            onClick={() => onPanelView(position.evidenceCompactNode!.id)}
+            onDoubleClick={() => onCanvasLocate(position.evidenceCompactNode!.id)}
+            className="inline-flex items-center gap-1 rounded border border-amber-300 bg-white px-1.5 py-0.5 font-mono text-amber-900 hover:border-amber-500 hover:bg-amber-100 transition-colors"
+            title="单击：在面板查看 compact / 双击：在画布定位"
+            data-testid="llm-chain-position-compact-link"
+          >
+            compact {position.evidenceCompactNode.id.slice(0, 8)}
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ── tool_call ─────────────────────────────────────────────────────────
