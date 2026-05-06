@@ -48,10 +48,22 @@ import type { ChatFlow } from "@/data/types";
 // different version are dropped on read. Major safety net so we
 // never deserialise an older snapshot into a newer code path that
 // reads a field that didn't exist back then.
+//
+// History:
+//   v1 (2026-05-05) — initial. Per-record LlmCallNodes (one per
+//                     assistant jsonl record).
+//   v2 (2026-05-06) — B msg_id merge. LlmCallNodes are now
+//                     per-API-call (records sharing message.id
+//                     coalesce). Old v1 caches have N split
+//                     LlmCallNodes for what's now N=1 merged node;
+//                     forcing re-parse on next access keeps the
+//                     in-memory shape aligned with the parser.
+//
 // 中: 任何 ChatNode / WorkNode / WorkflowSummary / ChatFlow 形状变更
 // 都要 bump 这个版本号；旧 cache 自动失效，不会被新代码当合法数据
-// 解开。
-const SCHEMA_VERSION = 1;
+// 解开。v2 = B msg_id merge 后 LlmCallNode 粒度从 per-record 变为
+// per-API-call，老 v1 cache 形态不再匹配新 parser，强制重 parse。
+const SCHEMA_VERSION = 2;
 
 interface DiskCacheEnvelope {
   schemaVersion: number;

@@ -101,13 +101,6 @@ function indexRecords(records: RawRecord[]): BuildContext {
   };
 }
 
-function buildLlmCall(r: RawRecord): LlmCallNode {
-  // Legacy single-record builder. Kept for tests / reference but
-  // production paths now go through `buildMergedLlmCall` (which
-  // degenerates to this for singleton groups).
-  return buildMergedLlmCall([r]);
-}
-
 // EN (B / msg_id merge): CC writes one assistant jsonl record per
 // content block. A response with [thinking, tool_use, text] becomes
 // 3 records, all sharing `message.id`, each with one block in
@@ -326,24 +319,68 @@ export function buildWorkflow(
     nodes.push(buildCompactNode(options.compactRecord, options.boundaryRecord));
   }
 
-  for (const r of records) {
-    if (r.type !== "assistant") continue;
-    const llm = buildLlmCall(r);
-    nodes.push(llm);
-    if (r.parentUuid) {
-      // continuation in: from prior step (tool_result user record or prior
-      // assistant). The "from" node may live elsewhere — edges are best-effort
-      // and ChatFlow-layer linking can stitch them.
-      edges.push({ from: r.parentUuid, to: llm.id, kind: "continuation" });
+  // B (msg_id merge): group assistant records by message.id so split
+  // records (one content block per record, all sharing message.id)
+  // produce one logical LlmCallNode per API call. Build a sideband
+  // index mapping every record uuid → its group's canonical id (=
+  // first record's uuid) so:
+  //   - tool_use's `parentUuid` (= the assistantUuid of the record
+  //     it lived in) gets remapped to the merged llm's id
+  //   - continuation edges' `from` (= a prior record's uuid) gets
+  //     remapped if it points at any record now collapsed into a
+  //     group's interior
+  //   - intra-group edges (= record N+1's parent points at record
+  //     N's uuid in the same group) self-loop and get skipped
+  const assistantGroups = groupAssistantsByMessageId(records);
+  const recordUuidToMergedId = new Map<string, string>();
+  for (const { group } of assistantGroups) {
+    const mergedId = group[0]?.uuid ?? "";
+    if (!mergedId) continue;
+    for (const r of group) {
+      if (r.uuid) recordUuidToMergedId.set(r.uuid, mergedId);
     }
-    const tuIds = ctx.assistantToToolUses.get(r.uuid ?? "") ?? [];
-    for (const tuId of tuIds) {
-      if (seenToolUses.has(tuId)) continue;
-      seenToolUses.add(tuId);
-      const child = buildToolCallOrDelegate(tuId, ctx);
-      if (!child) continue;
-      nodes.push(child);
-      edges.push({ from: llm.id, to: child.id, kind: "spawn" });
+  }
+
+  for (const { group } of assistantGroups) {
+    const llm = buildMergedLlmCall(group);
+    nodes.push(llm);
+    if (llm.parentUuid) {
+      // continuation in: from prior step (tool_result user record or prior
+      // assistant). Remap through merged-id index so any reference to a
+      // now-collapsed record points at its group's canonical id.
+      const remappedFrom =
+        recordUuidToMergedId.get(llm.parentUuid) ?? llm.parentUuid;
+      // Skip self-loops (would happen if a record's parent pointed at a
+      // sibling within the same group — but llm.parentUuid is the FIRST
+      // record's parent which by construction points outside the group,
+      // so this should be unreachable in practice).
+      if (remappedFrom !== llm.id) {
+        edges.push({ from: remappedFrom, to: llm.id, kind: "continuation" });
+      }
+    }
+    // Spawn tool_uses across all records in the group; they all
+    // attribute to the same merged llm.id.
+    for (const r of group) {
+      const tuIds = ctx.assistantToToolUses.get(r.uuid ?? "") ?? [];
+      for (const tuId of tuIds) {
+        if (seenToolUses.has(tuId)) continue;
+        seenToolUses.add(tuId);
+        const child = buildToolCallOrDelegate(tuId, ctx);
+        if (!child) continue;
+        // Remap the child's parentUuid to point at the merged llm.id
+        // — downstream consumers (chainCount, resolveDelegate's
+        // record-uuid → cn.id walks, etc.) need a valid LlmCallNode
+        // reference, not a now-collapsed record uuid.
+        if (
+          child.parentUuid &&
+          recordUuidToMergedId.has(child.parentUuid)
+        ) {
+          child.parentUuid =
+            recordUuidToMergedId.get(child.parentUuid) ?? child.parentUuid;
+        }
+        nodes.push(child);
+        edges.push({ from: llm.id, to: child.id, kind: "spawn" });
+      }
     }
   }
 
