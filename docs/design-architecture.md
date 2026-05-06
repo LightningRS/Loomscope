@@ -1194,11 +1194,11 @@ CC 期望的 hooks 段必须是**两层套娃**：
 - CSRF 中间件 bypass `/api/cc-hook` + `/api/cc-hook-onboarding/patch`（前者 server-to-server，后者同源 + CORS 已挡跨源）
 - CORS 在 dev 模式接受 `localhost:5174,localhost:5175`（dev:server 通过 env var 双开），生产 single-process serve 单端口
 
-### 已知留尾（按优先级）
+### 已知留尾 / 已修
 
-1. **Hook catchup**：cc-hook fire-and-forget，新订阅者上线拿不到 pending PermissionRequest。修法是 server 维护 per-session pending 状态，hello frame 带初始 snapshot
-2. **多 tab 同步**：每 tab 独立 EventSource + 独立 store，PermissionBanner 不会跨 tab 同步消失
-3. **ConversationView tool pill stale refetch**：drainer 的 `fetchedRef` 一次性，不响应 `staleSince`（同 useChatNodeWorkflow 修过的同源 bug）
+1. ~~**Hook catchup**：cc-hook fire-and-forget，新订阅者上线拿不到 pending PermissionRequest~~ ✅ shipped `3151cae` —— `services/pendingPermissionTracker.ts` 维护 per-session 状态，sessions.ts SSE 订阅时若 tracker 有 pending 立即发一帧合成 cc-hook
+2. ~~**ConversationView tool pill stale refetch**：drainer 的 `fetchedRef` 一次性，不响应 `staleSince`~~ ✅ shipped `b5fb548` —— useChatNodeWorkflow 把 staleSince refetch 跟 autoFetch 解耦，不再依赖 piggyback
+3. **多 tab 上限 ≤ 3**：每 tab 2 个 EventSource（session + workspace），Chrome / Firefox HTTP/1.1 origin 上限 6 → 4 tab 就撞。实测 2026-05-06 验证：1-3 tab work，第 4 tab page.goto 30s 超时。修法（潜在）：HTTP/2 改造或 BroadcastChannel-based leader election，工作量大、需求小，**接受现状 + README 已警告**
 4. **Permission 浏览器响应**：v∞.0 是 read-only，要在浏览器点 allow/deny 替代终端 y/n 是 v∞.1 用 SDK `canUseTool` 实现的能力
 
 ## Hover-preview / click-persist 模式（release pattern）

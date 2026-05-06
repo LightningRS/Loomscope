@@ -552,9 +552,10 @@ CC settings.json HTTP hooks → SSE → 浏览器实时画面，含 PermissionRe
 - 性能：256MB 大 session 首屏 < 30s（按 lazy 收益线性外推 200MB session 约 ~28MB lite + 0.3s parse；够用）
 - Sidebar fork 树状缩进（v0.8 deferred → v∞.3）
 - ConversationView 工具 pill 的 stale refetch（drainer `fetchedRef` 一次性，不响应 staleSince；同 `0105ee6` 同源；待用户验收后单独修）
-- Hook catchup（server 维护 per-session pendingPermission 状态，新订阅者上线时立即发送，让多 tab / 切 session / 后开 Loomscope 不丢 PermissionRequest）
+- ~~Hook catchup~~ ✅ shipped 2026-05-06 晚 `3151cae`（pendingPermissionTracker + SSE snapshot on subscribe）
+- ~~ConversationView 工具 pill stale refetch~~ ✅ shipped 2026-05-06 晚 `b5fb548`（autoFetch decoupled from staleSince）
 - B：parser 按 `message.id` 合并 llm_call（CC 把一次 API response 拆成多条 jsonl record，detail 上"空壳节点" — 用户反馈后延后做）
-- 多 tab corner cases triage（task #76）
+- ~~多 tab corner cases triage~~ ✅ done 2026-05-06 晚（实测 + README 文档化）：1-3 tab work，4+ 撞 Chrome HTTP/1.1 EventSource 上限（每 tab 2 个 EventSource × 3 tab = 6 上限）。BroadcastChannel-based leader election 或 HTTP/2 是潜在修法，但工作量大、需求小，**接受现状 + README 警告**
 
 ## v1.0 — ship
 

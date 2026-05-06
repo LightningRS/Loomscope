@@ -64,6 +64,18 @@ Either path needs a `LOOMSCOPE_SECRET` shell export — the modal generates the 
 
 The Header chip (`🪝 11/11`) shows status at a glance.
 
+### Multi-tab caveat (≤ 3 tabs per host)
+
+Each Loomscope tab opens 2 SSE EventSource connections (one per-session, one workspace-wide). Chrome and Firefox cap at **6 EventSource per origin** under HTTP/1.1 — so you can comfortably run **3 tabs same Loomscope origin**, but at the 4th tab the new SSE channels queue indefinitely and that tab won't fully load.
+
+Practical bound: 1-3 tabs work as expected (live updates flow to all of them). At 4+ tabs the latest tab(s) lose live updates. Tested + measured 2026-05-06.
+
+If you need more parallel views in the future, options are:
+- HTTP/2 (no per-origin connection cap) — needs Vite + Hono TLS configuration
+- BroadcastChannel-based leader election: one tab owns the SSE connection, others receive forwarded events through a shared in-browser channel — significant rewrite
+
+Neither is shipped; deferred to a v∞.x release if real demand surfaces.
+
 ## Architecture
 
 Mode A (single-user local) is the default. Backend binds to `127.0.0.1:5174`; CORS is strict same-origin; the CC hook endpoint uses a per-installation secret instead of CSRF (server-to-server fire path). For remote viewing, terminate at the local machine and tunnel — Tailscale, SSH `-L`, or Cloudflare Tunnel are all clean fits.
