@@ -94,25 +94,27 @@ export function useChatNodeWorkflow(
   const needsLazy = !inlineLoaded && summaryHasContent;
 
   useEffect(() => {
-    if (!autoFetch) return;
     if (!needsLazy) return;
-    // EN: refetch decision tree.
-    //   - pending: someone else's fetch in flight, wait for it
-    //   - ready + NOT stale: cache is current, no need
-    //   - ready + stale: refreshSession marked it stale because the
-    //     ChatNode summary shifted (typically the running node grew
-    //     a tool_use); we MUST refetch or the cached (often empty)
-    //     workflow stays visible forever — the original bug that
-    //     made drill view show "没有 WorkFlow 节点" indefinitely
-    //     during live updates after first being drilled into while
-    //     the summary was still 0/0.
-    //   - error / undefined: first access OR retry
-    // 中: 关键修复 —— ready 但 stale 时必须重 fetch，否则 cache 早期
-    // 抓到的空 workflow 会永远停在 drill 视图里。原 bug：drill 一个
-    // 还在跑的 ChatNode 时 cache 拿到 `{nodes:[], edges:[]}`，之后
-    // summary 长大但 workflowCache 保持 stale-ready 状态显示空。
     if (cached?.status === "pending") return;
     if (cached?.status === "ready" && !cached.staleSince) return;
+    // EN: at this point we'd ordinarily fire load. autoFetch=false
+    // (ConversationView bubbles) gates the INITIAL fetch (no cache
+    // entry / cache=error retry) so children don't all fire
+    // synchronously and microtask-coalesce into one batch — that
+    // would defeat ConversationView's progressive reveal via the
+    // drainer + IntersectionObserver. STALE refetch (cache=ready
+    // + staleSince set) is a different beast: only summary-shifted
+    // entries get marked stale by refreshSession, typically 1-2
+    // per refresh, so coalescing them is the correct behavior.
+    // Always honor staleSince regardless of autoFetch — that
+    // closes the ConversationView tool-pill stale bug.
+    // 中: autoFetch=false 只控初次 fetch（防长列表 N 路 fire 撞 microtask
+    // coalesce 一锅出破坏渐进 reveal）；stale refetch 不受 autoFetch 控
+    // 制 —— 只有少数 summary 变了的 entry 被标 stale，coalesce 进同一
+    // batch 是对的。修 ConversationView tool pill 不依赖"恰好同时
+    // drill 着同一 ChatNode"才能更新的隐藏 bug。
+    const isStaleRefetch = cached?.status === "ready" && !!cached.staleSince;
+    if (!isStaleRefetch && !autoFetch) return;
     void load(sessionId, [chatNode.id]);
   }, [
     autoFetch,

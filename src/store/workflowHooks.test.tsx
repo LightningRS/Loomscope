@@ -301,6 +301,79 @@ describe("useChatNodeWorkflow", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("autoFetch=false BUT cache=ready+stale → STILL refires fetch (ConversationView stale fix)", async () => {
+    // EN: ConversationView bubbles use autoFetch=false to bypass
+    // microtask-coalesce on initial fetch. But once the cache is
+    // populated and refreshSession marks it stale, the bubble must
+    // refetch — otherwise tool pills stay frozen at the
+    // first-fetched count whenever no WorkFlowCanvas / ChatNodeDetail
+    // is open for the same chatNode (= "piggyback path"). The
+    // hidden bug discovered after the WorkFlowCanvas staleSince
+    // fix landed.
+    // 中: ConversationView bubble (autoFetch=false) 之前不响应 stale，
+    // 只能 piggyback 隔壁 drill 视图的 refetch 来更新 cache。修复后
+    // stale 必触发 refetch，autoFetch 只控初次 fetch。
+    const cn = chatNode("staleAutoFetchFalse");
+    seed(flow([cn]));
+    useStore.setState((s) => {
+      const sessions = new Map(s.sessions);
+      const cur = sessions.get(SID)!;
+      const cache = new Map(cur.workflowCache);
+      cache.set("staleAutoFetchFalse", {
+        status: "ready",
+        workflow: { summary: summary(), nodes: [], edges: [] },
+        error: null,
+        staleSince: Date.now(),
+      });
+      sessions.set(SID, { ...cur, workflowCache: cache });
+      return { sessions };
+    });
+
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            workflows: {
+              staleAutoFetchFalse: {
+                nodes: [
+                  {
+                    id: "l1",
+                    kind: "llm_call",
+                    parentUuid: null,
+                    text: "fresh after stale",
+                    thinking: [],
+                  },
+                ],
+                edges: [],
+              },
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    function ProbeNoAuto() {
+      useChatNodeWorkflow(SID, cn, { autoFetch: false });
+      return null;
+    }
+    render(<ProbeNoAuto />);
+    // Despite autoFetch=false, the stale entry triggers refetch.
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+    // Cache flips to ready+!stale + populated nodes.
+    await waitFor(() => {
+      const wf = useStore
+        .getState()
+        .sessions.get(SID)!
+        .workflowCache.get("staleAutoFetchFalse");
+      expect(wf?.status).toBe("ready");
+      expect(wf?.staleSince).toBeUndefined();
+      expect(wf?.workflow?.nodes.length).toBe(1);
+    });
+  });
+
   it("cache=ready+stale → refires fetch (live-update fix)", async () => {
     // EN: the fix for the user-reported "drill view shows 没有
     // WorkFlow 节点 forever during live updates" bug. Sequence:
