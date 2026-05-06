@@ -727,24 +727,13 @@ describe("LlmCallDetail PR 2-B — spawned tool calls (dual-track)", () => {
     expect(screen.queryByTestId("llm-spawned-tool-row-t-other")).toBeNull();
   });
 
-  it("'panel' button selects the target WorkNode without panning the canvas", () => {
+  it("clicking the row jumps: selects the target WorkNode AND pans the canvas", () => {
     seedSession();
     const root = llm("l-root");
     const t1 = tc("t-1", "l-root", "Bash");
     const panSpy = vi.fn();
     renderWithPan(root, [root, t1], panSpy);
-    fireEvent.click(screen.getByTestId("llm-spawned-tool-panel-t-1"));
-    expect(useStore.getState().sessions.get(SID2)?.workflowSelectedNodeId).toBe("t-1");
-    expect(panSpy).not.toHaveBeenCalled();
-  });
-
-  it("'canvas' button selects AND pans the canvas", () => {
-    seedSession();
-    const root = llm("l-root");
-    const t1 = tc("t-1", "l-root", "Bash");
-    const panSpy = vi.fn();
-    renderWithPan(root, [root, t1], panSpy);
-    fireEvent.click(screen.getByTestId("llm-spawned-tool-canvas-t-1"));
+    fireEvent.click(screen.getByTestId("llm-spawned-tool-jump-t-1"));
     expect(useStore.getState().sessions.get(SID2)?.workflowSelectedNodeId).toBe("t-1");
     expect(panSpy).toHaveBeenCalledWith("t-1");
   });
@@ -874,7 +863,7 @@ describe("LlmCallDetail PR 2.2 — chain_position metadata", () => {
     expect(cause.textContent).toMatch(/前面对话被替换为摘要/);
   });
 
-  it("clicking tail link in panel mode selects via setWorkflowSelected (no canvas pan)", () => {
+  it("clicking tail link jumps: selects target AND pans the canvas", () => {
     seedSession();
     const l1 = llm("l1");
     const l2 = llm("l2", "external-uuid");
@@ -882,16 +871,6 @@ describe("LlmCallDetail PR 2.2 — chain_position metadata", () => {
     renderWithPan(l2, [l1, l2], panSpy);
     fireEvent.click(screen.getByTestId("llm-chain-position-tail-link"));
     expect(useStore.getState().sessions.get(SID2)?.workflowSelectedNodeId).toBe("l1");
-    expect(panSpy).not.toHaveBeenCalled();
-  });
-
-  it("double-clicking tail link triggers canvas pan", () => {
-    seedSession();
-    const l1 = llm("l1");
-    const l2 = llm("l2", "external-uuid");
-    const panSpy = vi.fn();
-    renderWithPan(l2, [l1, l2], panSpy);
-    fireEvent.doubleClick(screen.getByTestId("llm-chain-position-tail-link"));
     expect(panSpy).toHaveBeenCalledWith("l1");
   });
 });

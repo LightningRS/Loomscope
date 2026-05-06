@@ -165,11 +165,13 @@ function LlmCallDetail({
     [node, workflowNodes],
   );
 
-  const onPanelView = useCallback(
-    (id: string) => setWorkflowSelected(sessionId, id),
-    [setWorkflowSelected, sessionId],
-  );
-  const onCanvasLocate = useCallback(
+  // Single-track jump: any nav-link click in the detail (spawned tool
+  // / chain history row / chain_position tail link / compact evidence
+  // link) selects the target and pans the canvas. The earlier
+  // dual-track 📋-only-panel vs 🎯-pan-canvas split assumed users
+  // sometimes wanted side-by-side reading without moving the canvas;
+  // user feedback says that's strictly worse — they always want both.
+  const onJumpToNode = useCallback(
     (id: string) => {
       setWorkflowSelected(sessionId, id);
       panToWorkNode(id);
@@ -189,8 +191,7 @@ function LlmCallDetail({
         {chainPosition && (
           <ChainPositionRow
             position={chainPosition}
-            onPanelView={onPanelView}
-            onCanvasLocate={onCanvasLocate}
+            onJump={onJumpToNode}
           />
         )}
       </Section>
@@ -211,8 +212,7 @@ function LlmCallDetail({
               history={chainHistory}
               llmCount={chainLlmCount}
               toolCount={chainToolCount}
-              onPanelView={onPanelView}
-              onCanvasLocate={onCanvasLocate}
+              onJump={onJumpToNode}
             />
           </div>
         )}
@@ -263,8 +263,7 @@ function LlmCallDetail({
               <NodeNavRow
                 key={t.id}
                 node={t}
-                onPanelView={onPanelView}
-                onCanvasLocate={onCanvasLocate}
+                onJump={onJumpToNode}
                 testIdPrefix="llm-spawned-tool"
               />
             ))}
@@ -294,55 +293,45 @@ function LlmCallDetail({
   );
 }
 
-// PR 2-B/C: shared row for "navigate to a sibling WorkNode" lists.
-// Two buttons per entry implementing the dual-track decision: panel-
-// only (selects the node, right panel updates, canvas position
-// unchanged) vs canvas-locate (selects + pans the canvas, useful
-// when the user wants to see the node in its DAG context).
+// Shared row for "navigate to a sibling WorkNode" lists. The whole
+// row is one click target: clicking selects the target node in the
+// right panel AND pans the canvas to centre on it. Earlier
+// dual-track 📋/🎯 buttons were dropped per user feedback — both
+// actions are virtually always wanted together, the split was
+// over-engineered.
 function NodeNavRow({
   node,
-  onPanelView,
-  onCanvasLocate,
+  onJump,
   testIdPrefix,
 }: {
   node: WorkNode;
-  onPanelView: (id: string) => void;
-  onCanvasLocate: (id: string) => void;
+  onJump: (id: string) => void;
   testIdPrefix: string;
 }) {
   const { t } = useTranslation();
   const label = describeNodeForNav(node, t("placeholders.empty_turn"));
   return (
     <li
-      className="flex items-center justify-between gap-2 rounded border border-gray-200 bg-gray-50 px-2 py-1"
+      className="rounded border border-gray-200 bg-gray-50"
       data-testid={`${testIdPrefix}-row-${node.id}`}
     >
-      <span className="min-w-0 flex-1 truncate text-[11px] text-gray-700">
-        <span className="font-mono text-[10px] text-gray-400 mr-1.5">
+      <button
+        type="button"
+        onClick={() => onJump(node.id)}
+        title="跳转到该节点（同时切右面板 + 居中画布）"
+        className="flex w-full items-center gap-1.5 px-2 py-1 text-left hover:bg-blue-50 hover:border-blue-200 transition-colors rounded"
+        data-testid={`${testIdPrefix}-jump-${node.id}`}
+      >
+        <span className="font-mono text-[10px] text-gray-400 shrink-0">
           {node.kind}
         </span>
-        {label}
-      </span>
-      <span className="flex shrink-0 gap-1">
-        <button
-          type="button"
-          onClick={() => onPanelView(node.id)}
-          className="rounded border border-gray-300 bg-white px-1.5 py-0.5 text-[10px] text-gray-700 hover:border-blue-400 hover:bg-blue-50 transition-colors"
-          title="在右面板查看（不移动画布）"
-          data-testid={`${testIdPrefix}-panel-${node.id}`}
-        >
-          📋 面板
-        </button>
-        <button
-          type="button"
-          onClick={() => onCanvasLocate(node.id)}
-          className="rounded border border-gray-300 bg-white px-1.5 py-0.5 text-[10px] text-gray-700 hover:border-purple-400 hover:bg-purple-50 transition-colors"
-          title="在画布定位 + 选中"
-          data-testid={`${testIdPrefix}-canvas-${node.id}`}
-        >
-          🎯 画布
-        </button>
-      </span>
+        <span className="min-w-0 flex-1 truncate text-[11px] text-gray-700">
+          {label}
+        </span>
+        <span className="shrink-0 text-[10px] text-gray-400 opacity-60">
+          →
+        </span>
+      </button>
     </li>
   );
 }
@@ -453,14 +442,12 @@ function ChainHistoryToggle({
   history,
   llmCount,
   toolCount,
-  onPanelView,
-  onCanvasLocate,
+  onJump,
 }: {
   history: WorkNode[];
   llmCount: number;
   toolCount: number;
-  onPanelView: (id: string) => void;
-  onCanvasLocate: (id: string) => void;
+  onJump: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -485,8 +472,7 @@ function ChainHistoryToggle({
             <NodeNavRow
               key={n.id}
               node={n}
-              onPanelView={onPanelView}
-              onCanvasLocate={onCanvasLocate}
+              onJump={onJump}
               testIdPrefix="llm-chain-history"
             />
           ))}
@@ -653,12 +639,10 @@ function computeChainPosition(
 
 function ChainPositionRow({
   position,
-  onPanelView,
-  onCanvasLocate,
+  onJump,
 }: {
   position: ChainPosition;
-  onPanelView: (id: string) => void;
-  onCanvasLocate: (id: string) => void;
+  onJump: (id: string) => void;
 }) {
   if (position.kind === "first-in-workflow") {
     return (
@@ -682,10 +666,9 @@ function ChainPositionRow({
         <span>前一条链结束于</span>
         <button
           type="button"
-          onClick={() => onPanelView(tail.id)}
-          onDoubleClick={() => onCanvasLocate(tail.id)}
+          onClick={() => onJump(tail.id)}
           className="inline-flex items-center gap-1 rounded border border-amber-300 bg-white px-1.5 py-0.5 font-mono text-amber-900 hover:border-amber-500 hover:bg-amber-100 transition-colors"
-          title="单击：在面板查看 / 双击：在画布定位"
+          title="跳转到该节点（同时切右面板 + 居中画布）"
           data-testid="llm-chain-position-tail-link"
         >
           {tail.id.slice(0, 8)}
@@ -710,10 +693,9 @@ function ChainPositionRow({
                 <span>因 compact 断链 ←</span>
                 <button
                   type="button"
-                  onClick={() => onPanelView(compact.id)}
-                  onDoubleClick={() => onCanvasLocate(compact.id)}
+                  onClick={() => onJump(compact.id)}
                   className="inline-flex items-center gap-1 rounded border border-amber-300 bg-white px-1.5 py-0.5 font-mono text-amber-900 hover:border-amber-500 hover:bg-amber-100 transition-colors"
-                  title="单击：在面板查看 compact / 双击：在画布定位"
+                  title="跳转到 compact 节点（同时切右面板 + 居中画布）"
                   data-testid="llm-chain-position-compact-link"
                 >
                   compact {compact.id.slice(0, 8)}
@@ -747,10 +729,9 @@ function ChainPositionRow({
                     <li key={ev.id}>
                       <button
                         type="button"
-                        onClick={() => onPanelView(ev.id)}
-                        onDoubleClick={() => onCanvasLocate(ev.id)}
+                        onClick={() => onJump(ev.id)}
                         className="inline-flex items-center gap-1 rounded border border-amber-300 bg-white px-1.5 py-0.5 font-mono text-amber-900 hover:border-amber-500 hover:bg-amber-100 transition-colors"
-                        title="单击：在面板查看 / 双击：在画布定位"
+                        title="跳转到该节点（同时切右面板 + 居中画布）"
                         data-testid={`llm-chain-position-evidence-${ev.id}`}
                       >
                         {ev.kind} {ev.id.slice(0, 8)}
