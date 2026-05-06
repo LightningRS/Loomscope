@@ -29,12 +29,23 @@ import type {
   WorkNode,
 } from "@/data/types";
 
-// Per-kind sizing — width drives the card's max-w; height is a dagre
-// hint only (React Flow auto-resizes the rendered card).
+// Per-kind sizing — width drives the card's max-w; height is the
+// dagre hint. React Flow auto-grows the rendered card, but dagre uses
+// the hint to pick positions, so an undersized hint makes neighbours
+// overlap visually (the original v0.x bug user reproed: TaskCreate
+// tool_call with multi-line `input` rendered ~200-250px tall while
+// the hint stayed at 125 → vertical-stack neighbours overlapped).
 //
-// v0.6 redo M4: heights bumped ~30px on TokenBar-bearing kinds and
-// ~12-15px on NodeIdLine-only kinds to keep dagre's spacing honest now
-// that every card carries a NodeIdLine + 3 of them carry a TokenBar.
+// `WF_NODE_SIZE` keeps the BASE (chrome only) sizes; the per-node
+// `estimateWfNodeHeight` function below adds an estimate based on
+// the WorkNode's actual content (input bytes, text length, thinking
+// blocks, etc.) so dagre lays out tall cards with breathing room
+// without overspacing short ones.
+//
+// 中: WF_NODE_SIZE 是仅含 chrome 的"基线"尺寸；estimateWfNodeHeight
+// 按节点实际内容（input / text / thinking）追加估算高度，让 dagre 布
+// 局贴近真实卡片尺寸。原 bug：tool_call 固定 125 让 TaskCreate 这种
+// 多行 input 的卡片相邻 sibling 视觉重叠。
 export const WF_NODE_SIZE: Record<WorkNode["kind"], { width: number; height: number }> = {
   llm_call: { width: 240, height: 140 },
   tool_call: { width: 240, height: 125 },
@@ -44,7 +55,72 @@ export const WF_NODE_SIZE: Record<WorkNode["kind"], { width: number; height: num
 };
 
 export const WF_RANKSEP = 64;
-export const WF_NODESEP = 16;
+// nodesep raised 16 → 28 — even with content-size hints, leaf
+// tool_call / attachment cards visually crowded under 16 px gaps.
+export const WF_NODESEP = 28;
+
+// Tunables for the height estimator. ~16 px per visual line is the
+// observed average across the WorkNode card chrome (font 11-12 px +
+// line-height + small per-section padding).
+const HEIGHT_PER_LINE = 16;
+// Hard cap so a 10 KB tool_input doesn't blow layout sky-high.
+// Above this height we let the card scroll internally and accept the
+// visual overlap risk for those (rare) extreme cases.
+const HEIGHT_CAP = 360;
+// Approximate chars per visible line in the card's content area
+// (240 px ~ 36 chars at 11 px monospace; round down for safety).
+const CHARS_PER_LINE = 32;
+
+function approxLines(text: string): number {
+  if (!text) return 0;
+  // Count explicit newlines + estimate wrapped lines for each segment.
+  const segments = text.split(/\r?\n/);
+  let n = 0;
+  for (const seg of segments) {
+    n += Math.max(1, Math.ceil(seg.length / CHARS_PER_LINE));
+  }
+  return n;
+}
+
+/**
+ * Per-WorkNode height estimate for dagre. Returns the BASE chrome
+ * height + an estimate of content-driven height, capped at
+ * HEIGHT_CAP. Pure function — given the same WorkNode produces the
+ * same number, so layout is deterministic across renders.
+ */
+export function estimateWfNodeHeight(n: WorkNode): number {
+  const base = WF_NODE_SIZE[n.kind].height;
+  let extra = 0;
+  if (n.kind === "tool_call") {
+    // Cards display the input as JSON-ish lines + a result preview
+    // line. The input is the primary driver of height variation
+    // (TaskCreate / Edit / Write all carry multi-line strings).
+    const inputJson = n.input ? JSON.stringify(n.input) : "";
+    extra += Math.min(approxLines(inputJson), 12) * HEIGHT_PER_LINE;
+    // Result preview adds another 1-2 lines on top of the chrome.
+  } else if (n.kind === "delegate") {
+    // description + prompt + result content all show in the card.
+    const desc = n.description ?? "";
+    const prompt = n.prompt ?? "";
+    const content = n.content ?? "";
+    extra +=
+      Math.min(approxLines(desc) + approxLines(prompt) + approxLines(content), 16) *
+      HEIGHT_PER_LINE;
+  } else if (n.kind === "llm_call") {
+    // text + thinking. Cards usually preview-truncate so growth is
+    // bounded, but multi-thinking-block streams can be tall.
+    const textLines = approxLines(n.text ?? "");
+    let thinkingLines = 0;
+    for (const t of n.thinking) {
+      if (t.text) thinkingLines += approxLines(t.text);
+    }
+    extra += Math.min(textLines + thinkingLines, 14) * HEIGHT_PER_LINE;
+  } else if (n.kind === "compact") {
+    extra += Math.min(approxLines(n.summaryText ?? ""), 6) * HEIGHT_PER_LINE;
+  }
+  // attachment: fixed-shape chrome, no content estimate needed.
+  return Math.min(base + extra, HEIGHT_CAP);
+}
 
 // Per-kind RFData shape — narrowed via WorkNode subtype generics so each
 // card component can rely on the discriminated workNode type without
@@ -120,9 +196,13 @@ export function layoutWorkFlow(chatNode: ChatNode): LayoutWorkFlowResult {
     marginy: 20,
   });
 
+  // Stash per-node height for the layout-output mapping below.
+  const nodeHeights = new Map<string, number>();
   for (const n of wf.nodes) {
-    const size = WF_NODE_SIZE[n.kind];
-    g.setNode(n.id, { width: size.width, height: size.height });
+    const width = WF_NODE_SIZE[n.kind].width;
+    const height = estimateWfNodeHeight(n);
+    nodeHeights.set(n.id, height);
+    g.setNode(n.id, { width, height });
   }
 
   const resolveParent = buildParentResolver(wf.nodes);
@@ -159,9 +239,14 @@ export function layoutWorkFlow(chatNode: ChatNode): LayoutWorkFlowResult {
 
   const nodes: WorkNodeRFNode[] = wf.nodes.map((n) => {
     const pos = g.node(n.id);
-    const size = WF_NODE_SIZE[n.kind];
-    const x = (pos?.x ?? 0) - size.width / 2;
-    const y = (pos?.y ?? 0) - size.height / 2;
+    const width = WF_NODE_SIZE[n.kind].width;
+    // Use the SAME height we fed dagre — `pos` from dagre is the
+    // node's center; converting to top-left for React Flow needs
+    // half the height we used for layout, not the BASE height (that
+    // would re-introduce a position vs spacing inconsistency).
+    const height = nodeHeights.get(n.id) ?? WF_NODE_SIZE[n.kind].height;
+    const x = (pos?.x ?? 0) - width / 2;
+    const y = (pos?.y ?? 0) - height / 2;
     // ReactFlow ``type`` is the WorkNode kind — drives the per-kind
     // card component lookup in WorkFlowCanvas's ``nodeTypes`` map.
     // The cast narrows to the discriminated alias matching n.kind.
