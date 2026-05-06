@@ -63,9 +63,10 @@ import type { ChatFlow } from "@/data/types";
 // 都要 bump 这个版本号；旧 cache 自动失效，不会被新代码当合法数据
 // 解开。v2 = B msg_id merge 后 LlmCallNode 粒度从 per-record 变为
 // per-API-call。v3 = workflow.nodes 现在按 timestamp chronological
-// 排序（之前 buildWorkflow 按 kind 分组，破坏 chain 拓扑顺序），
-// 老 v2 cache 顺序不一致，强制重 parse。
-const SCHEMA_VERSION = 3;
+// 排序。v4 = workflow.nodes 现在包含所有 attachment kinds（之前
+// 只白名单了 6 类，task_reminder / deferred_tools_delta 等 chain
+// participant 被丢掉，导致前端 chain walk 在它们处 dead-end）。
+const SCHEMA_VERSION = 4;
 
 interface DiskCacheEnvelope {
   schemaVersion: number;

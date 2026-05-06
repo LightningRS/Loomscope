@@ -41,7 +41,16 @@ import {
 
 export const DELEGATE_TOOL_NAMES = new Set(["Agent", "Task"]);
 
-const ATTACHMENT_RENDER_TYPES = new Set([
+// (Kept for backwards reference — the original white-list of
+// attachment types we used to materialise as WorkNodes. Removed in
+// favour of "all attachment kinds become WorkNodes" so chain walks
+// don't dead-end at task_reminder / deferred_tools_delta /
+// hook_additional_context records that CC inserts mid-chain. The
+// canvas layer (`layoutWorkflow.ts`) keeps its own visibility
+// filter so the original quiet-canvas UX still holds for the
+// noisy types — chain walk gets data completeness, canvas keeps
+// its compact look.
+const ATTACHMENT_VISIBLE_TYPES_LEGACY = new Set([
   "file",
   "edited_text_file",
   "queued_command",
@@ -286,7 +295,16 @@ function numeric(v: unknown): number | undefined {
 function buildAttachmentNode(r: RawRecord): AttachmentNode | null {
   const a = r.attachment;
   if (!a || typeof a.type !== "string") return null;
-  if (!ATTACHMENT_RENDER_TYPES.has(a.type)) return null;
+  // No type whitelist: every attachment is a chain participant in
+  // CC (utils/sessionStorage.ts:154 returns true for `attachment`
+  // unconditionally). Earlier we filtered to a "render-friendly"
+  // subset, but that left the chain walk blind to task_reminder /
+  // deferred_tools_delta / hook_additional_context records sitting
+  // on the chain — front-end computeChainPosition would dead-end at
+  // their uuids and falsely flag the next llm_call as a chain root.
+  // Canvas layer keeps a visibility filter (layoutWorkflow.ts) so
+  // visual density stays compact.
+  void ATTACHMENT_VISIBLE_TYPES_LEGACY;
   return {
     id: r.uuid ?? "",
     kind: "attachment",

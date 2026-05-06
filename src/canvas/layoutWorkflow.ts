@@ -184,6 +184,31 @@ function buildParentResolver(
   };
 }
 
+// Attachment kinds that participate on the chain but carry no
+// content the user wants to see on canvas (CC injects them mid-chain
+// for system control: task reminders, tool registry deltas, hook
+// outputs, etc.). They DO live in workflow.nodes so the chain walk
+// can transit through them; the layout layer simply skips over
+// them when picking which nodes to lay out + render.
+//
+// Keep visible: file / edited_text_file / queued_command /
+// invoked_skills / compact_file_reference / skill_listing — these
+// surface user-facing content (file paths, queued shell commands,
+// compact-zone file refs, etc.).
+const HIDDEN_ATTACHMENT_TYPES = new Set([
+  "task_reminder",
+  "deferred_tools_delta",
+  "hook_additional_context",
+  "date_change",
+  "command_permissions",
+  "task_status",
+]);
+
+function isVisibleOnCanvas(n: WorkNode): boolean {
+  if (n.kind !== "attachment") return true;
+  return !HIDDEN_ATTACHMENT_TYPES.has(n.attachmentType);
+}
+
 export function layoutWorkFlow(chatNode: ChatNode): LayoutWorkFlowResult {
   const wf = chatNode.workflow;
   const g = new dagre.graphlib.Graph();
@@ -196,16 +221,34 @@ export function layoutWorkFlow(chatNode: ChatNode): LayoutWorkFlowResult {
     marginy: 20,
   });
 
+  const visibleNodes = wf.nodes.filter(isVisibleOnCanvas);
+  const allByIdForLayout = new Map(wf.nodes.map((n) => [n.id, n]));
+
   // Stash per-node height for the layout-output mapping below.
   const nodeHeights = new Map<string, number>();
-  for (const n of wf.nodes) {
+  for (const n of visibleNodes) {
     const width = WF_NODE_SIZE[n.kind].width;
     const height = estimateWfNodeHeight(n);
     nodeHeights.set(n.id, height);
     g.setNode(n.id, { width, height });
   }
 
+  // Resolve uses ALL workflow nodes so the walk can transit through
+  // hidden attachments (task_reminder etc.) and find the next visible
+  // ancestor for edge drawing. Edge endpoints are visible nodes only.
   const resolveParent = buildParentResolver(wf.nodes);
+  const findVisibleParent = (child: WorkNode): WorkNode | null => {
+    let cursor: string | null = child.parentUuid;
+    for (let i = 0; i < wf.nodes.length && cursor; i += 1) {
+      const parentId = resolveParent(cursor);
+      if (!parentId) return null;
+      const parent = allByIdForLayout.get(parentId);
+      if (!parent) return null;
+      if (isVisibleOnCanvas(parent)) return parent;
+      cursor = parent.parentUuid;
+    }
+    return null;
+  };
 
   // Build edges from ``parentUuid``. ``spawn`` (orange triangle) when
   // parent is an llm_call and child is a tool_call/delegate — the
@@ -224,7 +267,6 @@ export function layoutWorkFlow(chatNode: ChatNode): LayoutWorkFlowResult {
   const edges: RFEdge[] = [];
   const incoming = new Set<string>();
   const outgoing = new Set<string>();
-  const byId = new Map(wf.nodes.map((n) => [n.id, n] as const));
   const addEdge = (
     sourceId: string,
     targetId: string,
@@ -237,17 +279,15 @@ export function layoutWorkFlow(chatNode: ChatNode): LayoutWorkFlowResult {
     incoming.add(targetId);
     outgoing.add(sourceId);
   };
-  for (const child of wf.nodes) {
-    const parentId = resolveParent(child.parentUuid);
-    if (!parentId) continue;
-    const parent = byId.get(parentId);
+  for (const child of visibleNodes) {
+    const parent = findVisibleParent(child);
     if (!parent) continue;
     if (
       parent.kind === "llm_call" &&
       (child.kind === "tool_call" || child.kind === "delegate")
     ) {
       // spawn: l → t
-      addEdge(parentId, child.id, "spawn");
+      addEdge(parent.id, child.id, "spawn");
       continue;
     }
     if (
@@ -257,7 +297,7 @@ export function layoutWorkFlow(chatNode: ChatNode): LayoutWorkFlowResult {
       // continuation through a tool_result. Fan in from every sibling
       // tool/delegate that shares the same upstream llm_call.
       const upstreamLlmId = parent.parentUuid;
-      const siblings = wf.nodes.filter(
+      const siblings = visibleNodes.filter(
         (n) =>
           (n.kind === "tool_call" || n.kind === "delegate") &&
           n.parentUuid === upstreamLlmId,
@@ -271,12 +311,12 @@ export function layoutWorkFlow(chatNode: ChatNode): LayoutWorkFlowResult {
       continue;
     }
     // Other continuation cases (e.g. llm → llm direct, attachment chains).
-    addEdge(parentId, child.id, "continuation");
+    addEdge(parent.id, child.id, "continuation");
   }
 
   dagre.layout(g);
 
-  const nodes: WorkNodeRFNode[] = wf.nodes.map((n) => {
+  const nodes: WorkNodeRFNode[] = visibleNodes.map((n) => {
     const pos = g.node(n.id);
     const width = WF_NODE_SIZE[n.kind].width;
     // Use the SAME height we fed dagre — `pos` from dagre is the
