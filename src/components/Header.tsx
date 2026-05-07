@@ -10,6 +10,7 @@ import { useTranslation } from "react-i18next";
 
 import { copyToClipboardWithFallback } from "@/lib/clipboard";
 import { HookStatusChip } from "@/components/HookStatusChip";
+import { SettingsModal } from "@/components/SettingsModal";
 import { currentLanguage, setLanguage } from "@/i18n";
 import { useStore } from "@/store/index";
 import type { LiveChannelState } from "@/store/types";
@@ -20,6 +21,7 @@ export function Header() {
   const session = useStore((s) => (activeId ? s.sessions.get(activeId) : null));
   const cf = session?.chatFlow ?? null;
   const liveStatus = useStore((s) => s.liveStatus);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   return (
     <header
@@ -80,7 +82,17 @@ export function Header() {
           </span>
         )}
         <LanguageToggle />
+        <button
+          type="button"
+          onClick={() => setSettingsOpen(true)}
+          data-testid="header-settings-btn"
+          title={t("settings.open")}
+          className="flex h-6 w-6 items-center justify-center rounded text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+        >
+          ⚙
+        </button>
       </div>
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </header>
   );
 }

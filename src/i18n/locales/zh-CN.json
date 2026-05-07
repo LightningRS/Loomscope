@@ -120,5 +120,31 @@
     "title": "Tasks",
     "tooltip_expand": "展开 CC TaskList（点击收起）",
     "tooltip_collapse": "收起"
+  },
+  "settings": {
+    "title": "设置",
+    "open": "打开设置",
+    "close": "关闭",
+    "tab_hooks": "Hooks",
+    "hooks": {
+      "loading": "加载中…",
+      "section_status": "当前状态",
+      "status_summary": "已配置 {{configured}} / {{total}} 个 hook",
+      "malformed": "settings.json 是无效 JSON，无法写入。请先手动修复后再重试。",
+      "section_actions": "操作",
+      "actions_description": "Loomscope 没在跑时，CC 每次 hook 触发会显示一行红色 \"hook error\"（不影响正常对话）。如果你长期不用 Loomscope，可以一键移除全部 hook 配置；想用回来时再一键添加即可。",
+      "btn_add_all": "一键添加全部 hook",
+      "btn_adding": "添加中…",
+      "btn_remove_all": "移除全部 hook",
+      "btn_removing": "移除中…",
+      "btn_refresh": "刷新状态",
+      "section_secret": "环境变量",
+      "secret_description": "把这一行加到 ~/.bashrc / ~/.zshrc 让 CC hook header 能拿到 secret。",
+      "btn_show_snippet": "展开手动配置 JSON",
+      "btn_hide_snippet": "收起手动配置 JSON",
+      "snippet_label": "settings.json hooks 段（合并到 ~/.claude/settings.json）",
+      "copy": "📋 复制",
+      "copied": "✓ 已复制"
+    }
   }
 }

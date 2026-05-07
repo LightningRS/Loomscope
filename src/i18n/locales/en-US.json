@@ -120,5 +120,31 @@
     "title": "Tasks",
     "tooltip_expand": "Expand CC TaskList (click to collapse)",
     "tooltip_collapse": "Collapse"
+  },
+  "settings": {
+    "title": "Settings",
+    "open": "Open settings",
+    "close": "Close",
+    "tab_hooks": "Hooks",
+    "hooks": {
+      "loading": "Loading…",
+      "section_status": "Current status",
+      "status_summary": "{{configured}} / {{total}} hooks configured",
+      "malformed": "settings.json is malformed; refusing to write. Fix the file manually first.",
+      "section_actions": "Actions",
+      "actions_description": "When Loomscope isn't running, CC shows a red \"hook error\" line on every hook fire (non-blocking; chat still works). If you're not using Loomscope for a while, remove all hooks here; add them back in one click when you return.",
+      "btn_add_all": "Add all hooks",
+      "btn_adding": "Adding…",
+      "btn_remove_all": "Remove all hooks",
+      "btn_removing": "Removing…",
+      "btn_refresh": "Refresh status",
+      "section_secret": "Environment variable",
+      "secret_description": "Add this line to ~/.bashrc / ~/.zshrc so CC's hook headers receive the secret.",
+      "btn_show_snippet": "Show manual JSON snippet",
+      "btn_hide_snippet": "Hide manual JSON snippet",
+      "snippet_label": "settings.json hooks block (merge into ~/.claude/settings.json)",
+      "copy": "📋 Copy",
+      "copied": "✓ Copied"
+    }
   }
 }
