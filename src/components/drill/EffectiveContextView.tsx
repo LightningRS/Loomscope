@@ -29,6 +29,7 @@ import { useTranslation } from "react-i18next";
 import { LazyMarkdownView } from "@/components/MarkdownView";
 import { ConversationView } from "@/components/drill/ConversationView";
 import { findEffectiveContextCutoff } from "@/components/drill/effectiveContext";
+import { findLatestLeafId } from "@/components/drill/pathUtils";
 import type { ChatFlow, ChatNode } from "@/data/types";
 import { useStore } from "@/store/index";
 
@@ -51,8 +52,16 @@ export function EffectiveContextView({
   );
   const focusedId = useMemo<string | null>(() => {
     if (viewMode === "workflow") return drilledChatNode?.id ?? null;
-    return selectedChatId;
-  }, [viewMode, selectedChatId, drilledChatNode]);
+    // Mirror ConversationView's first-open behaviour: when no
+    // ChatNode is explicitly selected, fall back to the chatflow's
+    // latest leaf so the tab renders meaningful content immediately
+    // (the most recent turn is what users want to inspect "what
+    // context did this LLM call see"). Without this, the tab shows
+    // only the placeholder hint until the user clicks a card,
+    // which is inconsistent with the Conversation tab.
+    if (selectedChatId) return selectedChatId;
+    return findLatestLeafId(chatFlow);
+  }, [viewMode, selectedChatId, drilledChatNode, chatFlow]);
 
   const cutoffId = useMemo(
     () => (focusedId ? findEffectiveContextCutoff(chatFlow, focusedId) : null),
