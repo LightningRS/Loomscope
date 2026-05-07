@@ -115,6 +115,8 @@ Ordered by user-facing capability rather than version. Per-version commit refere
 
 **B — real `git status` workspace view.** Distinct from the 📁 "session 触及文件" chip which surfaces CC's internal `trackedFileBackups` index. A true workspace-dirty view would: a) run `git status --porcelain` in the session's `cwd` from the server, b) cache + invalidate via fs.watch on `<cwd>/.git/index`, c) render as a new chip + DrillPanel section that **does** clear after `git commit`. Useful for "is my work committed?" at a glance. Discovered while debugging the misleading 📁 tooltip — the data we already had was never `git status`.
 
+**Secret-rotation UX polish (deferred to v∞).** After "Rotate secret" succeeds, the UI just renders the new `shellRcSnippet`; existing terminals still hold the old `LOOMSCOPE_SECRET` and start hitting 403 with no in-app cue. Worth tackling when Loomscope itself spawns CC subprocesses (v∞.1+) — at that point we can auto-inject the new secret into spawned children, mark stale shells by hook source, and surface a "please re-export your shell rc" toast on the affected sessions. As a passive observer the affordances are limited; defer.
+
 ### v∞ — live writes (interactive control)
 
 The path from "graphical reader" to "graphical CC client":

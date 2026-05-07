@@ -115,6 +115,8 @@ CC CLI 是 agent 的运行时，Loomscope 是配套的**只读图形化阅读器
 
 **B — 真 `git status` 工作区视图。** 跟 📁 "session 触及文件" 角标完全独立——后者展示 CC 内部 `trackedFileBackups` 索引（commit 后不会减少）。真工作区 dirty 视图：a) server 端在 session `cwd` 跑 `git status --porcelain`、b) 用 fs.watch `<cwd>/.git/index` 做 cache 失效、c) 加新角标 + DrillPanel section，commit 后**会**正确清零。用来一眼回答"我的工作 commit 了吗？"。是在排查 📁 tooltip 误导时挖出来的——我们手里的数据从来就不是 `git status`。
 
+**Secret rotation 显示优化（推迟到 v∞）。** 当前 "Rotate secret" 完只是把 shellRcSnippet 显示成新值；终端里 `LOOMSCOPE_SECRET` 还是老的、开始 403 但 UI 不告知。等 Loomscope 自己 spawn CC subprocess（v∞.1+）就能：自动给新生子注入新 secret、按 hook 来源标 stale shell、给受影响的 session 弹一个"请 re-source 你的 shell rc"提示。被动观察期能做的太有限，推迟。
+
 ### v∞ — 写控制（交互式）
 
 从"图形化阅读器"走向"图形化 CC 客户端"：
