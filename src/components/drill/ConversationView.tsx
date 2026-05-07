@@ -902,10 +902,20 @@ function MessageBubbleImpl({
               className="mt-1.5 ml-2 border-l-2 border-gray-200 pl-2.5 space-y-1"
             >
               {Array.from({ length: pendingToolSkeletonCount }).map((_, i) => (
+                // Mirror ToolPill's measured chrome: outer border +
+                // py-1 + text-[11px] (the EFFECTIVE inner content
+                // size — the outer text-[12px] is overridden by
+                // inner spans, so matching the inner is what counts).
+                // Total: 11px text × 1.5 leading = 16.5 + py-1 (8) +
+                // border (2) = 26.5px, exactly matching the real
+                // pill's measured height. Verified via headless
+                // chromium probe.
                 <div
                   key={i}
-                  className="rounded border border-gray-200 bg-gray-50/40 h-[28px]"
-                />
+                  className="rounded border border-gray-200 bg-gray-50/40 px-2 py-1 text-[11px] leading-normal"
+                >
+                  &nbsp;
+                </div>
               ))}
             </div>
           )}
