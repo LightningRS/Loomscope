@@ -72,7 +72,10 @@ import type { ChatFlow } from "@/data/types";
 // v6 = git commit repo extraction now slices off command body past
 // the first `commit` keyword (heredoc message bodies were polluting
 // the -C flag / cd chain detection — fixed in commit a few above).
-const SCHEMA_VERSION = 6;
+// v7 = WorkflowSummary.innerCompactLlmCallBoundaryIdx added — index
+// in `assistantText` where post-compact rounds begin for hybrid
+// ChatNodes (drives the Effective Context tab's pre/post split).
+const SCHEMA_VERSION = 7;
 
 interface DiskCacheEnvelope {
   schemaVersion: number;

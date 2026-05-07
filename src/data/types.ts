@@ -276,6 +276,20 @@ export interface WorkflowSummary {
   // the "本节点文件改动" delta (✏️ N chip) without needing
   // workflow.nodes loaded.
   toolUseFilePaths: string[];
+  // EN (v0.11): for hybrid ChatNodes (`hasInnerCompact === true`),
+  // the index in `assistantText` at which the post-compact rounds
+  // BEGIN. assistantText[0..idx-1] = pre-compact (already covered by
+  // compactMetadata.summaryText, redundant from a downstream POV);
+  // assistantText[idx..] = post-compact continuation (verbatim
+  // context the next ChatNode actually sees). Populated by
+  // computeWorkflowSummary when the workflow contains a `compact`
+  // WorkNode; undefined for non-hybrid turns. Drives the Effective
+  // Context tab's ability to render only the post-compact tail
+  // without duplicating content already in the summary.
+  // 中: hybrid ChatNode 的 post-compact 起点。assistantText 的
+  // [0..idx-1] 是 pre-compact（已被 summary 覆盖，下游冗余），
+  // [idx..] 是 post-compact（下游能 verbatim 看到的延续）。
+  innerCompactLlmCallBoundaryIdx?: number;
 }
 
 // ─── ChatNode layer ──────────────────────────────────────────────────

@@ -177,6 +177,31 @@ export function computeWorkflowSummary(
   const contextTokens = lastReal ? llmCallContextTokens(lastReal.usage) : 0;
   const maxContextTokens = maxContextForModel(lastReal?.model);
 
+  // Inline compact boundary (hybrid ChatNodes only). Walk nodes in
+  // DAG / chronological order, count text-carrying real llm_calls
+  // BEFORE the first `compact` WorkNode, and that count is the index
+  // where post-compact rounds start in `assistantText`. Defensively
+  // returns undefined when no compact node is found (turn isn't
+  // hybrid) — the consumer (Effective Context view) only reads it
+  // when chatNode.hasInnerCompact is true.
+  let innerCompactLlmCallBoundaryIdx: number | undefined;
+  const compactNodeIdx = nodes.findIndex((n) => n.kind === "compact");
+  if (compactNodeIdx >= 0) {
+    let count = 0;
+    for (let i = 0; i < compactNodeIdx; i++) {
+      const n = nodes[i];
+      if (
+        n.kind === "llm_call" &&
+        isRealLlmCall(n) &&
+        n.text &&
+        n.text.trim().length > 0
+      ) {
+        count += 1;
+      }
+    }
+    innerCompactLlmCallBoundaryIdx = count;
+  }
+
   // file_paths from this turn's Edit/Write/MultiEdit/NotebookEdit
   // tool_use input — drives "本节点文件改动" delta computation.
   const toolUseFilePaths: string[] = [];
@@ -209,6 +234,7 @@ export function computeWorkflowSummary(
     maxContextTokens,
     lastModel: lastReal?.model,
     toolUseFilePaths,
+    innerCompactLlmCallBoundaryIdx,
   };
 }
 

@@ -65,6 +65,14 @@ interface Props {
   // through unchanged when null / when the cutoff id isn't on the
   // resolved path.
   headCutoffChatNodeId?: string | null;
+  // v0.11 Effective Context (B): bubbles whose chatNode.id is in
+  // this set are omitted from the rendered slice. Path / forks /
+  // selectedIndex are unaffected (the omitted node still occupies a
+  // logical slot for offset accounting). Used to hide hybrid cutoff
+  // bubbles whose pre-compact rounds would duplicate content already
+  // shown in the EffectiveContextView's compact summary banner; the
+  // post-compact tail is rendered as a dedicated block above instead.
+  omitChatNodeIds?: ReadonlySet<string> | null;
 }
 
 // Shared sentinel — Zustand uses Object.is referential equality on
@@ -103,6 +111,7 @@ export function ConversationView({
   chatFlow,
   focusLock = null,
   headCutoffChatNodeId = null,
+  omitChatNodeIds = null,
 }: Props) {
   const storeSelectedId = useStore(
     (s) => s.sessions.get(sessionId)?.selectedNodeId ?? null,
@@ -595,6 +604,7 @@ export function ConversationView({
         const idx = sliceIdx + startIdx;
         const cn = byId.get(nid);
         if (!cn) return null;
+        if (omitChatNodeIds && omitChatNodeIds.has(nid)) return null;
         const fork = forkAt.get(nid);
         const isDimmed = idx > selectedIndex;
         // EN: latest visible bubble + session live = running. We
