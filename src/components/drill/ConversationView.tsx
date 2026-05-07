@@ -705,6 +705,13 @@ function MessageBubbleImpl({
   // 时（stale-while-revalidate）已经渲染旧内容了，不算 pending UI。
   const isAssistantSkeleton =
     access.status === "pending" && rounds.length === 0 && !fallbackText;
+  // v0.11: how many tool pills to reserve space for, BEFORE the lazy
+  // workflow fetch lands. `summary.toolCount` is the source of truth
+  // (lite payload). Once workflow is loaded, real `round.tools` array
+  // takes over and we hide the skeleton.
+  const pendingToolSkeletonCount = access.workflow
+    ? 0
+    : (chatNode.workflow.summary?.toolCount ?? 0);
   // For copy / meta resolution we still want the LAST round's text.
   const lastAssistantText = useMemo(() => {
     for (let i = rounds.length - 1; i >= 0; i -= 1) {
@@ -876,6 +883,32 @@ function MessageBubbleImpl({
               )}
             </div>
           ))}
+          {/* v0.11: pre-workflow-fetch tool-pill height reservation.
+              `summary.toolCount` is in the lite payload, so we know
+              upfront how many pills will materialise. Render N
+              skeleton boxes matching ToolPill's collapsed size
+              (border + px-2 py-1 ≈ 24px + 4px gap) so the bubble's
+              total height = post-fetch height. When access.workflow
+              lands, rounds[i].tools populates and these skeletons
+              disappear — pills slot into per-round positions instead,
+              producing minor reflow within the bubble but ZERO
+              propagated shift to upper bubbles (= no scroll jump).
+              中: workflow 还没拉回来时，根据 summary.toolCount 提前
+              占住 pill 行高度。bubble 总高与加载后一致，避免上方消息
+              被推动。 */}
+          {!access.workflow && pendingToolSkeletonCount > 0 && (
+            <div
+              data-testid={`tool-pill-skeleton-${chatNode.id}`}
+              className="mt-1.5 ml-2 border-l-2 border-gray-200 pl-2.5 space-y-1"
+            >
+              {Array.from({ length: pendingToolSkeletonCount }).map((_, i) => (
+                <div
+                  key={i}
+                  className="rounded border border-gray-200 bg-gray-50/40 h-[26px]"
+                />
+              ))}
+            </div>
+          )}
         </div>
       )}
       {/* Fallback text (compact summary / slashCommand stdout). */}
