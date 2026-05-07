@@ -67,6 +67,20 @@ export function GitDiffPanel({ sessionId, chatNode }: Props) {
   const { t } = useTranslation();
   const commits = chatNode?.meta.commits ?? [];
 
+  // Group commits by repo (most ChatNodes have just one). MUST be
+  // declared before any early return to satisfy the Rules of Hooks
+  // — when the user navigates from a ChatNode WITH commits to one
+  // without (or vice versa), the hook count must stay constant.
+  const byRepo = useMemo(() => {
+    const m = new Map<string, GitCommitRef[]>();
+    for (const c of commits) {
+      const list = m.get(c.repo) ?? [];
+      list.push(c);
+      m.set(c.repo, list);
+    }
+    return m;
+  }, [commits]);
+
   if (!chatNode) {
     return (
       <div className="text-[12px] italic text-gray-400">
@@ -81,17 +95,6 @@ export function GitDiffPanel({ sessionId, chatNode }: Props) {
       </div>
     );
   }
-
-  // Group commits by repo (most ChatNodes have just one).
-  const byRepo = useMemo(() => {
-    const m = new Map<string, GitCommitRef[]>();
-    for (const c of commits) {
-      const list = m.get(c.repo) ?? [];
-      list.push(c);
-      m.set(c.repo, list);
-    }
-    return m;
-  }, [commits]);
 
   return (
     <div data-testid="git-diff-panel" className="space-y-3 text-[12px]">
