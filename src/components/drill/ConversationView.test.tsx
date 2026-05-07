@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 
 import { CanvasPanContext, type PanToChatNodeFn } from "@/canvas/CanvasPanContext";
-import { ConversationView, packStartIdx } from "@/components/drill/ConversationView";
+import { ConversationView } from "@/components/drill/ConversationView";
+import { packStartIdx } from "@/components/drill/conversationHelpers";
 import { useStore } from "@/store/index";
 import type { ChatFlow, ChatNode } from "@/data/types";
 
