@@ -148,8 +148,18 @@ function extractTextFromBlocks(content: unknown): string | null {
 }
 
 function resolveRepoPath(cmd: string, recordCwd: string | undefined): string {
+  // Slice off everything past the first `commit` keyword — heredoc-
+  // form commit messages (`git commit -m "$(cat <<EOF ... EOF)"`)
+  // often quote `-C path` or `cd path` as documentation in the
+  // message body. Without this slice, the flag detector picks up
+  // those quoted paths as the repo (real bug: ChatNode b7d48cac in
+  // session a02f707f returned `repo: 'path\`'` because the commit
+  // message contained the phrase `git -C path`).
+  const commitIdx = cmd.search(/\bcommit\b/);
+  const head = commitIdx >= 0 ? cmd.slice(0, commitIdx) : cmd;
+
   // Priority 1: `-C <path>` flag
-  const cFlag = GIT_C_FLAG_RE.exec(cmd);
+  const cFlag = GIT_C_FLAG_RE.exec(head);
   if (cFlag) {
     return cFlag[1] ?? cFlag[2] ?? cFlag[3] ?? "";
   }
@@ -157,15 +167,8 @@ function resolveRepoPath(cmd: string, recordCwd: string | undefined): string {
   let lastCd: string | null = null;
   let m: RegExpExecArray | null;
   CD_PREFIX_RE.lastIndex = 0;
-  while ((m = CD_PREFIX_RE.exec(cmd)) !== null) {
+  while ((m = CD_PREFIX_RE.exec(head)) !== null) {
     lastCd = m[1] ?? m[2] ?? m[3] ?? null;
-    if (lastCd) {
-      // Stop if we've gone past the git invocation
-      const idx = cmd.indexOf("git ", m.index);
-      if (idx < 0 || idx > m.index) {
-        // continue scanning, this cd might be before git
-      }
-    }
   }
   if (lastCd) return lastCd;
   // Priority 3: record's cwd at fire time

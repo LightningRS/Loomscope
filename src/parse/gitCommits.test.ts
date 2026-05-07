@@ -176,6 +176,29 @@ describe("detectGitCommits", () => {
     expect(out[0].sha).toBe("bcdef12");
   });
 
+  it("ignores `-C` / `cd` mentions inside heredoc commit message bodies (only flags BEFORE `commit` count)", () => {
+    // Real bug from session a02f707f ChatNode b7d48cac: my own
+    // commit message contained the phrase ``git -C path``, and the
+    // GIT_C_FLAG_RE picked up the documentation phrase as the repo,
+    // returning `repo: 'path\``.
+    const node = tc({
+      id: "t-heredoc",
+      input: {
+        command:
+          "git add -A && git -c user.name='u' commit -m \"$(cat <<'EOF'\nfix: words about git -C path and cd /wrong/dir && stuff\nEOF\n)\"",
+      },
+      resultBlock: "[main beefca7] fix: words about ... and stuff",
+    });
+    const out = detectGitCommits({
+      workflow: wf(node),
+      cwdByToolUseUuid: new Map([["t-heredoc", "/home/user/correct-cwd"]]),
+    });
+    expect(out).toHaveLength(1);
+    // -C / cd in the heredoc are AFTER the commit keyword, so should
+    // be ignored. Falls through to record cwd.
+    expect(out[0].repo).toBe("/home/user/correct-cwd");
+  });
+
   it("regex performance: long `git ... no-commit` commands return fast (no catastrophic backtracking)", () => {
     // Pre-fix, this command (long flag list with `git` start but no
     // `commit` end) ran the matcher into hours-long backtracking.

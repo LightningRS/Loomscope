@@ -68,7 +68,10 @@ import type { ChatFlow } from "@/data/types";
 // participant 被丢掉，导致前端 chain walk 在它们处 dead-end）。
 // v5 = ChatNodeMeta.commits 新增（per-ChatNode git commit refs from
 // detectGitCommits — Bash tool_use → `[branch sha] subject` parse）。
-const SCHEMA_VERSION = 5;
+// v6 = git commit repo extraction now slices off command body past
+// the first `commit` keyword (heredoc message bodies were polluting
+// the -C flag / cd chain detection — fixed in commit a few above).
+const SCHEMA_VERSION = 6;
 
 interface DiskCacheEnvelope {
   schemaVersion: number;
