@@ -443,7 +443,11 @@ v0.7 实测（跨用户 3059 条 snapshot 全集）：
 ⇒ **v0.7 parser**：`snapshot.messageId → indexByUuid → resolvePromptId → ChatNode bucket`，**不需要时间窗启发**。fallback 到 orphan 只发生在 messageId/parentUuid 双双失败的极少数损坏 record。
 ⇒ 256MB session 实测：2099/2099 snapshot 全部绑定（100%），1186/1522 (78%) ChatNode 有 snapshot 数据。
 ⇒ 字段：`ChatNodeMeta.fileHistorySnapshots: Array<{uuid, timestamp, trackedFiles, isUpdate}>`，`trackedFiles = Object.keys(snapshot.trackedFileBackups)`。
-⇒ UI：ChatNodeCard 加 📁 N 角标（"工作区累积改动" — 工作区自上次 commit 起的 dirty 集合）+ ✏️ N 角标（"本节点文件改动" — selfDelta = (selfSnap \ ancestorSnap) ∪ tool_use_paths）；DrillPanel ChatNodeDetail 同时给两节，cumulative section 跟 ChatNode 内 Edit/Write/MultiEdit/NotebookEdit 的 `tool_use.input.file_path` 并列对比，不一致路径 amber 色提示副作用（snapshot 标但 tool_use 没显式改 = Bash / sub-agent / hook 改的）。
+⇒ **数据真相纠正（2026-05-06 实测）**：早期注释说 `trackedFileBackups` 是 "CC 跑 git status 拿到的工作区 dirty 集合" —— 是错的。实测 value 结构 `{backupFileName, version, backupTime}`、路径含 `/tmp/...` 等非 git repo 文件 → 这是 **CC 内部 file backup 系统**（Read/Edit/Write 都登记的版本备份索引，给 undo/diff 用），跟 `git status` 无关，commit 后不会减少。
+
+⇒ UI 角标：ChatNodeCard 加 📁 N（"session 触及文件"）+ ✏️ N（"本节点新触及文件"）。前者 = `distinctTouchedFiles(cn)` = 本 ChatNode 最后一帧 snapshot 的 trackedFileBackups 路径集合（session 累积、含 Read）；后者 = `nodeOwnFileChanges` = (selfSnap \ ancestorSnap) ∪ tool_use_paths。DrillPanel ChatNodeDetail 同时给两节，cumulative section 跟 ChatNode 内 Edit/Write/MultiEdit/NotebookEdit 的 `tool_use.input.file_path` 并列对比，不一致路径 amber 色：📸 列有 / 🔧 列空 = 多半是 Read（少数是 Bash/sub-agent/hook 副作用），🔧 列有 / 📸 列空 = 罕见 ghost write。
+
+⇒ 真 "git 工作区 dirty 集合" 是另一个数据源（roadmap B），需要 server 端跑 `git status --porcelain` 在 session cwd 下取，跟 trackedFileBackups 完全独立。
 
 ### scheduled trigger 启发式 join
 

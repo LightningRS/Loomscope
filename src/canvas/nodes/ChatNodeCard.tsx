@@ -262,7 +262,7 @@ export function ChatNodeCard({ id, data }: NodeProps<ChatNodeRFNode>) {
         {data.nodeOwnFileChangeCount > 0 && (
           <span
             className="inline-flex items-center gap-0.5"
-            title={`本节点文件改动 (${data.nodeOwnFileChangeCount} 个) — 仅这一节点直接造成的改动`}
+            title={`本节点新触及文件 (${data.nodeOwnFileChangeCount} 个) — 这一节点首次出现在 CC trackedFileBackups 索引中的文件 ∪ 本节点 Edit/Write/MultiEdit/NotebookEdit 显式改的路径。包含 Read（CC 内部 backup tracker 不区分读写），不是仅"修改过"`}
             data-testid={`chat-node-${cn.id}-self-file-changes`}
           >
             <span className="text-gray-400">✏️</span>
@@ -272,7 +272,7 @@ export function ChatNodeCard({ id, data }: NodeProps<ChatNodeRFNode>) {
         {data.fileTouchCount > 0 && (
           <span
             className="inline-flex items-center gap-0.5"
-            title={`工作区累积改动 (${data.fileTouchCount} 个) — git 工作区自上次 commit 以来累积的 dirty 文件，与"本节点改动" ✏️ 区别`}
+            title={`session 触及文件 (${data.fileTouchCount} 个) — CC 这个 session 启动以来 Read/Edit/Write 等触及过的所有路径累积索引（来自 CC 内部 trackedFileBackups，不是 git 工作区状态；commit 后不会清零）`}
             data-testid={`chat-node-${cn.id}-file-touch`}
           >
             <span className="text-gray-400">📁</span>

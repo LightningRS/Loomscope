@@ -48,19 +48,25 @@ export interface ChatNodeRFData extends Record<string, unknown> {
   // in the inner-compact chip's tooltip so the user sees the magnitude
   // of the drop.
   innerCompactPreTokens: number | null;
-  // Cumulative working-tree-dirty count, derived from
-  // ChatNode.meta.fileHistorySnapshots[*].trackedFiles. Used for the
-  // 📁 N stats chip on ChatNodeCard. Labeled "工作区累积改动" — every
-  // file dirty since the last commit, NOT just files this ChatNode
-  // touched. 0 = no snapshots bound (badge hidden). Compare with
-  // `nodeOwnFileChangeCount` (✏️) which subtracts the inherited
-  // dirty set to attribute changes to one ChatNode only.
+  // Session-cumulative trackedFileBackups count at end of this
+  // ChatNode. Drives the 📁 N "session 触及文件" chip on
+  // ChatNodeCard. The data is CC's INTERNAL `trackedFileBackups`
+  // index (Read/Edit/Write touch tracker for backup/undo) — NOT
+  // git status. It accumulates monotonically across the session and
+  // does NOT shrink after a `git commit`. (Real git workspace dirty
+  // is a backlog item — see roadmap "B".) 0 = no snapshots bound
+  // (badge hidden). Compare with `nodeOwnFileChangeCount` (✏️)
+  // which strips the inherited cumulative set to attribute newly-
+  // touched paths to one ChatNode only.
   fileTouchCount: number;
-  // v0.8.1 #9 polish: per-node file-change count = nodeOwnFileChanges
+  // v0.8.1 #9 polish: per-node delta = nodeOwnFileChanges
   // (selfSnap \ parentSnap) ∪ tool_use. Drives the ✏️ N stats chip
-  // — "本节点文件改动" — only files this specific ChatNode is
-  // responsible for, stripped of the cumulative dirty set inherited
-  // from ancestors. 0 = badge hidden.
+  // — "本节点新触及文件" — paths first appearing in
+  // `trackedFileBackups` at this ChatNode (could be Read / Edit /
+  // Write / Bash side-effect; CC's backup tracker doesn't tag the
+  // operation kind), unioned with this node's explicit Edit/Write/
+  // MultiEdit/NotebookEdit tool_use paths. Strips the cumulative
+  // set inherited from ancestors. 0 = badge hidden.
   nodeOwnFileChangeCount: number;
   // v0.8 M5: number of immediate children of this ChatNode in the
   // (possibly merged) ChatFlow. Drives the ⑂ N fork indicator chip
@@ -431,18 +437,27 @@ function deriveCardData(
   };
 }
 
-// Latest-snapshot trackedFiles for this ChatNode — the workspace
-// dirty set at the end of this turn. Earlier (v0.7) we unioned every
-// bound snapshot, but unioning kept files visible after a mid-turn
-// `git commit` cleared them: snapshots earlier in the turn still
-// reported them dirty, so `union ⊇ post-commit set`. Real users hit
-// this whenever they commit mid-conversation, leaving the 📁 chip
-// inflated for the rest of the session.
+// Latest-snapshot trackedFileBackups path set for this ChatNode —
+// the "session 触及文件" cumulative index at the end of this turn.
 //
-// Snapshots are stored in JSONL ingestion order (chronological), so
-// the last entry is the most recent state. Both isUpdate=true and
-// isUpdate=false are valid sources — we just want the freshest.
+// Earlier (v0.7 → v0.11 first attempt) the comment claimed this was
+// "git working-tree dirty since last commit". That is FALSE — the
+// underlying CC field is `snapshot.trackedFileBackups`, an internal
+// per-file-version backup index used by CC for Read/Edit/Write
+// rollback. It accumulates across the session, includes Read'd
+// files, and does NOT shrink after a `git commit`. The chip's
+// semantic is therefore "files CC has touched in this session up to
+// the end of this turn", not "git workspace state".
+//
+// We keep "latest snapshot only" because the index accumulates
+// monotonically — last frame supersets every earlier frame in the
+// same ChatNode. Snapshots are stored in JSONL ingestion order
+// (chronological); both isUpdate=true/false count.
 // Empty array → empty set (chip hidden).
+//
+// Future: a true "git workspace dirty" view (roadmap B) would
+// require running `git status --porcelain` in the session's cwd
+// from the server, separate data path.
 export function distinctTouchedFiles(cn: ChatNode): Set<string> {
   const snaps = cn.meta.fileHistorySnapshots ?? [];
   if (snaps.length === 0) return new Set();
@@ -519,11 +534,11 @@ export function nodeOwnFileChanges(
 
 // Walk parentChatNodeId until we hit an ancestor with a non-empty
 // fileHistorySnapshots; return that ancestor's *latest* snapshot
-// trackedFiles. Empty set when no such ancestor exists. Bounded by
-// chatFlow size (cycles are guarded but shouldn't occur in well-
-// formed flows). Mirrors `distinctTouchedFiles` in using last-snapshot
-// semantics so a mid-conversation `git commit` collapses the
-// "inherited dirty" set instead of carrying it forward forever.
+// trackedFileBackups path set. Empty set when no such ancestor
+// exists. Bounded by chatFlow size (cycles are guarded but shouldn't
+// occur in well-formed flows). Mirrors `distinctTouchedFiles` —
+// latest frame supersets earlier ones in the same ChatNode, so taking
+// the last is sufficient + cheaper than unioning.
 function nearestAncestorSnapshotPaths(
   cn: ChatNode,
   chatFlow: ChatFlow,

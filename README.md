@@ -81,7 +81,7 @@ Ordered by user-facing capability rather than version. Per-version commit refere
 - Fork tree (`/branch`-spawned multi-jsonl + `restore`-spawned in-session siblings)
 - Sub-agent recursive nested expansion (drill into a `delegate` WorkNode → opens that sub-agent's full ChatFlow)
 - Hover-to-pan / click-to-persist navigation between conversation and canvas
-- 📁 "工作区累积改动" / ✏️ "本节点改动" stat chips on each ChatNode card — workspace-cumulative dirty set (last `git status` snapshot) vs the per-node delta (selfDelta = (selfSnap \ ancestorSnap) ∪ tool_use_paths). Mid-turn `git commit` clears the cumulative count correctly
+- 📁 "session 触及文件" / ✏️ "本节点新触及文件" stat chips on each ChatNode card — session-cumulative `trackedFileBackups` index (CC's internal Read/Edit/Write touch tracker, accumulates across the session) vs the per-node delta (paths first appearing at this node ∪ explicit tool_use paths). Note: this is CC's backup index, NOT git workspace dirty — a real `git status` view is on the roadmap (B)
 
 ### Live (v∞.0)
 
@@ -110,6 +110,10 @@ Ordered by user-facing capability rather than version. Per-version commit refere
 - Stick-to-bottom in conversation panel (chat-app convention)
 
 ## Roadmap
+
+### Backlog — read-only enrichments
+
+**B — real `git status` workspace view.** Distinct from the 📁 "session 触及文件" chip which surfaces CC's internal `trackedFileBackups` index. A true workspace-dirty view would: a) run `git status --porcelain` in the session's `cwd` from the server, b) cache + invalidate via fs.watch on `<cwd>/.git/index`, c) render as a new chip + DrillPanel section that **does** clear after `git commit`. Useful for "is my work committed?" at a glance. Discovered while debugging the misleading 📁 tooltip — the data we already had was never `git status`.
 
 ### v∞ — live writes (interactive control)
 

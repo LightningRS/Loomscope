@@ -81,7 +81,7 @@ CC CLI 是 agent 的运行时，Loomscope 是配套的**只读图形化阅读器
 - Fork 树（`/branch` 派生的多 jsonl + restore 派生的同 session sibling）
 - 子代理递归嵌套展开（drill 进 `delegate` WorkNode → 进入该 sub-agent 的完整 ChatFlow）
 - Hover 触发 / 点击持久化 的视图导航 pattern
-- 📁 "工作区累积改动" / ✏️ "本节点改动" 双角标 — 前者是 git status 最新一帧的工作区 dirty 集合（mid-turn `git commit` 后正确清零），后者是本节点引入的差异（selfDelta = (selfSnap \ ancestorSnap) ∪ tool_use_paths）
+- 📁 "session 触及文件" / ✏️ "本节点新触及文件" 双角标 — 前者是这个 session 累积的 `trackedFileBackups` 索引（CC 内部 Read/Edit/Write 备份跟踪，session 累积、commit 后不会减少），后者是本节点首次出现在该索引中的路径 ∪ 显式 tool_use 路径。注意这是 CC 的内部索引、**不是** git 工作区 dirty —— 真 `git status` 视图在 roadmap B
 
 ### 实时（v∞.0）
 
@@ -110,6 +110,10 @@ CC CLI 是 agent 的运行时，Loomscope 是配套的**只读图形化阅读器
 - Conversation panel stick-to-bottom（聊天 app 惯例）
 
 ## Roadmap
+
+### Backlog — 只读类增强
+
+**B — 真 `git status` 工作区视图。** 跟 📁 "session 触及文件" 角标完全独立——后者展示 CC 内部 `trackedFileBackups` 索引（commit 后不会减少）。真工作区 dirty 视图：a) server 端在 session `cwd` 跑 `git status --porcelain`、b) 用 fs.watch `<cwd>/.git/index` 做 cache 失效、c) 加新角标 + DrillPanel section，commit 后**会**正确清零。用来一眼回答"我的工作 commit 了吗？"。是在排查 📁 tooltip 误导时挖出来的——我们手里的数据从来就不是 `git status`。
 
 ### v∞ — 写控制（交互式）
 

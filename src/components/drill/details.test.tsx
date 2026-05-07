@@ -120,7 +120,7 @@ describe("ChatNodeDetail", () => {
     expect(container.textContent).toMatch(/Set model to Opus/);
   });
 
-  it("v0.8.1 #9: 工作区累积改动 section title carries the new wording", () => {
+  it("v0.8.1 #9: session 触及文件 section title carries the new wording", () => {
     const cn = makeChatNode({
       meta: {
         fileHistorySnapshots: [
@@ -131,10 +131,10 @@ describe("ChatNodeDetail", () => {
     const { container } = render(
       <ChatNodeDetail sessionId="test-sid" chatNode={cn} chatFlow={flowFor(cn)} />,
     );
-    expect(container.textContent).toMatch(/工作区累积改动/);
+    expect(container.textContent).toMatch(/session 触及文件/);
   });
 
-  it("v0.8.1 #9: 本节点文件改动 section subtracts the parent's snapshot from the child's", () => {
+  it("v0.8.1 #9: 本节点新触及文件 section subtracts the parent's snapshot from the child's", () => {
     const parent = makeChatNode({
       id: "parent",
       parentChatNodeId: null,
@@ -186,7 +186,7 @@ describe("ChatNodeDetail", () => {
     expect(screen.queryByTestId("node-own-file-changes")).toBeNull();
   });
 
-  it("renders 工作区累积改动 section using LATEST snapshot only — earlier snapshots are stale once mid-turn commit clears them", () => {
+  it("renders session 触及文件 section using LATEST snapshot only — earlier snapshots are subsumed by the cumulative latest frame", () => {
     const cn = makeChatNode({
       meta: {
         fileHistorySnapshots: [
