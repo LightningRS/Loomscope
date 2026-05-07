@@ -77,7 +77,9 @@
     "no_subject": "(no subject)",
     "no_files": "(no files)",
     "loading_files": "Loading file list…",
-    "loading_diff": "Loading diff…"
+    "loading_diff": "Loading diff…",
+    "pending_header": "Pending (as of this turn)",
+    "pending_caveat": "= CC-touched files - already-committed files. Re-edits / manual terminal commits / pre-existing dirty are not accurately tracked."
   },
   "sidebar_search": {
     "mode_filter": "Filter",

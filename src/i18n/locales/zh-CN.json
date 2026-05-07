@@ -77,7 +77,9 @@
     "no_subject": "(无 subject)",
     "no_files": "(无文件)",
     "loading_files": "加载文件列表…",
-    "loading_diff": "加载 diff…"
+    "loading_diff": "加载 diff…",
+    "pending_header": "未提交（截止本节点）",
+    "pending_caveat": "= CC 触及过的文件 - 已 commit 的文件。re-edit / 用户终端手动 commit / 启动前预存 dirty 不准确"
   },
   "sidebar_search": {
     "mode_filter": "过滤",

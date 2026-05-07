@@ -527,7 +527,13 @@ function GitTabContent({
     if (!selectedChatId) return null;
     return chatFlow.chatNodes.find((c) => c.id === selectedChatId) ?? null;
   }, [viewMode, selectedChatId, chatFlow, drilledChatNode]);
-  return <GitDiffPanel sessionId={sessionId} chatNode={focusedChatNode} />;
+  return (
+    <GitDiffPanel
+      sessionId={sessionId}
+      chatNode={focusedChatNode}
+      chatFlow={chatFlow}
+    />
+  );
 }
 
 function EmptyHint({ label }: { label: string }) {

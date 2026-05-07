@@ -24,6 +24,9 @@ import type { ChatNode, GitCommitRef } from "@/data/types";
 interface Props {
   sessionId: string;
   chatNode: ChatNode | null;
+  /** ChatFlow needed for the pending-files batch fetch (recompute
+   * derives per-ChatNode state from the full chronological walk). */
+  chatFlow: import("@/data/types").ChatFlow | null;
 }
 
 interface FilesResp {
@@ -63,7 +66,7 @@ async function fetchDiff(
   return (await r.json()) as DiffResp | ErrResp;
 }
 
-export function GitDiffPanel({ sessionId, chatNode }: Props) {
+export function GitDiffPanel({ sessionId, chatNode, chatFlow }: Props) {
   const { t } = useTranslation();
   const commits = chatNode?.meta.commits ?? [];
 
@@ -81,6 +84,21 @@ export function GitDiffPanel({ sessionId, chatNode }: Props) {
     return m;
   }, [commits]);
 
+  // v0.11 Phase C: trigger batch fetch of all session commits' file
+  // lists on first Git tab open. Subsequent tab openings hit the
+  // cache; computed pendingFilesByChatNode populates 📤 chip + the
+  // Pending section below.
+  const loadCommittedFiles = useStore((s) => s.loadCommittedFiles);
+  useEffect(() => {
+    if (!chatFlow) return;
+    void loadCommittedFiles(sessionId, chatFlow);
+  }, [sessionId, chatFlow, loadCommittedFiles]);
+  const pendingForThisNode = useStore((s) => {
+    const sess = s.pendingFilesByChatNode.get(sessionId);
+    if (!sess || !chatNode) return null;
+    return sess.get(chatNode.id) ?? null;
+  });
+
   if (!chatNode) {
     return (
       <div className="text-[12px] italic text-gray-400">
@@ -88,7 +106,7 @@ export function GitDiffPanel({ sessionId, chatNode }: Props) {
       </div>
     );
   }
-  if (commits.length === 0) {
+  if (commits.length === 0 && (!pendingForThisNode || pendingForThisNode.size === 0)) {
     return (
       <div className="text-[12px] italic text-gray-400">
         {t("git_panel.placeholder_no_commits")}
@@ -98,6 +116,9 @@ export function GitDiffPanel({ sessionId, chatNode }: Props) {
 
   return (
     <div data-testid="git-diff-panel" className="space-y-3 text-[12px]">
+      {pendingForThisNode && pendingForThisNode.size > 0 && (
+        <PendingFilesSection paths={Array.from(pendingForThisNode).sort()} />
+      )}
       {Array.from(byRepo.entries()).map(([repo, repoCommits]) => (
         <RepoSection
           key={repo}
@@ -107,6 +128,37 @@ export function GitDiffPanel({ sessionId, chatNode }: Props) {
         />
       ))}
     </div>
+  );
+}
+
+function PendingFilesSection({ paths }: { paths: string[] }) {
+  const { t } = useTranslation();
+  return (
+    <section
+      data-testid="git-pending-files"
+      className="rounded border border-amber-200 bg-amber-50/50 px-2 py-1.5 space-y-1"
+    >
+      <header className="flex items-baseline gap-1.5 text-[11px] text-amber-800">
+        <span>📤</span>
+        <span className="font-medium">{t("git_panel.pending_header")}</span>
+        <span className="text-amber-600">({paths.length})</span>
+      </header>
+      <ul className="space-y-0.5">
+        {paths.map((p) => (
+          <li
+            key={p}
+            data-testid={`git-pending-file-${p}`}
+            className="flex items-center gap-1.5 text-[11px] text-gray-700"
+          >
+            <span className="text-amber-600 font-mono">·</span>
+            <span className="font-mono break-all">{p}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="text-[10px] text-amber-700/70 italic">
+        {t("git_panel.pending_caveat")}
+      </p>
+    </section>
   );
 }
 

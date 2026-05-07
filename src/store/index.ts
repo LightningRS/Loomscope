@@ -9,6 +9,7 @@ import type { LoomscopeStore } from "@/store/types";
 import { createLiveEventSlice } from "@/store/liveEventSlice";
 import { createSessionSlice } from "@/store/sessionSlice";
 import { createTaskListSlice } from "@/store/taskListSlice";
+import { createGitFilesSlice } from "@/store/gitFilesSlice";
 import { createUISlice } from "@/store/uiSlice";
 import { createWorkspaceSlice } from "@/store/workspaceSlice";
 
@@ -20,6 +21,7 @@ export const useStore = create<LoomscopeStore>()(
       ...createSessionSlice(set, get, api),
       ...createLiveEventSlice(set, get, api),
       ...createTaskListSlice(set, get, api),
+      ...createGitFilesSlice(set, get, api),
     }),
     {
       name: "loomscope:state",

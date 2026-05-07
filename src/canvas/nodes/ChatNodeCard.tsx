@@ -290,6 +290,7 @@ export function ChatNodeCard({ id, data }: NodeProps<ChatNodeRFNode>) {
             <span className="font-mono">{data.commitCount}</span>
           </span>
         )}
+        <PendingFilesChip chatNodeId={cn.id} />
         {data.childCount >= 2 && (
           <span
             className="inline-flex items-center gap-0.5"
@@ -521,6 +522,43 @@ function formatTokensCompact(n: number): string {
 // underlying fold mechanic is the same `toggleCompactFold` action +
 // FoldAnchorContext pan-preservation as `CompactFoldToggleButton`;
 // just a different chrome (banner vs button) and copy ("内有压缩").
+// v0.11 Phase C: 📤 N pending-files chip. Reads derived
+// `pendingFilesByChatNode` from store. Hidden when:
+//   - data not loaded yet (fetch hasn't returned)
+//   - this ChatNode has 0 pending files
+// Click swaps DrillPanel to git tab + selects this node so the
+// Pending section materialises with file paths.
+function PendingFilesChip({ chatNodeId }: { chatNodeId: string }) {
+  const activeId = useStore((s) => s.activeSessionId);
+  const setTab = useStore((s) => s.setDrillPanelTab);
+  const setSel = useStore((s) => s.setSelected);
+  const count = useStore((s) => {
+    const sid = s.activeSessionId;
+    if (!sid) return 0;
+    const sess = s.pendingFilesByChatNode.get(sid);
+    return sess?.get(chatNodeId)?.size ?? 0;
+  });
+  if (count === 0) return null;
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        if (activeId) {
+          setSel(activeId, chatNodeId);
+          setTab("git");
+        }
+      }}
+      className="inline-flex items-center gap-0.5 hover:text-amber-700"
+      title={`截止本节点累计 ${count} 个未提交文件（CC 触及过 - 已 commit 过的差集）。点击切到 "变更" tab 看完整列表。`}
+      data-testid={`chat-node-${chatNodeId}-pending-count`}
+    >
+      <span className="text-amber-600">📤</span>
+      <span className="font-mono">{count}</span>
+    </button>
+  );
+}
+
 function InnerCompactFoldBanner({
   chatNodeId,
   preTokens,

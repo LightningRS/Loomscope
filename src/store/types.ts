@@ -462,4 +462,5 @@ export type LoomscopeStore = UISlice &
   WorkspaceSlice &
   SessionSlice &
   LiveEventSlice &
-  TaskListSlice;
+  TaskListSlice &
+  import("./gitFilesSlice").GitFilesSlice;

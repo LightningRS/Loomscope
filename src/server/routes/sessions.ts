@@ -472,6 +472,73 @@ export function sessionsRouter(opts: SessionsRouteOptions) {
     },
   );
 
+  // v0.11 Git tab — batch fetch every commit's file list for a
+  // session. Used by GitDiffPanel on first open to populate the
+  // store cache, which then powers per-ChatNode "pending files"
+  // computation (📤 chip + Pending section). Server-side: walk the
+  // session's parsed ChatFlow → unique (repo, sha) tuples → run
+  // gitShowFiles for each in parallel (small concurrency cap).
+  app.get(
+    "/:id/git/commits-files",
+    zValidator("param", z.object({ id: z.string().regex(SESSION_ID_RE) })),
+    async (c) => {
+      const { id } = c.req.valid("param");
+      const jsonlPath = await locateSessionJsonl(opts.rootDir, id);
+      if (!jsonlPath) return c.json({ error: "session not found" }, 404);
+      const projectDir = path.dirname(jsonlPath);
+      const closure = await findForkClosure({
+        projectDir,
+        entrySessionId: id,
+      });
+      const { chatFlow } = await getOrLoadCachedChatFlow({
+        sessionId: id,
+        closure,
+        fallbackJsonlPath: jsonlPath,
+        loader: () =>
+          loadMergedChatFlow({
+            entryJsonlPath: jsonlPath,
+            entrySessionId: id,
+            closure,
+          }),
+      });
+      // Collect unique (repo, sha) tuples
+      const seen = new Set<string>();
+      const tuples: Array<{ repo: string; sha: string }> = [];
+      for (const cn of chatFlow.chatNodes) {
+        for (const cm of cn.meta.commits ?? []) {
+          const key = `${cm.repo}::${cm.sha}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          tuples.push({ repo: cm.repo, sha: cm.sha });
+        }
+      }
+      // Bounded concurrency (4 at a time) so a session with hundreds
+      // of commits doesn't fork-bomb git.
+      const result: Record<
+        string,
+        { ok: true; files: Array<{ path: string; status: string }> } | { ok: false; code: string }
+      > = {};
+      const concurrency = 4;
+      let cursor = 0;
+      async function worker() {
+        while (cursor < tuples.length) {
+          const i = cursor++;
+          const { repo, sha } = tuples[i];
+          const r = await gitShowFiles({ repo, sha });
+          const key = `${repo}::${sha}`;
+          if (r.ok) result[key] = { ok: true, files: r.files };
+          else result[key] = { ok: false, code: r.code };
+        }
+      }
+      await Promise.all(
+        Array.from({ length: Math.min(concurrency, tuples.length || 1) }, () =>
+          worker(),
+        ),
+      );
+      return c.json({ ok: true, byKey: result });
+    },
+  );
+
   // v0.11 Git tab — fetch a commit's file list (default) or one
   // file's full diff. Repo / sha are passed as query params; the
   // route is per-session-scoped so a future enhancement can
