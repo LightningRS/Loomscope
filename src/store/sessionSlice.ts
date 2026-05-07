@@ -657,6 +657,18 @@ export const createSessionSlice: StateCreator<LoomscopeStore, [], [], SessionSli
     set({ sessions: updated });
   },
 
+  // v0.11 Git tab ↔ WorkFlow cross-highlight state. All store-level
+  // (not per-session) — only one drill-into-WorkFlow can be active at
+  // a time, so no need to key by session.
+  gitFileHoverFromWorkflow: null,
+  gitFileFocusFromWorkflow: null,
+  gitFileHoverFromPanel: null,
+  setGitFileHoverFromWorkflow: (file) =>
+    set({ gitFileHoverFromWorkflow: file }),
+  setGitFileFocusFromWorkflow: (file) =>
+    set({ gitFileFocusFromWorkflow: file }),
+  setGitFileHoverFromPanel: (file) => set({ gitFileHoverFromPanel: file }),
+
   setSelected: (sessionId, nodeId) => {
     const updated = new Map(get().sessions);
     const cur = updated.get(sessionId) ?? blankSessionState();

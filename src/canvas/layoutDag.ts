@@ -75,6 +75,10 @@ export interface ChatNodeRFData extends Record<string, unknown> {
   // siblings + cross-session /branch siblings are both just multi-
   // children at this layer).
   childCount: number;
+  // v0.11 Git feature: number of git commits detected in this turn
+  // (from `meta.commits`). Drives the 📝 N chip on ChatNodeCard; 0 =
+  // chip hidden. Click → switch DrillPanel to Git tab.
+  commitCount: number;
   // Token bar inputs — last llm_call's input + cache 表示该轮 context window 占用.
   // maxContextTokens 由 last llm_call 的 model 字段决定（[1m] 后缀 = 1M, 其它 = 200k）.
   contextTokens: number;
@@ -429,6 +433,7 @@ function deriveCardData(
     fileTouchCount: distinctTouchedFiles(cn).size,
     nodeOwnFileChangeCount: nodeOwnFileChanges(cn, chatFlow).size,
     childCount,
+    commitCount: cn.meta.commits?.length ?? 0,
     contextTokens,
     maxContextTokens,
     slashCommand: cn.slashCommand,

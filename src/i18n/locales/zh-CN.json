@@ -66,7 +66,18 @@
   },
   "drill_panel": {
     "tab_detail": "详情",
-    "tab_conversation": "对话"
+    "tab_conversation": "对话",
+    "tab_git": "变更"
+  },
+  "git_panel": {
+    "placeholder_no_node": "选个 ChatNode 看本节点 git commit 历史",
+    "placeholder_no_commits": "本节点未检测到 git commit",
+    "repo_commit_count": "({{count}} 次提交)",
+    "files_count": "{{count}} 个文件",
+    "no_subject": "(无 subject)",
+    "no_files": "(无文件)",
+    "loading_files": "加载文件列表…",
+    "loading_diff": "加载 diff…"
   },
   "sidebar_search": {
     "mode_filter": "过滤",

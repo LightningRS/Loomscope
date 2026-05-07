@@ -44,6 +44,7 @@ import {
   type SseSubscriber,
 } from "@/server/services/sseHub";
 import { readTasksForSession } from "@/server/services/taskList";
+import { gitShow, gitShowFiles } from "@/server/services/gitDiff";
 import type { ChatFlow } from "@/data/types";
 
 // Heartbeat cadence. Two reasons it exists:
@@ -468,6 +469,36 @@ export function sessionsRouter(opts: SessionsRouteOptions) {
       const { id } = c.req.valid("param");
       const tasks = await readTasksForSession(id);
       return c.json({ tasks });
+    },
+  );
+
+  // v0.11 Git tab — fetch a commit's file list (default) or one
+  // file's full diff. Repo / sha are passed as query params; the
+  // route is per-session-scoped so a future enhancement can
+  // cross-check that the (repo, sha) tuple was actually detected
+  // in this session's parse output. For v1 we just spawn `git -C`
+  // and let git itself reject bad inputs.
+  app.get(
+    "/:id/git/diff",
+    zValidator("param", z.object({ id: z.string().regex(SESSION_ID_RE) })),
+    zValidator(
+      "query",
+      z.object({
+        repo: z.string().min(1),
+        sha: z.string().regex(/^[0-9a-f]{4,40}$/i),
+        file: z.string().optional(),
+      }),
+    ),
+    async (c) => {
+      const { repo, sha, file } = c.req.valid("query");
+      if (file) {
+        const r = await gitShow({ repo, sha, file });
+        if (!r.ok) return c.json(r, r.code === "not-a-repo" ? 404 : 400);
+        return c.json({ ok: true, text: r.text });
+      }
+      const r = await gitShowFiles({ repo, sha });
+      if (!r.ok) return c.json(r, r.code === "not-a-repo" ? 404 : 400);
+      return c.json({ ok: true, files: r.files });
     },
   );
 

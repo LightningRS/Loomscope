@@ -39,6 +39,11 @@ const WorkNodeDetail = lazy(() =>
     default: m.WorkNodeDetail,
   })),
 );
+const GitDiffPanel = lazy(() =>
+  import("@/components/drill/GitDiffPanel").then((m) => ({
+    default: m.GitDiffPanel,
+  })),
+);
 import { useStore } from "@/store/index";
 import type { ChatFlow, ChatNode, WorkNode } from "@/data/types";
 import type { DrillPanelTab } from "@/store/types";
@@ -178,6 +183,14 @@ export function DrillPanel({ sessionId, chatFlow, viewMode, drilledChatNode }: P
               }
             />
           </div>
+          <div style={{ display: tab === "git" ? "block" : "none" }}>
+            <GitTabContent
+              sessionId={sessionId}
+              chatFlow={chatFlow}
+              viewMode={viewMode}
+              drilledChatNode={drilledChatNode}
+            />
+          </div>
         </Suspense>
       </div>
     </aside>
@@ -242,6 +255,12 @@ function TabStrip({
         onClick={() => onSelect("conversation")}
         testId="drill-panel-tab-conversation"
         label={t("drill_panel.tab_conversation")}
+      />
+      <TabButton
+        active={activeTab === "git"}
+        onClick={() => onSelect("git")}
+        testId="drill-panel-tab-git"
+        label={t("drill_panel.tab_git")}
       />
       {viewMode === "workflow" && drilledChatNode && (
         // Mode-following breadcrumb: keep parent ChatNode visible
@@ -489,6 +508,26 @@ function ResizeHandle({
       data-testid="drill-panel-resize"
     />
   );
+}
+
+// v0.11 Git tab body. Resolves the focused ChatNode the same way
+// DetailTabContent does (chatflow / sub-chatflow → selectedNodeId;
+// workflow → drilledChatNode), then renders GitDiffPanel.
+function GitTabContent({
+  sessionId,
+  chatFlow,
+  viewMode,
+  drilledChatNode,
+}: Props) {
+  const selectedChatId = useStore(
+    (s) => s.sessions.get(sessionId)?.selectedNodeId ?? null,
+  );
+  const focusedChatNode = useMemo<ChatNode | null>(() => {
+    if (viewMode === "workflow") return drilledChatNode;
+    if (!selectedChatId) return null;
+    return chatFlow.chatNodes.find((c) => c.id === selectedChatId) ?? null;
+  }, [viewMode, selectedChatId, chatFlow, drilledChatNode]);
+  return <GitDiffPanel sessionId={sessionId} chatNode={focusedChatNode} />;
 }
 
 function EmptyHint({ label }: { label: string }) {

@@ -13,7 +13,7 @@ import type { AgentMetadata } from "@/parse/sidecar";
 // survives reload. per-session preferences would have needed a
 // separate persistence path; the global pref matches user intent
 // (tab choice is about the panel's role, not about the session).
-export type DrillPanelTab = "detail" | "conversation";
+export type DrillPanelTab = "detail" | "conversation" | "git";
 
 export interface UISlice {
   sidebarWidth: number;
@@ -391,6 +391,20 @@ export interface SessionSlice {
   // first-attempt mistake. See `handoff-v0.6-redo-node-base-interop.md`
   // hard constraint #4.
   toggleFold: (sessionId: string, nodeId: string) => void;
+  // v0.11 Git tab ↔ WorkFlow cross-highlight (Phase 4 wiring): a
+  // single source-of-truth pair tells GitDiffPanel which file path
+  // is currently being hovered/focused from the WorkFlow side.
+  // WorkFlow tool_use card writes via `set...FromWorkflow`, panel
+  // reads & reflects with a colored ring + auto-expand-on-focus.
+  // Reverse direction: panel hover writes via `setGitFileHoverFromPanel`
+  // and WorkFlow card reads (its own card lights up).
+  // null = nothing being hovered/focused.
+  gitFileHoverFromWorkflow: string | null;
+  gitFileFocusFromWorkflow: string | null;
+  gitFileHoverFromPanel: string | null;
+  setGitFileHoverFromWorkflow: (file: string | null) => void;
+  setGitFileFocusFromWorkflow: (file: string | null) => void;
+  setGitFileHoverFromPanel: (file: string | null) => void;
 }
 
 // ─── Live event slice ────────────────────────────────────────────────────────

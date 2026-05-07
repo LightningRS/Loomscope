@@ -66,7 +66,18 @@
   },
   "drill_panel": {
     "tab_detail": "Detail",
-    "tab_conversation": "Conversation"
+    "tab_conversation": "Conversation",
+    "tab_git": "Git"
+  },
+  "git_panel": {
+    "placeholder_no_node": "Pick a ChatNode to see its git commit history",
+    "placeholder_no_commits": "No git commits detected in this turn",
+    "repo_commit_count": "({{count}} commits)",
+    "files_count": "{{count}} files",
+    "no_subject": "(no subject)",
+    "no_files": "(no files)",
+    "loading_files": "Loading file list…",
+    "loading_diff": "Loading diff…"
   },
   "sidebar_search": {
     "mode_filter": "Filter",

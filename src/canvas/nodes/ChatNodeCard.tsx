@@ -280,6 +280,16 @@ export function ChatNodeCard({ id, data }: NodeProps<ChatNodeRFNode>) {
             <span className="font-mono">{data.fileTouchCount}</span>
           </span>
         )}
+        {data.commitCount > 0 && (
+          <span
+            className="inline-flex items-center gap-0.5"
+            title={`本节点内提交了 ${data.commitCount} 次 git commit。点击右侧 "变更" tab 查看每次 commit 的文件 + diff。`}
+            data-testid={`chat-node-${cn.id}-commit-count`}
+          >
+            <span className="text-amber-700">📝</span>
+            <span className="font-mono">{data.commitCount}</span>
+          </span>
+        )}
         {data.childCount >= 2 && (
           <span
             className="inline-flex items-center gap-0.5"
