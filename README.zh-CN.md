@@ -2,11 +2,25 @@
 
 **Claude Code 会话记录的可视化阅读器。** 把线性的 `~/.claude/projects/<...>/<sid>.jsonl` 文件渲染成一个 DAG 画布，呈现每一轮对话、工具调用、子代理（sub-agent）、分叉（fork）、压缩（compact）。read-only 设计，跟终端 CC 并存，不抢占文件锁。
 
-[English README](./README.md)
+[English README](./README.md) · [Changelog](./CHANGELOG.md)
 
 ![ChatFlow canvas](docs/screenshots/02-chatflow-canvas.png)
 
-> **状态（2026-05-06）**：v0.10（精雕 read-only viewer）+ v∞.0（实时观察 + CC settings.json hooks + PermissionRequest banner）+ v0.11（drill panel 大改造 + 全局 id 搜索 + 链语义修正）已 ship。下一站 v∞.1（Loomscope 用 Agent SDK 起新 session + 浏览器响应权限）。
+> **状态（2026-05-07）**：**v1.0.0-rc.1** 内部试用版本。read-only viewer + 实时 SSE 观察 + 11 个 CC hook 事件 + 4-tab DrillPanel（对话 / 详情 / 变更 / 实际上下文）已全部 ship。下一站 v∞.1（Loomscope 用 Agent SDK 起新 session + 浏览器响应权限）。
+
+## 快速开始
+
+```sh
+git clone https://github.com/usingnamespacestc/Loomscope.git
+cd Loomscope
+npm install
+npm run build       # vite build → dist/
+npm run start       # tsx src/server/cli.ts（自动检测 dist/，单端口）
+```
+
+打开 <http://localhost:5174>。Loomscope 会自动扫 `~/.claude/projects/`，从左侧 sidebar 选个 session 就能进。
+
+要让 SSE 实时更新（CC 跑的时候 canvas 跟着变），按下面 **配 CC hooks** 一节走 —— 应用内 onboarding 弹窗会一步步带你做。
 
 ## 为什么要 Loomscope
 
@@ -125,43 +139,64 @@ CC CLI 是 agent 的运行时，Loomscope 是配套的**只读图形化阅读器
 - **v∞.2** — Conversation panel 底部加 composer 输入框；提交的 prompt 通过 SDK `query({ resume: sessionId })` 续接当前 session。前置条件：mtime advisory lock 防止终端 CC 跟 Loomscope 双写冲突
 - **v∞.3** — 任意 ChatNode（含 assistant、旁支 sibling）作为 fork 起点，靠 SDK `resumeSessionAt: messageId` 实现。**CC 终端只能从 leaf fork**；Loomscope 把整个 DAG 都打开 fork。这是相比 CC 的"120%"能力
 
-### v1.0 release polish
+### 1.0 之后的 polish（rc.1 推迟项）
 
 - bin 入口 + `npx loomscope` 打包
 - esbuild bundle server（不依赖 runtime tsx）
-- README 截图 + GIF 演示（本文件已是起点）
-- 首次启动自动 session picker
+- GIF / 视频演示
+- Bundle code-splitting（MarkdownView 498 KB / index 537 KB；各约 150 KB gzipped）
 
 ## 跑起来
 
+### 生产模式（朋友试用推荐）
+
 ```sh
-git clone https://github.com/usingnamespacestc/Loomscope.git
-cd Loomscope
 npm install
+npm run build      # vite build → dist/
+npm run start      # API + dist/ 一起 serve 在 http://localhost:5174
+```
+
+单进程、单端口。Server（`src/server/cli.ts`）自动检测 `dist/` 目录并当静态前端 serve —— 不需要单独的 frontend server。
+
+```sh
+# 可选：换端口 / bind / workspace 根
+npm run start -- --port 5180 --bind 127.0.0.1
+```
+
+### Dev 模式（改 Loomscope 自己代码用）
+
+```sh
 npm run dev    # 前端 http://localhost:5175（Vite 把 /api 代理到后端 5174）
 ```
 
-`npm run dev` 同时拉起 Hono 后端（`tsx watch src/server/cli.ts`）跟 Vite 前端 dev server。前端的 `/api/*` 请求被代理到后端，单源工作。
+同时拉起 Hono 后端（`tsx watch src/server/cli.ts`）跟 Vite 前端 dev server。前端 `/api/*` 请求被代理到后端，单源工作。
 
-单进程产线模式：
+### 配 CC hooks（实时观察必需）
 
-```sh
-npm run build      # vite build → dist/
-npm run start      # tsx src/server/cli.ts（自动检测 dist/ 并 serve 在 :5174）
-```
-
-### 配 CC hooks（推荐）
-
-首次启动 Loomscope 检测到 `~/.claude/settings.json` 缺 hooks 时弹 modal：
+不配 hook Loomscope 也能用——只是 CC 跑的时候 SSE 实时更新走不通。要开启：首次启动 Loomscope 检测到 `~/.claude/settings.json` 缺 hooks 时弹 modal，两条路：
 
 - **一键自动添加** atomic 写入 11 个 hook 入口（保留所有其它 key + 同事件下的第三方 hook）
 - **复制配置** 显示 JSON 段供你手动 merge
 
-两条路都需要在 shell rc 里 `export LOOMSCOPE_SECRET=...`，modal 会生成并显示具体行。CC 通过 `allowedEnvVars` 白名单从环境变量取这个 secret 插入 hook header，防同机进程伪造。
+**两条路都需要在 shell rc 里 export `LOOMSCOPE_SECRET`。** Modal 会生成并显示具体那行，类似：
+
+```sh
+export LOOMSCOPE_SECRET="abc…64-hex"  # 加到 ~/.bashrc 或 ~/.zshrc
+```
+
+重开终端（或 `source` 一下 rc 文件），重启正在跑的 CC session，header 出现 `🪝 11/11`、Loomscope 开始接收实时事件就对了。CC 通过 `allowedEnvVars` 白名单从环境变量取这个 secret 插入 hook header，防同机进程伪造。
 
 ### 多 tab 上限（每域 ≤ 3 tab）
 
 Chrome / Firefox HTTP/1.1 同域 EventSource 上限 6；Loomscope 每 tab 占 2 → 实际可用 3 tab。实测 2026-05-06。要突破上限可走 HTTP/2 或 BroadcastChannel leader 选举，工作量大、需求小，留到真有用户报怨再做。
+
+## 已知限制
+
+- **目前只在 Linux + WSL2 验证过。** macOS / Windows 没测过。文件 watch（chokidar）和 atomic-rename 路径**应该**能跑，但可能有 edge case —— 踩到请上报。
+- **`LOOMSCOPE_SECRET` 配 shell rc 的步骤是手动的。** Settings modal 会把那行生成给你看，但写不进你的 `~/.bashrc` / `~/.zshrc`，得自己加。
+- **`Notification` hook 通了但 UI 端没消费方。** 配上不会出错——server 会接收事件——但前端没东西显示。
+- **每个浏览器最多 3 个 Loomscope tab**（见上）。
+- **不公开发布。** v1.0.0-rc.1 是给朋友试用的版本，会有粗糙之处，issue / 建议欢迎提 GitHub。
 
 ## 架构
 
@@ -182,10 +217,10 @@ Vite 8 + React 18 + TypeScript 5.6 + Tailwind 3 + `@xyflow/react` 12 + `@dagrejs
 ## 测试
 
 ```sh
-npm test          # 652 tests
+npm test          # 747 tests
 npm run typecheck
 ```
 
 ## License
 
-MIT（v1.0 release 时定，目前未敲定）。
+MIT —— 见 [`LICENSE`](LICENSE)。

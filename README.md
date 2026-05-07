@@ -2,11 +2,25 @@
 
 **Visual viewer for Claude Code session transcripts.** Renders the linear `~/.claude/projects/<...>/<sid>.jsonl` file as a DAG canvas of turns, tool calls, sub-agents, forks, and compacts. Read-only by design, lives alongside terminal CC without conflict.
 
-[中文版 / Chinese](./README.zh-CN.md)
+[中文版 / Chinese](./README.zh-CN.md) · [Changelog](./CHANGELOG.md)
 
 ![ChatFlow canvas](docs/screenshots/02-chatflow-canvas.png)
 
-> **Status (2026-05-06)** — v0.10 (polished read-only viewer) + v∞.0 (live observation + CC settings.json hooks + PermissionRequest banner) + v0.11 (drill-panel polish + global id search + chain semantics) shipped. v∞.1 (Loomscope-driven sessions via Agent SDK) is next.
+> **Status (2026-05-07)** — **v1.0.0-rc.1** ready for friends-only testing. Read-only viewer + live SSE observation + 11 CC hook events + 4-tab DrillPanel (Conversation / Detail / Git / Effective Context) all shipped. v∞.1 (Loomscope-driven sessions via Agent SDK) is next.
+
+## Quickstart
+
+```sh
+git clone https://github.com/usingnamespacestc/Loomscope.git
+cd Loomscope
+npm install
+npm run build       # vite build → dist/
+npm run start       # tsx src/server/cli.ts (auto-detects dist/, single port)
+```
+
+Then open <http://localhost:5174>. Loomscope picks up sessions from `~/.claude/projects/` automatically; click any session in the sidebar to open it.
+
+For live observation (SSE-driven canvas updates while CC is running), follow the **CC hooks** setup below — the in-app onboarding modal walks you through it.
 
 ## Why Loomscope
 
@@ -125,43 +139,64 @@ The path from "graphical reader" to "graphical CC client":
 - **v∞.2** — composer input box at the bottom of the conversation panel; submitted prompts continue the active session via SDK `query({ resume: sessionId })`. Prerequisite: mtime-based advisory lock to prevent terminal-CC + Loomscope dual-write conflicts.
 - **v∞.3** — fork from any ChatNode (including assistants and sibling branches), powered by SDK's `resumeSessionAt: messageId`. **CC's terminal can only fork from leaves**; Loomscope unlocks the full DAG as fork-able. The "120 % of CC" capability.
 
-### v1.0 release polish
+### Post-v1.0 polish (deferred from rc.1)
 
 - bin entry + `npx loomscope` packaging
 - esbuild-bundled server (avoid `tsx` runtime dep)
-- README screenshots + GIF demos (this file is a starting frame)
-- Auto session-picker on first launch
+- GIF / video demos
+- Bundle code-splitting (MarkdownView 498 KB / index 537 KB; both ~150 KB gzipped)
 
 ## Run
 
+### Production mode (recommended for friends-only test)
+
 ```sh
-git clone https://github.com/usingnamespacestc/Loomscope.git
-cd Loomscope
 npm install
+npm run build      # vite build → dist/
+npm run start      # serves API + dist/ on http://localhost:5174
+```
+
+Single process, single port. The server (`src/server/cli.ts`) auto-detects the `dist/` directory and serves it as a static frontend — no separate frontend server needed.
+
+```sh
+# Optional: change port / bind / workspace root
+npm run start -- --port 5180 --bind 127.0.0.1
+```
+
+### Dev mode (for hacking on Loomscope itself)
+
+```sh
 npm run dev    # frontend http://localhost:5175 (Vite proxies /api → backend on 5174)
 ```
 
-`npm run dev` boots both the Hono backend (`tsx watch src/server/cli.ts`) and the Vite frontend dev server. The frontend's `/api/*` requests are proxied to the backend so everything works from one origin.
+Boots both the Hono backend (`tsx watch src/server/cli.ts`) and the Vite frontend dev server. The frontend's `/api/*` requests are proxied to the backend so everything works from one origin.
 
-For a single-process production-ish run:
+### Wire CC hooks (required for live observation)
 
-```sh
-npm run build      # vite build → dist/
-npm run start      # tsx src/server/cli.ts (auto-detects dist/ + serves it on :5174)
-```
-
-### Wire CC hooks (recommended)
-
-On first launch Loomscope detects missing hooks in `~/.claude/settings.json` and offers a modal:
+Loomscope works **without** hooks — you just lose live SSE updates while CC is running. To enable them: on first launch Loomscope detects missing hooks in `~/.claude/settings.json` and offers a modal with two paths:
 
 - **One-click auto-add** writes the 11 hook entries atomically (preserves every other key + every third-party hook on the same event names).
 - **Copy + paste** shows the JSON snippet for manual integration.
 
-Both paths need a `LOOMSCOPE_SECRET` exported in your shell rc — the modal generates and shows you the exact line. CC's `allowedEnvVars` whitelist substitutes it into the hook header at fire time, defending against same-host hook forgery.
+**Both paths need `LOOMSCOPE_SECRET` exported in your shell rc.** The modal generates and shows the exact line, e.g.:
+
+```sh
+export LOOMSCOPE_SECRET="abc…64-hex"  # add this to ~/.bashrc or ~/.zshrc
+```
+
+Reopen your terminal (or `source` the rc file), restart any running CC session, and you should see `🪝 11/11` in the header and live updates in Loomscope. CC's `allowedEnvVars` whitelist substitutes the secret into the hook header at fire time, defending against same-host hook forgery.
 
 ### Multi-tab caveat (≤ 3 tabs per host)
 
 Chrome / Firefox cap at 6 EventSource per origin under HTTP/1.1; each Loomscope tab opens 2 → 3 tabs is the practical limit. Tested 2026-05-06. HTTP/2 or BroadcastChannel-based leader election would lift this; both deferred until real demand.
+
+## Known limitations
+
+- **Verified on Linux + WSL2 only.** macOS and Windows haven't been tested. File-watching (chokidar) and atomic-rename paths *should* work, but you may hit edge cases — please report.
+- **`LOOMSCOPE_SECRET` shell-rc setup is manual.** The Settings modal generates the line for you, but it can't write to your `~/.bashrc` / `~/.zshrc`; you have to do it.
+- **`Notification` hook is wired but has no UI consumer yet.** Configure it if you want — Loomscope will accept the events, but nothing surfaces in the UI.
+- **3 browser tabs per host max** (see above).
+- **No public release.** This is v1.0.0-rc.1 for friends to try; expect rough edges. Issues / suggestions welcome on GitHub.
 
 ## Architecture
 
@@ -182,10 +217,10 @@ Vite 8 + React 18 + TypeScript 5.6 + Tailwind 3 + `@xyflow/react` 12 + `@dagrejs
 ## Tests
 
 ```sh
-npm test          # 652 tests
+npm test          # 747 tests
 npm run typecheck
 ```
 
 ## License
 
-MIT (planned for v1.0 release; not finalised).
+MIT — see [`LICENSE`](LICENSE).
