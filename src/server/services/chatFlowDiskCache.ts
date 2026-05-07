@@ -37,6 +37,7 @@
 // fork 合并不写盘（key 复杂、合并顺序有语义）；跳过 IncrementalParseState
 // 序列化（重复源数据约 100%，太重）。
 
+import * as crypto from "node:crypto";
 import { promises as fsp } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -195,7 +196,14 @@ export async function writeDiskCache(args: {
 
   const root = cacheRoot();
   const finalPath = cachePath(sessionId);
-  const tmpPath = `${finalPath}.tmp.${process.pid}.${Date.now()}`;
+  // pid + ms alone leave a sub-millisecond race window: two writers
+  // for the same session firing in the same tick share the tmp path,
+  // overwrite each other's writeFile, and the loser hits ENOENT on
+  // rename because the winner already moved the file. Random suffix
+  // makes the tmp uniquely owned by this writer.
+  const tmpPath = `${finalPath}.tmp.${process.pid}.${Date.now()}.${crypto
+    .randomBytes(4)
+    .toString("hex")}`;
 
   try {
     await fsp.mkdir(root, { recursive: true, mode: 0o700 });

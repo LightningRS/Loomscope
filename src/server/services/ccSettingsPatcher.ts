@@ -22,6 +22,7 @@
 // 文件。我们只动 settings.hooks[<我们的 11 个事件>] 里 URL 指向本机
 // /api/cc-hook 的 entry，其它 hook 完全不碰。
 
+import * as crypto from "node:crypto";
 import { promises as fsp } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -377,7 +378,12 @@ async function safeReadOrEmpty(
 async function atomicWriteSettings(p: string, settings: CcSettings): Promise<void> {
   const json = JSON.stringify(settings, null, 2) + "\n";
   await fsp.mkdir(path.dirname(p), { recursive: true });
-  const tmp = `${p}.tmp.${process.pid}.${Date.now()}`;
+  // Random suffix protects against same-ms double-writers (settings
+  // patches can fan out from concurrent UI clicks); same race fixed
+  // in chatFlowDiskCache.
+  const tmp = `${p}.tmp.${process.pid}.${Date.now()}.${crypto
+    .randomBytes(4)
+    .toString("hex")}`;
   try {
     await fsp.writeFile(tmp, json, { encoding: "utf8" });
     await fsp.rename(tmp, p);
