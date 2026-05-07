@@ -443,7 +443,7 @@ v0.7 实测（跨用户 3059 条 snapshot 全集）：
 ⇒ **v0.7 parser**：`snapshot.messageId → indexByUuid → resolvePromptId → ChatNode bucket`，**不需要时间窗启发**。fallback 到 orphan 只发生在 messageId/parentUuid 双双失败的极少数损坏 record。
 ⇒ 256MB session 实测：2099/2099 snapshot 全部绑定（100%），1186/1522 (78%) ChatNode 有 snapshot 数据。
 ⇒ 字段：`ChatNodeMeta.fileHistorySnapshots: Array<{uuid, timestamp, trackedFiles, isUpdate}>`，`trackedFiles = Object.keys(snapshot.trackedFileBackups)`。
-⇒ UI：ChatNodeCard 加 📁 N 角标；DrillPanel ChatNodeDetail 加"本轮文件改动"section，跟 ChatNode 内 Edit/Write/MultiEdit/NotebookEdit 的 `tool_use.input.file_path` 并列对比，不一致路径 amber 色提示副作用（snapshot 标但 tool_use 没显式改 = Bash / sub-agent / hook 改的）。
+⇒ UI：ChatNodeCard 加 📁 N 角标（"工作区累积改动" — 工作区自上次 commit 起的 dirty 集合）+ ✏️ N 角标（"本节点文件改动" — selfDelta = (selfSnap \ ancestorSnap) ∪ tool_use_paths）；DrillPanel ChatNodeDetail 同时给两节，cumulative section 跟 ChatNode 内 Edit/Write/MultiEdit/NotebookEdit 的 `tool_use.input.file_path` 并列对比，不一致路径 amber 色提示副作用（snapshot 标但 tool_use 没显式改 = Bash / sub-agent / hook 改的）。
 
 ### scheduled trigger 启发式 join
 

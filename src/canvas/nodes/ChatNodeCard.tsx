@@ -272,7 +272,7 @@ export function ChatNodeCard({ id, data }: NodeProps<ChatNodeRFNode>) {
         {data.fileTouchCount > 0 && (
           <span
             className="inline-flex items-center gap-0.5"
-            title={`本轮累积文件改动 (${data.fileTouchCount} 个) — git 工作区自上次 commit 以来累积的 dirty 文件`}
+            title={`工作区累积改动 (${data.fileTouchCount} 个) — git 工作区自上次 commit 以来累积的 dirty 文件，与"本节点改动" ✏️ 区别`}
             data-testid={`chat-node-${cn.id}-file-touch`}
           >
             <span className="text-gray-400">📁</span>

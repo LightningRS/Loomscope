@@ -6,6 +6,85 @@
 
 ---
 
+## 2026-05-06 深夜 — Drill panel 大改造 + 全局搜索 + 一系列 chain/数据语义修正
+
+承 B msg_id merge ship 之后，集中把 drill panel 的可读性、链断点/ChatNode 之间的语义、卡片角标的精度做一轮深打磨。20+ commit、652 tests pass。
+
+### PR 2 系列 — LlmCallDetail 重做（drill panel 灵魂）
+
+| commit | 内容 |
+|---|---|
+| PR 2-A `0014973` 等 | LlmCallDetail input section（model/request → input → output → spawned tools → usage 顺序固定）|
+| PR 2-B | "本次 llm 触发的工具调用" — input 内 tool_use 跟 output 处的 tool_use 双轨制展示（同 id 双向跳转）|
+| PR 2-C | 链内累积折叠 section — 同链路前序 thinking + tool_result 累积视图，默认折叠 |
+| PR 2.1 `0014973` | section 顺序重排 + 链内累积移到 input + builder 改 continuation edge 拓扑（兄弟工具 → 下一 llm 全 fan-in）|
+| PR 2.2 `7f5166f` + `e7aff26` | chain_position metadata + 改写为"证据列表"（不再断言原因，避免误诊）|
+| PR 2.3 `24f9795` `a63377b` | TokenBar 改累积 ctx 视图（input + cache_read + cache_creation）+ detail 显示 vs 链上前一 llm 的 delta + 修 model-specific maxContext |
+
+**走过的 detour**：PR 2.4-C 一度把 compact 当 transit（误以为信息从 logicalParentUuid 流过来）→ 被用户打回，因为 compact 在信息流意义上是**真断链**（前面对话被摘要替换）。`16718e1` 回退 + chain_position UI 改成"compact 在 gap 里 → 直接断言因 compact 断链；不在 → 列证据让用户自己判断"。
+
+### Hybrid ChatNode 数据模型 — 96% mid-turn compact 实测发现
+
+实测 154 个 compact 节点：148 (96%) 是"真用户 prompt + 中段 isCompactSummary record 共享 promptId" 的混合体；只有 6 (4%) 是纯 compact-only 节点。
+
+`e9ca68f` 把 hybrid 立成头等公民：`ChatNode.hasInnerCompact: boolean`，前端显示 ⊞ {preTokens} 角标提示"这一轮中途 context 被压过"。`d38234f` PR 2.4-B：hybrid 节点参与默认折叠（折祖先），但保留自己可见 — 因为它本身有真 prompt，藏掉它会丢信息。
+
+### chainCount / chain walk 一致化
+
+之前 chainCount 跟 detail 的 chain_position 算法不一致 → 同一节点卡片显示"3 链"但 detail 说"无断链"。三个修正合并：
+
+| commit | 修了啥 |
+|---|---|
+| `87954dd` | chainCount 跨 attachment 走 transit（task_reminder / hook_additional_context 等不算断链）|
+| `9057fe9` | chain walk 跨 compact_boundary 不死（之前 walker 在 compact_boundary 撞墙）|
+| `09810d4` + `9edf572` | chain_position evidence 收集按 timestamp 排序（之前按 buildWorkflow 顺序，compact 被排到 nodes[0] 误认为最早）|
+
+最终：backend `chainCount` 跟 frontend `chain_position` 完全一致；attachment = transit；compact = 真断链；retry = 真断链。
+
+### #109 — 所有 attachment 都建 WorkNode + canvas 可见性过滤（架构层修正）
+
+之前 ATTACHMENT_RENDER_TYPES 白名单挑选哪些 attachment 建 WorkNode，导致前端 chain walk 的 parentUuid 链有缺口（task_reminder 这种被丢掉了）。`f18d9d9` 改成"所有 attachment 都建 WorkNode（保 parentUuid 完整链）+ canvas 在 layoutWorkflow 这一层 filter HIDDEN_ATTACHMENT_TYPES（任务提示等不视觉化）"。
+
+教训：**parser 输出"全集" + 视图层各取所需** 是稳的；parser 自己做 visibility filter 会污染下游算法的图结构假设。
+
+### #110 — Drill panel 跳转统一
+
+去掉 双轨制 📋（切 panel）+ 🎯（居中 canvas）按钮，统一一次点击：`setWorkflowSelected(sessionId, id) + panToWorkNode(id)`。`2bd643f`。
+
+### #111 — Sidebar 全局搜索（按 id 跳转）
+
+`3a4dd0c` + `d77bc02`。两模式 toggle：
+- 📁 **过滤** — 即时过滤 sidebar session 列表
+- 🎯 **跳转** — 按回车走 backend grep（`/api/search/uuid?q=…`），命中 session / ChatNode / WorkNode 全跳转 + canvas focus
+
+backend grep 4 模式（`"uuid":` / `"promptId":` / `"id":` / `"tool_use_id":`）+ 第二趟 disk-cache parse 解析 assistant/attachment 的 parentChatNodeId（这俩 record disk 上不带 promptId）。toolu_id（mixed-case base62）支持，hex regex check 拿掉。AbortController 处理用户连续两次搜索的 race。
+
+### #89 — 运行状态指示中途停顿（hasInFlightWork）
+
+实测：助手发了 stop_reason='tool_use' / 'pause_turn' 之后，"运行中"动画停了 → 用户以为卡死，其实正在等工具结果 / 重新进入循环。`23fdc69` 把这俩 stopReason 列入 in-flight 集合，只 end_turn / max_tokens / stop_sequence / refusal 才算 terminal。
+
+### Mid-turn commit fix — 工作区累积改动 last-snapshot 语义
+
+`distinctTouchedFiles(cn)` 之前 union 所有 fileHistorySnapshots[*].trackedFiles，导致用户 mid-conversation 跑 `git commit` 之后 chip 数字不归零（earlier snapshot 还记着 dirty 文件）。改成"取最后一帧 snapshot"，post-commit 状态正确反映；同步 nearestAncestorSnapshotPaths + DrillPanel section + 测试。
+
+顺手把卡片 chip 标题从误导的"本轮累积文件改动"改成"工作区累积改动"（工作区 dirty 集合不是 per-turn delta），detail section 同步。
+
+### i18n + 杂项
+
+- `5bb39d2` — Detail/Conversation 标签页、复制按钮、空 turn 占位文字等漏翻补全
+- `3e5f565` — sidebar_search 结果 heading "节点匹配" → "匹配"（既然 session 也能跳转，不再只匹配节点）
+- `20f0da3` — README 强调 ChatFlow/WorkFlow 是 Loomscope 的解读层而非 CC 原生概念
+
+### 教训沉淀
+
+1. **Parser 输出全集 + 视图层 filter** > parser 自己挑 visibility — 否则下游算法会因为图缺口算错链/树
+2. **chain transit 边界要明确**：attachment = transit（信息穿过）；compact = 真断链（信息被替换）；retry = 真断链。三者不能混着写。
+3. **快照类数据 union vs 最后一帧**：union 适合"曾经发生过"，最后一帧适合"当前状态"。git status 这种"实时 dirty 集合"语义要的是后者。
+4. **96% hybrid 不是边角料**：mid-turn compact 是 CC 主流场景，hybrid 节点要立成头等公民、参与默认折叠 + 保留可见。
+5. **改链路语义先 align frontend / backend**：chainCount + chain_position 必须用同一套 walker，否则用户会撞到"卡片说断链 / detail 说没断链"的不一致。
+
+---
+
 ## 2026-05-06 夜 — B (parser msg_id merge) ship + bilingual README + multi-tab triage close
 
 接 v∞.0 ship + ConversationView stale fix + Hook catchup + 多 tab 实测之后，把白天用户反馈的"WorkNodeDetail 空壳节点"问题（B）落地，顺手收尾一些遗留事项。

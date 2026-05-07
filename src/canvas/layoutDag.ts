@@ -50,9 +50,11 @@ export interface ChatNodeRFData extends Record<string, unknown> {
   innerCompactPreTokens: number | null;
   // Cumulative working-tree-dirty count, derived from
   // ChatNode.meta.fileHistorySnapshots[*].trackedFiles. Used for the
-  // 📁 N stats chip on ChatNodeCard. = "本轮累积文件改动" — every
-  // file dirty since the last commit, NOT just files this turn
-  // touched. 0 = no snapshots bound (badge hidden).
+  // 📁 N stats chip on ChatNodeCard. Labeled "工作区累积改动" — every
+  // file dirty since the last commit, NOT just files this ChatNode
+  // touched. 0 = no snapshots bound (badge hidden). Compare with
+  // `nodeOwnFileChangeCount` (✏️) which subtracts the inherited
+  // dirty set to attribute changes to one ChatNode only.
   fileTouchCount: number;
   // v0.8.1 #9 polish: per-node file-change count = nodeOwnFileChanges
   // (selfSnap \ parentSnap) ∪ tool_use. Drives the ✏️ N stats chip
@@ -429,18 +431,22 @@ function deriveCardData(
   };
 }
 
-// Union of every file path tracked across this ChatNode's bound
-// file-history-snapshots. v0.7 keeps both `isUpdate=true` and false
-// snapshots in the union — `isUpdate` snapshots tend to repeat the
-// same path set as the prior non-update for the same turn (CC re-emits
-// snapshots when assistant follow-ups land), so unioning is faithful
-// to "what files did this turn touch" without double-counting.
+// Latest-snapshot trackedFiles for this ChatNode — the workspace
+// dirty set at the end of this turn. Earlier (v0.7) we unioned every
+// bound snapshot, but unioning kept files visible after a mid-turn
+// `git commit` cleared them: snapshots earlier in the turn still
+// reported them dirty, so `union ⊇ post-commit set`. Real users hit
+// this whenever they commit mid-conversation, leaving the 📁 chip
+// inflated for the rest of the session.
+//
+// Snapshots are stored in JSONL ingestion order (chronological), so
+// the last entry is the most recent state. Both isUpdate=true and
+// isUpdate=false are valid sources — we just want the freshest.
+// Empty array → empty set (chip hidden).
 export function distinctTouchedFiles(cn: ChatNode): Set<string> {
-  const out = new Set<string>();
-  for (const s of cn.meta.fileHistorySnapshots ?? []) {
-    for (const f of s.trackedFiles) out.add(f);
-  }
-  return out;
+  const snaps = cn.meta.fileHistorySnapshots ?? [];
+  if (snaps.length === 0) return new Set();
+  return new Set(snaps[snaps.length - 1].trackedFiles);
 }
 
 // File paths that the ChatNode's WorkFlow explicitly mutated through a
@@ -512,9 +518,12 @@ export function nodeOwnFileChanges(
 }
 
 // Walk parentChatNodeId until we hit an ancestor with a non-empty
-// fileHistorySnapshots; return the union of its trackedFiles paths.
-// Empty set when no such ancestor exists. Bounded by chatFlow size
-// (cycles are guarded but shouldn't occur in well-formed flows).
+// fileHistorySnapshots; return that ancestor's *latest* snapshot
+// trackedFiles. Empty set when no such ancestor exists. Bounded by
+// chatFlow size (cycles are guarded but shouldn't occur in well-
+// formed flows). Mirrors `distinctTouchedFiles` in using last-snapshot
+// semantics so a mid-conversation `git commit` collapses the
+// "inherited dirty" set instead of carrying it forward forever.
 function nearestAncestorSnapshotPaths(
   cn: ChatNode,
   chatFlow: ChatFlow,
@@ -528,11 +537,7 @@ function nearestAncestorSnapshotPaths(
     guard.add(cursor.id);
     const snaps = cursor.meta.fileHistorySnapshots ?? [];
     if (snaps.length > 0) {
-      const out = new Set<string>();
-      for (const s of snaps) {
-        for (const f of s.trackedFiles) out.add(f);
-      }
-      return out;
+      return new Set(snaps[snaps.length - 1].trackedFiles);
     }
     cursor = cursor.parentChatNodeId ? byId.get(cursor.parentChatNodeId) : undefined;
   }

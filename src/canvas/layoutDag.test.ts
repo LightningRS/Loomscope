@@ -403,8 +403,10 @@ describe("lastAssistantPreview", () => {
   });
 });
 
-describe("distinctTouchedFiles + fileTouchCount RFData (v0.7)", () => {
-  it("unions trackedFiles across snapshots, dedupes, returns Set", () => {
+describe("distinctTouchedFiles + fileTouchCount RFData (v0.7 → mid-turn-commit fix)", () => {
+  it("returns ONLY the latest snapshot's trackedFiles — earlier snapshots are stale once mid-turn `git commit` clears them", () => {
+    // Pre-fix this unioned to {A, B, C}, leaving the chip inflated
+    // after a mid-turn commit. Post-fix the second snapshot wins.
     const cn = makeChatNode({
       id: "p1",
       meta: {
@@ -414,12 +416,24 @@ describe("distinctTouchedFiles + fileTouchCount RFData (v0.7)", () => {
         ],
       },
     });
-    const got = distinctTouchedFiles(cn);
-    expect(Array.from(got).sort()).toEqual(["A.ts", "B.ts", "C.ts"]);
+    expect(Array.from(distinctTouchedFiles(cn)).sort()).toEqual(["B.ts", "C.ts"]);
   });
 
   it("returns empty Set when no snapshots are bound", () => {
     const cn = makeChatNode({ id: "p1" });
+    expect(distinctTouchedFiles(cn).size).toBe(0);
+  });
+
+  it("returns empty Set when latest snapshot is empty (post-commit clean working tree)", () => {
+    const cn = makeChatNode({
+      id: "p1",
+      meta: {
+        fileHistorySnapshots: [
+          { uuid: "before", trackedFiles: ["dirty1.ts", "dirty2.ts"], isUpdate: false },
+          { uuid: "after-commit", trackedFiles: [], isUpdate: true },
+        ],
+      },
+    });
     expect(distinctTouchedFiles(cn).size).toBe(0);
   });
 

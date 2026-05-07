@@ -120,7 +120,7 @@ describe("ChatNodeDetail", () => {
     expect(container.textContent).toMatch(/Set model to Opus/);
   });
 
-  it("v0.8.1 #9: 本轮累积 section title carries the new wording", () => {
+  it("v0.8.1 #9: 工作区累积改动 section title carries the new wording", () => {
     const cn = makeChatNode({
       meta: {
         fileHistorySnapshots: [
@@ -131,7 +131,7 @@ describe("ChatNodeDetail", () => {
     const { container } = render(
       <ChatNodeDetail sessionId="test-sid" chatNode={cn} chatFlow={flowFor(cn)} />,
     );
-    expect(container.textContent).toMatch(/本轮累积文件改动/);
+    expect(container.textContent).toMatch(/工作区累积改动/);
   });
 
   it("v0.8.1 #9: 本节点文件改动 section subtracts the parent's snapshot from the child's", () => {
@@ -186,7 +186,7 @@ describe("ChatNodeDetail", () => {
     expect(screen.queryByTestId("node-own-file-changes")).toBeNull();
   });
 
-  it("renders 本轮累积文件改动 section when fileHistorySnapshots are bound (sorted union)", () => {
+  it("renders 工作区累积改动 section using LATEST snapshot only — earlier snapshots are stale once mid-turn commit clears them", () => {
     const cn = makeChatNode({
       meta: {
         fileHistorySnapshots: [
@@ -206,30 +206,31 @@ describe("ChatNodeDetail", () => {
       },
     });
     render(<ChatNodeDetail sessionId="test-sid" chatNode={cn} chatFlow={flowFor(cn)} />);
-    expect(screen.getByTestId("fh-row-docs/devlog.md")).toBeTruthy();
+    // Latest snapshot has {A, B}. devlog.md was in the earlier
+    // snapshot only — should NOT render (would have been a 3rd row
+    // pre-fix, mistakenly inflating the count).
     expect(screen.getByTestId("fh-row-src/A.ts")).toBeTruthy();
     expect(screen.getByTestId("fh-row-src/B.ts")).toBeTruthy();
+    expect(screen.queryByTestId("fh-row-docs/devlog.md")).toBeNull();
   });
 
-  it("paths only seen on isUpdate=true snapshots get gray-400 path text", () => {
+  it("post-commit: latest snapshot empty → section hidden (chip would also show 0)", () => {
+    // User ran `git commit` mid-turn. Pre-fix the union still showed
+    // {A.ts, stale.ts}; post-fix the latest empty snapshot wins, so
+    // there are no snapshot rows. With no tool_use either, the whole
+    // section disappears.
     const cn = makeChatNode({
       meta: {
         fileHistorySnapshots: [
-          { uuid: "fresh", trackedFiles: ["src/A.ts"], isUpdate: false },
-          {
-            uuid: "upd",
-            trackedFiles: ["src/A.ts", "stale-only.ts"],
-            isUpdate: true,
-          },
+          { uuid: "before", trackedFiles: ["src/A.ts", "stale.ts"], isUpdate: false },
+          { uuid: "after-commit", trackedFiles: [], isUpdate: true },
         ],
       },
     });
     render(<ChatNodeDetail sessionId="test-sid" chatNode={cn} chatFlow={flowFor(cn)} />);
-    const fresh = screen.getByTestId("fh-row-src/A.ts");
-    const stale = screen.getByTestId("fh-row-stale-only.ts");
-    // Path text cell = first child div in the grid row
-    expect(fresh.children[0].className).not.toMatch(/text-gray-400/);
-    expect(stale.children[0].className).toMatch(/text-gray-400/);
+    expect(screen.queryByTestId("file-history-snapshot-list")).toBeNull();
+    expect(screen.queryByTestId("fh-row-src/A.ts")).toBeNull();
+    expect(screen.queryByTestId("fh-row-stale.ts")).toBeNull();
   });
 
   it("hides the section when neither snapshots nor tool_use file paths exist", () => {

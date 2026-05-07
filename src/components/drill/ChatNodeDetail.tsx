@@ -222,7 +222,7 @@ function findLastLlmCallInWorkflow(workflow: WorkFlow): LlmCallNode | null {
   return llms.length > 0 ? llms[llms.length - 1] : null;
 }
 
-// "本轮文件改动" — side-by-side comparison of file-history-snapshot
+// "工作区累积改动" — side-by-side comparison of file-history-snapshot
 // (CC's git-status of the turn, bound via messageId in M1a) against
 // the ChatNode's WorkFlow tool_use file paths (Edit/Write/MultiEdit/
 // NotebookEdit). Lets the reader spot side-effect changes — a path
@@ -271,7 +271,7 @@ function NodeOwnFileChangesSection({
               className="flex items-center gap-2 py-0.5 text-gray-800"
               title={
                 inTool
-                  ? "本轮 tool_use 显式改 (Edit/Write/...)"
+                  ? "本节点 tool_use 显式改 (Edit/Write/...)"
                   : "snapshot 新增（相对父链最近一次 snapshot）— 可能是 Bash / sub-agent / hook 的副作用"
               }
             >
@@ -291,27 +291,24 @@ function NodeOwnFileChangesSection({
 
 function FileHistorySnapshotsSection({ chatNode }: { chatNode: ChatNode }) {
   const snapshots = chatNode.meta.fileHistorySnapshots ?? [];
-  const seenOnFresh = new Set<string>();
-  const seenOnUpdate = new Set<string>();
-  for (const s of snapshots) {
-    for (const f of s.trackedFiles) {
-      if (s.isUpdate) seenOnUpdate.add(f);
-      else seenOnFresh.add(f);
-    }
-  }
-  const snapshotPaths = new Set([...seenOnFresh, ...seenOnUpdate]);
+  // Latest snapshot wins — represents the workspace dirty set at the
+  // end of this turn. Earlier snapshots are stale once a mid-turn
+  // `git commit` clears tracked files (and we're showing
+  // "工作区累积改动" — git's view, not "what was ever touched").
+  const latest = snapshots.length > 0 ? snapshots[snapshots.length - 1] : null;
+  const snapshotPaths = new Set(latest?.trackedFiles ?? []);
   const toolUsePaths = distinctToolUseFiles(chatNode);
   const union = Array.from(new Set([...snapshotPaths, ...toolUsePaths])).sort();
   if (union.length === 0) return null;
   return (
-    <Section title={`本轮累积文件改动 (${union.length})`}>
+    <Section title={`工作区累积改动 (${union.length})`}>
       <div
         data-testid="file-history-snapshot-list"
         className="text-[11px] font-mono"
       >
         <div className="mb-1 grid grid-cols-[1fr_auto_auto] gap-x-2 text-[9px] uppercase tracking-wide text-gray-400">
           <div>path</div>
-          <div className="text-center" title="出现在 file-history-snapshot 中">
+          <div className="text-center" title="出现在最新 file-history-snapshot 中">
             📸 snapshot
           </div>
           <div className="text-center" title="出现在 ChatNode 的 tool_use input.file_path 中">
@@ -321,12 +318,10 @@ function FileHistorySnapshotsSection({ chatNode }: { chatNode: ChatNode }) {
         {union.map((path) => {
           const inSnap = snapshotPaths.has(path);
           const inTool = toolUsePaths.has(path);
-          const onlyUpdate =
-            inSnap && !seenOnFresh.has(path) && seenOnUpdate.has(path);
           // Side-effect: snapshot saw it, no explicit Edit/Write/etc.
           const sideEffect = inSnap && !inTool;
-          // Reverse mismatch: tool_use claims write but git didn't
-          // pick it up (rare — usually .gitignore'd file).
+          // Reverse mismatch: tool_use claims write but latest snap
+          // didn't pick it up (.gitignore'd, or committed mid-turn).
           const ghostWrite = inTool && !inSnap;
           const rowClass = sideEffect || ghostWrite ? "text-amber-700" : "text-gray-800";
           return (
@@ -338,11 +333,11 @@ function FileHistorySnapshotsSection({ chatNode }: { chatNode: ChatNode }) {
                 sideEffect
                   ? "snapshot 标记改动但 tool_use 未显式改 — 可能是 Bash / sub-agent / hook 副作用"
                   : ghostWrite
-                    ? "tool_use 改了但 snapshot 没追到 — 可能是 .gitignore'd"
+                    ? "tool_use 改了但最新 snapshot 没追到 — 可能是 .gitignore'd 或本节点内 commit 后清空"
                     : path
               }
             >
-              <div className={onlyUpdate ? "text-gray-400" : ""}>{path}</div>
+              <div>{path}</div>
               <div className="text-center" data-testid={`fh-${path}-snap`}>
                 {inSnap ? (sideEffect ? "📸" : "✓") : "—"}
               </div>
@@ -354,9 +349,9 @@ function FileHistorySnapshotsSection({ chatNode }: { chatNode: ChatNode }) {
         })}
       </div>
       <div className="mt-1 text-[10px] text-gray-400">
-        snapshot：CC 自己跑 git status 拿到的文件路径；
-        tool_use：本轮 Edit/Write/MultiEdit/NotebookEdit 显式改的路径。
-        amber 行 = 两边对不上（副作用 / 写入未入 git）。
+        snapshot：CC 跑 git status 拿到的工作区 dirty 集合（自上次 commit 以来累积，仅取本节点最后一帧；mid-turn commit 后会自动清掉已 commit 的文件）；
+        tool_use：本节点 Edit/Write/MultiEdit/NotebookEdit 显式改的路径。
+        amber 行 = 两边对不上（副作用 / 写入未入 git / 本节点内已 commit）。要看仅本节点引入的改动，看上方"本节点文件改动"。
       </div>
     </Section>
   );

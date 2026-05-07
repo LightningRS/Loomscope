@@ -6,7 +6,7 @@
 
 ![ChatFlow canvas](docs/screenshots/02-chatflow-canvas.png)
 
-> **状态（2026-05-06）**：v0.10（精雕 read-only viewer）+ v∞.0（实时观察 + CC settings.json hooks + PermissionRequest banner）已 ship。下一站 v∞.1（Loomscope 用 Agent SDK 起新 session + 浏览器响应权限）。
+> **状态（2026-05-06）**：v0.10（精雕 read-only viewer）+ v∞.0（实时观察 + CC settings.json hooks + PermissionRequest banner）+ v0.11（drill panel 大改造 + 全局 id 搜索 + 链语义修正）已 ship。下一站 v∞.1（Loomscope 用 Agent SDK 起新 session + 浏览器响应权限）。
 
 ## 为什么要 Loomscope
 
@@ -72,12 +72,16 @@ CC CLI 是 agent 的运行时，Loomscope 是配套的**只读图形化阅读器
 
 - 双层 DAG 画布（ChatFlow → WorkFlow drill）
 - 5 种 WorkNode 卡片 + detail 面板（`llm_call` / `tool_call` / `delegate` / `compact` / `attachment`）
+- LlmCall detail 面板：model/request → input（system prompt + 链上累积的 thinking 与 tool_result）→ output（text / thinking / 触发的工具）→ usage。`chain_position` 证据列表解释链断裂原因（compact / retry / harness）
+- 一次 assistant API 调用 = 一个逻辑 `LlmCallNode`（共享 `message.id` 的 split record 自动合并，drill thinking-only / tool_use-only 不再几乎全空）
+- Hybrid ChatNode 数据模型 — 96 % 的 compact 是 mid-turn（真用户 prompt + 中段 `isCompactSummary` record），用 ⊞ {preTokens} 角标提示，参与默认折叠（折祖先）但保留可见
 - Conversation panel 含聊天气泡 + 可展开工具 pill + fork 选择器
 - Compact 范围 inline 折叠（默认折，per-session unfold 持久化到 localStorage）
-- 多 session 侧栏按项目（cwd）分组，新 session 自动出现
+- 多 session 侧栏按项目（cwd）分组，新 session 自动出现，并支持全局 id 搜索（粘贴任意 UUID / 8+ hex prefix / `toolu_…` tool_use id → backend grep 命中 session、ChatNode、WorkNode 后跳转 + canvas focus）
 - Fork 树（`/branch` 派生的多 jsonl + restore 派生的同 session sibling）
 - 子代理递归嵌套展开（drill 进 `delegate` WorkNode → 进入该 sub-agent 的完整 ChatFlow）
 - Hover 触发 / 点击持久化 的视图导航 pattern
+- 📁 "工作区累积改动" / ✏️ "本节点改动" 双角标 — 前者是 git status 最新一帧的工作区 dirty 集合（mid-turn `git commit` 后正确清零），后者是本节点引入的差异（selfDelta = (selfSnap \ ancestorSnap) ∪ tool_use_paths）
 
 ### 实时（v∞.0）
 
@@ -106,10 +110,6 @@ CC CLI 是 agent 的运行时，Loomscope 是配套的**只读图形化阅读器
 - Conversation panel stick-to-bottom（聊天 app 惯例）
 
 ## Roadmap
-
-### 即将实现
-
-**B — parser 按 message.id 合并 split assistant records.** CC 把一次 API 响应拆成多条 jsonl record（每条只装一个 content block，但共享 `message.id`）。Loomscope 当前给每条 record 建一个 `LlmCallNode` → drill 进"只 thinking"或"只 tool_use"的 record 看到的 detail 几乎为空。按 `message.id` 合并 = 1 个 API call 对应 1 个逻辑 LlmCallNode。设计 doc：[`docs/design-msgid-merge.md`](docs/design-msgid-merge.md)。约 600 行。
 
 ### v∞ — 写控制（交互式）
 
@@ -176,7 +176,7 @@ Vite 8 + React 18 + TypeScript 5.6 + Tailwind 3 + `@xyflow/react` 12 + `@dagrejs
 ## 测试
 
 ```sh
-npm test          # 573 tests
+npm test          # 652 tests
 npm run typecheck
 ```
 

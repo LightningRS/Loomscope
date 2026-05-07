@@ -6,7 +6,7 @@
 
 ![ChatFlow canvas](docs/screenshots/02-chatflow-canvas.png)
 
-> **Status (2026-05-06)** — v0.10 (polished read-only viewer) + v∞.0 (live observation + CC settings.json hooks + PermissionRequest banner) shipped. v∞.1 (Loomscope-driven sessions via Agent SDK) is next.
+> **Status (2026-05-06)** — v0.10 (polished read-only viewer) + v∞.0 (live observation + CC settings.json hooks + PermissionRequest banner) + v0.11 (drill-panel polish + global id search + chain semantics) shipped. v∞.1 (Loomscope-driven sessions via Agent SDK) is next.
 
 ## Why Loomscope
 
@@ -72,12 +72,16 @@ Ordered by user-facing capability rather than version. Per-version commit refere
 
 - Two-layer DAG canvas (ChatFlow → WorkFlow drill)
 - 5 WorkNode kinds (`llm_call` / `tool_call` / `delegate` / `compact` / `attachment`) with type-specific cards + detail panels
+- LlmCall detail panel: model/request → input (system prompt + chain-accumulated thinking & tool_results) → output (text / thinking / triggered tool calls) → usage. `chain_position` evidence list explains gap reasons (compact / retry / harness)
+- One assistant API call = one logical `LlmCallNode` (records sharing `message.id` are merged so thinking-only / tool_use-only splits don't drill to almost-empty detail)
+- Hybrid ChatNode classification — 96 % of compacts happen mid-turn (real prompt + inline `isCompactSummary` record); marked with ⊞ {preTokens} chip and folded with the pre-compact range while staying visible itself
 - Conversation panel with chat-bubble layout, expandable tool pills, branch selectors at forks
 - Compact range inline-fold with default-folded behaviour and per-session unfold persistence
-- Multi-session sidebar grouped by project (cwd) with live discovery of new sessions
+- Multi-session sidebar grouped by project (cwd) with live discovery of new sessions, plus a global jump-by-id search (paste any UUID / 8+ hex prefix / `toolu_…` tool_use id → backend grep finds the session, ChatNode, or WorkNode and centers the canvas on it)
 - Fork tree (`/branch`-spawned multi-jsonl + `restore`-spawned in-session siblings)
 - Sub-agent recursive nested expansion (drill into a `delegate` WorkNode → opens that sub-agent's full ChatFlow)
 - Hover-to-pan / click-to-persist navigation between conversation and canvas
+- 📁 "工作区累积改动" / ✏️ "本节点改动" stat chips on each ChatNode card — workspace-cumulative dirty set (last `git status` snapshot) vs the per-node delta (selfDelta = (selfSnap \ ancestorSnap) ∪ tool_use_paths). Mid-turn `git commit` clears the cumulative count correctly
 
 ### Live (v∞.0)
 
@@ -106,10 +110,6 @@ Ordered by user-facing capability rather than version. Per-version commit refere
 - Stick-to-bottom in conversation panel (chat-app convention)
 
 ## Roadmap
-
-### Immediate next
-
-**B — parser msg_id merge.** CC writes one assistant jsonl record per content block (all sharing `message.id`). Loomscope currently builds one `LlmCallNode` per record → drill into a "thinking-only" or "tool_use-only" record shows almost-empty detail. Merging records by `message.id` produces one logical `LlmCallNode` per API call. Design doc: [`docs/design-msgid-merge.md`](docs/design-msgid-merge.md). ~600 LOC.
 
 ### v∞ — live writes (interactive control)
 
@@ -176,7 +176,7 @@ Vite 8 + React 18 + TypeScript 5.6 + Tailwind 3 + `@xyflow/react` 12 + `@dagrejs
 ## Tests
 
 ```sh
-npm test          # 573 tests
+npm test          # 652 tests
 npm run typecheck
 ```
 
