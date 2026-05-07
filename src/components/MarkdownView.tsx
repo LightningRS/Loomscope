@@ -231,21 +231,14 @@ function LazyMarkdownViewImpl({ children, components, className }: Props) {
   }, [visible]);
 
   if (visible) {
-    // Wrap real markdown in a min-height anchor matching the
-    // placeholder's last measured height — the swap is height-stable
-    // for prose and only grows by structural delta (code-block
-    // padding, heading font-size) when real markdown actually
-    // expands.
-    const minH = placeholderHeightRef.current;
     return (
-      <div
-        style={minH > 0 ? { minHeight: minH } : undefined}
-        className="[overflow-anchor:auto]"
+      <RenderedMarkdownAnchor
+        placeholderHeight={placeholderHeightRef.current}
+        components={components}
+        className={className}
       >
-        <MarkdownView className={className} components={components}>
-          {children}
-        </MarkdownView>
-      </div>
+        {children}
+      </RenderedMarkdownAnchor>
     );
   }
   // Plain-text placeholder. Same outer wrapper shape (className) so
@@ -267,6 +260,74 @@ function LazyMarkdownViewImpl({ children, components, className }: Props) {
       data-loomscope-lazy-md="pending"
     >
       <div className="whitespace-pre-wrap break-words">{children}</div>
+    </div>
+  );
+}
+
+// Real-markdown wrapper. Starts with min-height = placeholder's
+// measured height (placeholder→markdown swap height-stable when
+// real ≥ placeholder). When real markdown turns out SHORTER than
+// the placeholder — common for prose with hard line breaks within
+// a paragraph (placeholder shows them as separate lines, real
+// markdown joins via CommonMark) — measure the natural inner height
+// after first paint and drop the min-height. Net effect: bubble
+// settles to its real height after markdown renders, eliminating
+// the trailing blank gap users were seeing on the last assistant
+// message. Above-viewport bubbles can still grow on scroll-up
+// (structural delta from code blocks etc.), but the lock floor
+// no longer creates phantom space when real is shorter.
+function RenderedMarkdownAnchor({
+  children,
+  components,
+  className,
+  placeholderHeight,
+}: {
+  children: string;
+  components?: Props["components"];
+  className?: string;
+  placeholderHeight: number;
+}) {
+  const innerRef = useRef<HTMLDivElement | null>(null);
+  const [minH, setMinH] = useState(
+    placeholderHeight > 0 ? placeholderHeight : 0,
+  );
+
+  useEffect(() => {
+    if (minH === 0) return;
+    const el = innerRef.current;
+    if (!el) return;
+    // After first paint, inspect markdown's natural height. If it's
+    // smaller than the locked floor, release the floor — bubble
+    // settles to its real height, killing the blank gap below.
+    const release = () => {
+      const natural = el.scrollHeight;
+      if (natural > 0 && natural < minH) {
+        setMinH(0);
+      }
+    };
+    // rAF + microtask: let the browser fully paint markdown before
+    // measuring (highlight, prose typography all settle here).
+    const id = window.requestAnimationFrame(release);
+    // ResizeObserver covers later changes (font load, lazy images,
+    // user-resize the panel) — drops/keeps the floor accordingly.
+    const ro = new ResizeObserver(release);
+    ro.observe(el);
+    return () => {
+      window.cancelAnimationFrame(id);
+      ro.disconnect();
+    };
+  }, [minH]);
+
+  return (
+    <div
+      style={minH > 0 ? { minHeight: minH } : undefined}
+      className="[overflow-anchor:auto]"
+    >
+      <div ref={innerRef}>
+        <MarkdownView className={className} components={components}>
+          {children}
+        </MarkdownView>
+      </div>
     </div>
   );
 }
