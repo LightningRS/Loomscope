@@ -168,10 +168,23 @@ interface CanvasInnerProps extends ChatFlowCanvasProps {
 // this fallback, `node.measured?.width ?? 0` collapsed to zero
 // and setCenter received the top-left point as the center → card
 // landed in the bottom-right quadrant of the viewport.
-// 中: 把 viewport pan 到节点中心。RF 的 node.position 是左上角，
-// 计算中心需要加半个 width/height。卡片刚出现 DOM 没量过时
-// fallback 到 layout 常量（dagre 用的也是这些），否则 ?? 0
-// 会让 setCenter 拿到左上角当中心，卡片显示在视口右下方。
+//
+// CANVAS_FOCUS_BIAS_Y_PX (v0.11): bottom of the canvas carries
+// more visual chrome than the top — zoom controls at bottom-left,
+// the TaskListPanel chip (or expanded panel) at bottom-right —
+// while the top has only a small DrillBreadcrumb in the corner.
+// Geometrically centering a card at (canvas.w/2, canvas.h/2) puts
+// it under the imaginary line that splits the visible (uncovered)
+// area, so users perceive the card as "slightly low". Bias the
+// target y upward in screen px (added to world y because positive
+// y is down in RF coords; setCenter then pans further so the card
+// appears above the geometric midpoint by this amount).
+//
+// 中: 由于画布底部 chrome 比顶部重（左下 zoom controls + 右下
+// TaskListPanel），几何居中的卡片视觉上偏下；把目标点世界 y +
+// bias/zoom，setCenter 多 pan 一点，卡片屏幕位置上移 bias px。
+const CANVAS_FOCUS_BIAS_Y_PX = 32;
+
 function panToNodeCenter(
   rf: ReturnType<typeof useReactFlow>,
   node: { position: { x: number; y: number }; measured?: { width?: number; height?: number } },
@@ -179,10 +192,14 @@ function panToNodeCenter(
   const w = node.measured?.width ?? NODE_WIDTH;
   const h = node.measured?.height ?? NODE_HEIGHT;
   const vp = rf.getViewport();
-  rf.setCenter(node.position.x + w / 2, node.position.y + h / 2, {
-    zoom: vp.zoom,
-    duration: 200,
-  });
+  rf.setCenter(
+    node.position.x + w / 2,
+    node.position.y + h / 2 + CANVAS_FOCUS_BIAS_Y_PX / vp.zoom,
+    {
+      zoom: vp.zoom,
+      duration: 200,
+    },
+  );
 }
 
 function CanvasInner({ chatFlow, sessionId, hoveredEdge, onEdgeHover }: CanvasInnerProps) {

@@ -262,10 +262,17 @@ function CanvasInner({ chatNode, sessionId }: WorkFlowCanvasProps) {
       if (!node) return;
       const w = node.measured?.width ?? 200;
       const h = node.measured?.height ?? 80;
-      rf.setCenter(node.position.x + w / 2, node.position.y + h / 2, {
-        zoom: rf.getZoom(),
-        duration: 350,
-      });
+      // Same bottom-overlay bias as ChatFlowCanvas — see comment on
+      // CANVAS_FOCUS_BIAS_Y_PX over there. zoom controls + TaskListPanel
+      // weight bottom of canvas; bias target up so card lands at
+      // visually-centered point of the uncovered area.
+      const FOCUS_BIAS_Y_PX = 32;
+      const zoom = rf.getZoom();
+      rf.setCenter(
+        node.position.x + w / 2,
+        node.position.y + h / 2 + FOCUS_BIAS_Y_PX / zoom,
+        { zoom, duration: 350 },
+      );
     };
     wfPanCtx.ref.current = impl;
     return () => {
