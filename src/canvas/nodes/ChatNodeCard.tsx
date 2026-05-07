@@ -166,6 +166,21 @@ export function ChatNodeCard({ id, data }: NodeProps<ChatNodeRFNode>) {
         </div>
       )}
 
+      {/* v0.11: hybrid ChatNode (real prompt + inline compact mid-turn,
+          ~96% of all compacts in real CC sessions) gets an explicit
+          fold-toggle banner at the top. Previously the inline-compact
+          marker was a tiny ⊞ chip in the bottom stats row, and
+          fold/unfold relied on the upstream chatFold synthetic node;
+          users couldn't fold/unfold from the hybrid card itself.
+          Now the banner doubles as the fold toggle: click to flip the
+          pre-compact range fold state for THIS hybrid host. */}
+      {data.hasInnerCompact && !compact && (
+        <InnerCompactFoldBanner
+          chatNodeId={cn.id}
+          preTokens={data.innerCompactPreTokens}
+        />
+      )}
+
       {/* User message — label gray-500 to match Agentloom convention.
           Strings hardcoded zh-CN for v0.2; will move to i18n bundle when
           react-i18next phase lands (key: chatflow.user / chatflow.assistant).
@@ -228,20 +243,6 @@ export function ChatNodeCard({ id, data }: NodeProps<ChatNodeRFNode>) {
           >
             <span className="text-purple-500">🔗</span>
             <span className="font-mono">{data.chainCount}</span>
-          </span>
-        )}
-        {data.hasInnerCompact && (
-          <span
-            className="inline-flex items-center gap-0.5 rounded border border-teal-300 bg-teal-50 px-1 text-teal-800"
-            title={`本 turn 内含 inline compact${data.innerCompactPreTokens ? ` — preTokens ${formatTokensCompact(data.innerCompactPreTokens)} (压缩前上下文体量)` : ""}。CC 在 turn 中段触发了 auto-compact，本 ChatNode 同时承载了真实 prompt + pre/post-compact 工作。`}
-            data-testid={`chat-node-${cn.id}-inner-compact`}
-          >
-            <span>⊞</span>
-            {data.innerCompactPreTokens != null && (
-              <span className="font-mono text-[9px]">
-                {formatTokensCompact(data.innerCompactPreTokens)}
-              </span>
-            )}
           </span>
         )}
         <span
@@ -503,6 +504,58 @@ function formatTokensCompact(n: number): string {
 // on the underlying boundary OR the pre-resolution failed at parse
 // time).  Tone matches the compact card's trigger palette so the
 // chrome reads as a continuation of the card body.
+// v0.11: top-of-card banner for hybrid ChatNodes (real prompt + inline
+// compact mid-turn). Click toggles fold of the pre-compact range
+// upstream of THIS hybrid host. Replaces the bottom-row ⊞ chip — chip
+// was small, easy to miss, and didn't double as a fold control. The
+// underlying fold mechanic is the same `toggleCompactFold` action +
+// FoldAnchorContext pan-preservation as `CompactFoldToggleButton`;
+// just a different chrome (banner vs button) and copy ("内有压缩").
+function InnerCompactFoldBanner({
+  chatNodeId,
+  preTokens,
+}: {
+  chatNodeId: string;
+  preTokens: number | null;
+}) {
+  const toggle = useStore((s) => s.toggleCompactFold);
+  const activeId = useStore((s) => s.activeSessionId);
+  const anchor = useFoldAnchor();
+  const isFolded = useStore((s) => {
+    const sid = s.activeSessionId;
+    if (!sid) return true;
+    const sess = s.sessions.get(sid);
+    return sess?.foldedCompactIds.has(chatNodeId) ?? true;
+  });
+  const tokensText =
+    preTokens != null ? ` · ${formatTokensCompact(preTokens)}` : "";
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        if (anchor) {
+          anchor.toggle(chatNodeId);
+        } else if (activeId) {
+          toggle(activeId, chatNodeId);
+        }
+      }}
+      data-testid={`chat-node-${chatNodeId}-inner-compact`}
+      data-folded={isFolded ? "true" : "false"}
+      title={`本 turn 内含 inline compact${preTokens ? ` (preTokens ${formatTokensCompact(preTokens)})` : ""}。点击 ${isFolded ? "展开" : "折叠"} pre-compact 范围。`}
+      className="mb-1.5 flex w-full items-center justify-between gap-1 rounded border border-teal-300 bg-teal-50 px-1.5 py-0.5 text-[10px] text-teal-800 transition-colors hover:border-teal-400 hover:bg-teal-100"
+    >
+      <span className="inline-flex items-center gap-1">
+        <span>⊞</span>
+        <span>内有压缩{tokensText}</span>
+      </span>
+      <span className="font-mono text-[9px] text-teal-600">
+        {isFolded ? "⤢ 展开" : "⤡ 折叠"}
+      </span>
+    </button>
+  );
+}
+
 function CompactFoldToggleButton({
   chatNodeId,
   accent,
