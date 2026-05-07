@@ -15,8 +15,34 @@ import {
   type ToolCallRFNode,
 } from "@/canvas/layoutWorkflow";
 import { NodeIdLine } from "@/canvas/nodes/chrome/NodeIdLine";
+import { useStore } from "@/store";
 import { useIsWorkNodeSelected } from "@/store/selectionHooks";
 import { handleStyle, workNodeChromeClass } from "./cardChrome";
+
+// v0.11 Phase 4 — file_path extraction for Git ↔ WorkFlow cross-
+// highlight. Mirrors `distinctToolUseFiles` in layoutDag, except
+// here we want EACH tool_call's path (one or more), not a per-
+// ChatNode union.
+function getEditedFilePaths(
+  toolName: string,
+  input: unknown,
+): string[] {
+  if (!input || typeof input !== "object") return [];
+  const inp = input as Record<string, unknown>;
+  if (
+    toolName === "Edit" ||
+    toolName === "Write" ||
+    toolName === "MultiEdit"
+  ) {
+    const fp = inp["file_path"];
+    return typeof fp === "string" && fp.length > 0 ? [fp] : [];
+  }
+  if (toolName === "NotebookEdit") {
+    const fp = inp["notebook_path"];
+    return typeof fp === "string" && fp.length > 0 ? [fp] : [];
+  }
+  return [];
+}
 
 export function ToolCallCard({ id, data }: NodeProps<ToolCallRFNode>) {
   const n = data.workNode;
@@ -25,17 +51,51 @@ export function ToolCallCard({ id, data }: NodeProps<ToolCallRFNode>) {
   const failed = n.isError === true;
   const accent = failed ? "rose" : "amber";
   const selected = useIsWorkNodeSelected(id);
-  // v0.9.2: data.isRunning decorated by WorkFlowCanvas based on
-  // tool_call.resultBlock missing + parent ChatNode running.
   const isRunning = (data as { isRunning?: boolean }).isRunning === true;
+
+  // v0.11 Git ↔ WorkFlow cross-highlight: extract this tool_call's
+  // edited file path (if any). Hover writes to store; panel reads.
+  // Reverse: panel hover writes to `gitFileHoverFromPanel`; this
+  // card reads & lights up when its file matches.
+  const editedFiles = getEditedFilePaths(n.toolName, n.input);
+  const setHover = useStore((s) => s.setGitFileHoverFromWorkflow);
+  const setFocus = useStore((s) => s.setGitFileFocusFromWorkflow);
+  const setTab = useStore((s) => s.setDrillPanelTab);
+  const panelHover = useStore((s) => s.gitFileHoverFromPanel);
+  const isHoveredFromPanel =
+    panelHover != null && editedFiles.includes(panelHover);
 
   return (
     <div
-      className={workNodeChromeClass(accent, selected, isRunning)}
+      className={[
+        workNodeChromeClass(accent, selected, isRunning),
+        isHoveredFromPanel
+          ? "outline outline-2 outline-offset-2 outline-blue-400"
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
       style={{ width: WF_NODE_SIZE.tool_call.width }}
       data-testid={`worknode-tool_call-${n.id}`}
       data-worknode-kind="tool_call"
       data-running={isRunning ? "true" : "false"}
+      data-cross-highlighted={isHoveredFromPanel ? "true" : "false"}
+      onMouseEnter={() => {
+        if (editedFiles.length > 0) setHover(editedFiles[0]);
+      }}
+      onMouseLeave={() => {
+        if (editedFiles.length > 0) setHover(null);
+      }}
+      onClick={() => {
+        if (editedFiles.length === 0) return;
+        // Set focus → Git panel auto-expands + scrolls to that file.
+        // Also auto-switch DrillPanel to git tab so user sees it.
+        setFocus(editedFiles[0]);
+        setTab("git");
+        // Reset focus after a short window so subsequent hovers
+        // don't keep triggering the auto-expand.
+        window.setTimeout(() => setFocus(null), 50);
+      }}
     >
       <Handle
         type="target"
