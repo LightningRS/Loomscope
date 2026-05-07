@@ -23,6 +23,7 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
+import { LazyMarkdownView } from "@/components/MarkdownView";
 import { ConversationView } from "@/components/drill/ConversationView";
 import { findEffectiveContextCutoff } from "@/components/drill/effectiveContext";
 import type { ChatFlow, ChatNode } from "@/data/types";
@@ -59,6 +60,29 @@ export function EffectiveContextView({
     [chatFlow, focusedId],
   );
 
+  // Pull the cutoff's summaryText so the banner can render it. Both
+  // pure compact (`isCompactSummary`) and hybrid (`hasInnerCompact`)
+  // ChatNodes carry summaryText on `compactMetadata`. The banner makes
+  // the truncation point + its summary content explicit; without it,
+  // pure compact bubbles render via MessageBubble's fallbackText path
+  // (looks like a regular assistant message, no "this is a summary"
+  // signal) and hybrid bubbles don't surface the inline summary at
+  // all (rounds are non-empty, so fallbackText doesn't fire).
+  const cutoffSummary = useMemo<{
+    summaryText: string;
+    isHybrid: boolean;
+    chatNodeId: string;
+  } | null>(() => {
+    if (!cutoff) return null;
+    const node = chatFlow.chatNodes.find((c) => c.id === cutoff);
+    if (!node?.compactMetadata?.summaryText) return null;
+    return {
+      summaryText: node.compactMetadata.summaryText,
+      isHybrid: node.hasInnerCompact === true,
+      chatNodeId: node.id,
+    };
+  }, [chatFlow, cutoff]);
+
   if (!focusedId) {
     return (
       <div className="flex h-full items-center justify-center text-gray-400 text-[12px] px-3 text-center">
@@ -75,6 +99,13 @@ export function EffectiveContextView({
           : t("effective_context.intro_no_cutoff")}
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto">
+        {cutoffSummary && (
+          <CompactSummaryBanner
+            summaryText={cutoffSummary.summaryText}
+            chatNodeId={cutoffSummary.chatNodeId}
+            isHybrid={cutoffSummary.isHybrid}
+          />
+        )}
         <ConversationView
           sessionId={sessionId}
           chatFlow={chatFlow}
@@ -88,6 +119,49 @@ export function EffectiveContextView({
           headCutoffChatNodeId={cutoff}
         />
       </div>
+    </div>
+  );
+}
+
+// Header block that shows the cutoff's compact summaryText with
+// distinct chrome (dashed teal border + label) so the truncation
+// point is unmistakable. Renders ABOVE the ConversationView slice;
+// the cutoff bubble itself still renders inside ConversationView
+// below — pure compact via MessageBubble's fallbackText, hybrid via
+// its real user/assistant pair. The banner duplicates pure-compact
+// content (banner + bubble both show the summary) but avoids the
+// hybrid hole where the inline summary was previously invisible.
+function CompactSummaryBanner({
+  summaryText,
+  chatNodeId,
+  isHybrid,
+}: {
+  summaryText: string;
+  chatNodeId: string;
+  isHybrid: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div
+      className="m-3 mb-0 rounded-md border border-dashed border-teal-300 bg-teal-50/60 p-2"
+      data-testid={`effective-cutoff-banner-${chatNodeId}`}
+    >
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-teal-800">
+          {isHybrid
+            ? t("effective_context.label_compact_summary_hybrid")
+            : t("effective_context.label_compact_summary_pure")}
+        </span>
+        <span
+          className="text-[10px] font-mono text-teal-700"
+          title={chatNodeId}
+        >
+          {chatNodeId.slice(0, 8)}
+        </span>
+      </div>
+      <LazyMarkdownView className="prose prose-sm max-w-none text-[12px] text-gray-800 leading-relaxed">
+        {summaryText}
+      </LazyMarkdownView>
     </div>
   );
 }

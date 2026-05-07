@@ -73,7 +73,9 @@
   "effective_context": {
     "placeholder_no_node": "选个 ChatNode 看它实际收到的上下文（auto-compact 截断后）",
     "intro_with_cutoff": "下方是当前节点 LLM 实际看到的上下文。最近一次 compact / 内含压缩节点之上的内容已被截掉。",
-    "intro_no_cutoff": "当前节点 LLM 看到的上下文 = 完整祖先链（链上没有 compact 截断）。"
+    "intro_no_cutoff": "当前节点 LLM 看到的上下文 = 完整祖先链（链上没有 compact 截断）。",
+    "label_compact_summary_pure": "压缩摘要 — 替代上方原文",
+    "label_compact_summary_hybrid": "压缩摘要 — 内含压缩节点的 inline 摘要"
   },
   "git_panel": {
     "placeholder_no_node": "选个 ChatNode 看本节点 git commit 历史",
