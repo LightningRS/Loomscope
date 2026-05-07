@@ -225,8 +225,13 @@ export function ChatNodeCard({ id, data }: NodeProps<ChatNodeRFNode>) {
         <TokenBar tokens={data.contextTokens} maxTokens={data.maxContextTokens} />
       )}
 
-      {/* Stats row */}
-      <div className="mt-1.5 flex items-center gap-2.5 text-[10px] text-gray-500 border-t border-gray-200/60 pt-1">
+      {/* Stats row — wraps to a second line when 7+ chips appear so a
+          chip-rich ChatNode (llm + chain + tool + thinking + own-file +
+          file-touch + commit + pending + fork = up to 9) doesn't spill
+          past the card's right edge. Tight gap-y so the second row sits
+          flush under the first instead of looking like a separate
+          section. */}
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] text-gray-500 border-t border-gray-200/60 pt-1">
         <span
           className="inline-flex items-center gap-0.5"
           title={`${data.llmCount} 次 llm_call（每次模型请求一次）`}
