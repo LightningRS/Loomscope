@@ -5,6 +5,12 @@
 import { Hono } from "hono";
 import { serveStatic } from "@hono/node-server/serve-static";
 
+// Read package.json at module init so `/api/health` always reports
+// the current release. Hard-coding ("0.2.0") had drifted across two
+// releases before someone caught it. tsx + Node 22 + ESM JSON
+// import attributes work without extra build config.
+import pkg from "../../package.json" with { type: "json" };
+
 import { corsMiddleware } from "@/server/middleware/cors";
 import { csrfMiddleware } from "@/server/middleware/csrf";
 import { ccHookRouter } from "@/server/routes/ccHook";
@@ -58,7 +64,7 @@ export function createApp(opts: AppOptions) {
   initPendingPermissionTracker();
 
   app.get("/api/health", (c) =>
-    c.json({ ok: true, version: "0.2.0", rootDir: opts.rootDir }),
+    c.json({ ok: true, version: pkg.version, rootDir: opts.rootDir }),
   );
 
   app.route("/api/workspaces", workspacesRouter({ rootDir: opts.rootDir }));
