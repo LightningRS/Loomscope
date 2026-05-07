@@ -6,6 +6,151 @@
 
 ---
 
+## 2026-05-07 凌晨 → 早晨 — 工具/设置/动画/Git 全栈 polish 通宵
+
+承 v∞.0 read-only ship + drill panel 重做之后，连续 8 小时把以下几条线都推完。28 个 commit，从 `a4d3109` (docs filetouch 语义修正) 到 `c9f4206` (Phase C pending files)，全程 691 → 711 tests pass。
+
+### 整夜的工作主线
+
+| 主线 | 主要 commits | tests |
+|---|---|---|
+| TaskListPanel（CC 任务列表浮层） | `ec16142` `be69a26` `e60b075` | 678 |
+| 文档修正：trackedFileBackups != git status | `a4d3109` | 681 |
+| Settings modal（tab 化 + Hooks tab + per-event 复选框 + secret rotation） | `04d8169` `a1d5904` `80dda48` | 690 |
+| Liveness：UserPromptSubmit + Stop hook 驱动卡片+边动画同步 | `4ce2585` `5716e81` | 691 |
+| Hooks 集合补全（Notification + TaskCreated） | `ceef724` | 691 |
+| Canvas auto-focus y 偏置 32px | `2c46b42` | 691 |
+| Conversation 滚动 flicker 多步修 | `b81d848` `528d81f` `16a7150` `e20cff6` `8aa87d4` `0e7d6d7` `359be29` | 691 |
+| Hybrid ChatNode fold banner（⊞ chip 上移） | `9b21119` | 691 |
+| Git feature 5 phases | `cfb8237` `49bea1f` `584738c` `334f0b0` | 710 |
+| Git feature 3 个 bug fixes | `f3d902c` `ac96943` `af00aa2` | 711 |
+| Git Phase C — pending files | `c9f4206` | 711 |
+
+### 详细记录（按时间顺序）
+
+#### TaskListPanel — bottom-right canvas 浮层（`ec16142`）
+
+CC 命令行版本有个 task list（TaskCreate / TaskUpdate 写到 `~/.claude/tasks/<sid>/<id>.json`），Loomscope 之前没显示。新加：
+- `taskList` service 读 `~/.claude/tasks/<sid>/*.json` 解析 schema（mirror CC 的 utils/tasks.ts）
+- `GET /api/sessions/:id/tasks` endpoint
+- `sessionWatcher` 把 tasks dir 加入 chokidar 监视，change/add/unlink 通过现有 SSE 用 `kind:"tasks"` 广播
+- 前端 `taskListSlice` per-session cache + `TaskListPanel` 浮层在 canvas 右下角
+- 折叠态 chip / 展开态滚动列表，分组：in_progress → pending(open) → pending(blocked) → completed
+
+后续 ratio 调整两次 `be69a26` (−25% h, +50% w) → `e60b075` (黄金比例 1:0.618 = 30rem × 18.5rem)。
+
+#### 文档修正：trackedFileBackups 语义（`a4d3109`）
+
+实测发现 CC 的 `snapshot.trackedFileBackups` **不是** git status 输出（早期注释说错了）。它是 CC 内部 file backup 系统：每次 Read/Edit/Write 都登记一条版本备份，跨 session 累积、commit 后**不会**减少。路径含 `/tmp/...` 等非 git repo 文件。
+
+把误导的 chip 标签改对：
+- 📁 "工作区累积改动" → "session 触及文件"  
+- ✏️ "本节点文件改动" → "本节点新触及文件"  
+
+真 git status 视图入 backlog 等到 v0.11 Git feature 才落地。
+
+#### Settings modal 三连（`04d8169` / `a1d5904` / `80dda48`）
+
+之前只有一个 onboarding modal 一次性配 hooks。需要持续访问 → 加 Settings 模态：
+- **`04d8169`** Tab 化（Agentloom Settings 风格）：vertical tab nav + body；目前一个 Hooks tab，复用 `/api/cc-hook-onboarding` 端点
+- **`a1d5904`** Secret rotation：新端点 `POST /api/cc-hook-onboarding/rotate-secret`；`loomscopeSecret` 加 module-level `currentSecret` 缓存 + `getCurrentSecret()` accessor + `rotateSecret()` mutator；ccHookRouter / ccHookOnboardingRouter 改成读 accessor 而不是闭包静态值（mid-run rotate 立即生效）；UI 内联 amber confirm 框
+- **`80dda48`** Per-hook checkboxes：backend `addLoomscopeHooks`/`removeLoomscopeHooks` 加 `events?: string[]` 参数（缺省=所有，back-compat）；前端用 11 行 checkbox 替代"全部添加/全部移除"按钮，每行带说明；onboarding 弹窗简化成"打开设置"跳转
+
+#### Liveness：hook-driven turn window（`4ce2585`）
+
+之前卡片闪烁动画跟边虚线动画不同步：
+- 卡片 pulse 看 `lastInvalidateAt`（fs.watch jsonl）
+- 边动画看 `hasInFlightWork`（数据形态 — tool_call 缺 resultBlock 等）
+- 两个独立信号，视觉上 phase 错开
+
+加 CC 的 `UserPromptSubmit` + `Stop` 两个 hook（之前漏了），引入 `currentTurn: { startedAt }` 状态：
+- UserPromptSubmit → currentTurn = { startedAt: now }（trustHook 标记开启）
+- Stop → currentTurn = null
+
+`useIsChatNodeRunning` 重写：信任 hook 时直接读 currentTurn（精确启停），fallback 到老逻辑。卡片+边都 gate on 同一个布尔 → 严格同步。
+
+后续 `5716e81` 修了边动画在 tool→tool 切换之间的瞬间熄灭：当 turn 开着，叶子 WorkNode（无出边的）始终算 running，桥接 transition gap，动画无熄灭无重启。
+
+#### Hooks 集合补全（`ceef724`）
+
+实测发现 CC 还有 Notification + TaskCreated 两个 hook 我们没接：
+- `Notification` — CC idle/auth 等系统提示（数据通路接上但暂无 UI 消费方）
+- `TaskCreated` — TaskCreate 工具创建任务时触发，加上后 TaskListPanel 更新延迟从 fs.watch debounce 50-200ms 压到 ~5ms
+
+#### Canvas auto-focus y bias（`2c46b42`）
+
+用户报告"自动聚焦时卡片略偏下"。定位：canvas 底部有 zoom controls + TaskListPanel chip，顶部只有一个小 DrillBreadcrumb，视觉中心比几何中心偏上。给 `panToNodeCenter` 加 `CANVAS_FOCUS_BIAS_Y_PX = 32`，世界坐标 y + bias/zoom，setCenter 多 pan 一点让卡片屏幕位置上移。
+
+#### Conversation 滚动 flicker — 七步修（`b81d848` → `359be29`）
+
+最折磨的一段，用户连续报"向上滚仍有 flicker"，定位 + 修一共 7 commit：
+
+| commit | 修了什么 |
+|---|---|
+| `b81d848` | LazyMarkdownView rootMargin 1000px → 2500px；`[overflow-anchor:auto]` 显式标 |
+| `528d81f` | Tool-pill 骨架按 `summary.toolCount` 预占空间，避免 workflow lazy-load 完真 pill 突现把消息推下 |
+| `16a7150` | 静态字符串 + 行数估算 markdown 高度作 min-height（**这条思路错**：忽视视觉换行）|
+| `e20cff6` | 用 Playwright 实测真 ToolPill 26.5px / 骨架 28px 差 1.5px，定位是骨架用 text-[12px] 但真 pill 内 spans 是 text-[11px]；改后逐 0.5px 对齐 |
+| `8aa87d4` | 字符串估算放弃，改用 ResizeObserver 实测占位符渲染高度作 min-height（prose 内容 placeholder ≈ markdown 高度 → 切换稳定）|
+| `0e7d6d7` | 修 race：IO 回调里**同步** `clientHeight`，不等 ResizeObserver tick |
+| `359be29` | 用户报"底部突现一大块空白"——定位是 placeholder > markdown 时 min-height 把 bubble 锁住。修：markdown 渲完测自然高，若 < placeholder 高就释放 min-height |
+
+教训：高度稳定不能纯算，要靠**测量**（pre-render placeholder DOM）+ **释放**（post-render 比较自然高度，按需放弃 lock）。
+
+#### Hybrid ChatNode fold banner（`9b21119`）
+
+Git feature 前置：⊞ inner-compact chip 移到卡片顶部 banner，写明 "内有压缩"+ tokens，点击 toggle pre-compact 范围 fold/unfold。释放底部空间给即将到来的 📝 git commit chip。
+
+#### Git feature — 5 phases（`cfb8237` → `334f0b0`）
+
+User 设计：避开"primary repo 检测"问题，每个 commit 各自记 (repo, sha)，前端按 (repo, sha) 树状展开。
+
+- **Phase 1** `cfb8237` — Backend `detectGitCommits`：扫每个 ChatNode 的 Bash tool_use 抓 `git commit` + 从 `[branch SHA] subject` stdout 解析；repo 优先级 `-C` flag → `cd` 链 → record cwd；`ChatNodeMeta.commits` 跟 lite payload 走；schema bump v4 → v5
+- **Phase 2+3** `49bea1f` — Git tab UI（repo→commit→file 三层折叠）+ diff lazy-load 端点（`gitDiff` service spawn `git -C <repo> show ...` argv-only 无 shell 注入；SHA hex 校验、file 防 `..` 路径穿越；5MB 截止 + 5s 超时）+ `📝 N` chip
+- **Phase 4** `584738c` — WorkFlow ↔ Git tab 双向高亮：tool_use Edit/Write 卡片 hover/click 写到 store，git panel 反之；click 自动切 git tab + 展开 + scroll into view
+- **Phase 5** `334f0b0` — `dream-features.md` 入档"会话分支 ↔ 代码分支耦合"远期想法（依赖 CC `/merge` 或 v∞.1 SDK spawn）
+
+#### Git feature 3 个 bug 撞中（`f3d902c` `ac96943` `af00aa2`）
+
+ship 完没 5 分钟用户报"打不开任何 session"：
+
+1. **`f3d902c`** Catastrophic regex backtracking：`detectGitCommits` 主 regex `(?:\s+[-\w./=]+(?:\s+\S+)?)*\s+commit\b` 嵌套量词，遇到 `git config ...` 这种"以 git 开头但不以 commit 结尾"的命令爆炸。256MB session 的 ~13000 Bash record 让 parser 100% CPU 几分钟，workspace scan 永远完不成 → UI 永远停在 "Loading workspaces…"。
+   - 替换成两个独立 substring 检查：`/\bgit\b/.test(cmd) && /\bcommit\b/.test(cmd)`，线性
+   - 顺手修 `GIT_C_FLAG_RE` 用 `(?:^|\s)-C` 替代 `\b-C`（`\b` 不匹配 space→`-` 这种 non-word→non-word 边界）
+   - 加 stress 测试 1000 条 long-no-commit 命令必须 < 500ms 检出
+
+2. **`ac96943`** Rules of Hooks violation：`GitDiffPanel` 把 `useMemo(byRepo)` 写在 `if (!chatNode) return ...` 后面。从无 commit 节点切到有 commit 节点时 hook 数变化 → "Rendered more hooks than during the previous render" → DrillPanel 子树崩溃 → 白屏。把 useMemo 提到 early return 前面修复。
+
+3. **`af00aa2`** Heredoc commit message 污染 -C/cd 解析：用户报 ChatNode b7d48cac 的 commit `repo` 显示成 `'path\``。定位是我自己写的 commit message 里描述代码用了 `` `git -C path` ``，被 `GIT_C_FLAG_RE` 当作真 `-C` flag 抓出。修：先 slice 命令到 `commit` 关键字之前，只在前半段找 `-C`/`cd`。schema bump v5 → v6 让脏 cache 失效。
+
+#### Git Phase C — pending-commit files（`c9f4206`）
+
+User 提议：除了"session 触及文件"chip，加一个"截止本节点累计待提交文件"chip，更接近用户心智（"我手上还有多少活没归档"）。
+
+实现：
+- Backend：新 batch endpoint `/api/sessions/:id/git/commits-files` 一次拿全部 commits 的 file list（concurrency 4 跑 `git show --name-status`）
+- Store：`gitFilesSlice` 缓存 `committedFilesBySession[sha] = files[]`，派生 `pendingFilesByChatNode[cnId] = Set<path>` 走链路：`pending(N) = trackedFiles(N) - union(committedSoFar)`
+- UI：ChatNodeCard 加 `📤 N` chip（点击切 git tab）；GitDiffPanel 加 amber 色 PendingFilesSection 列文件路径
+
+V1 trade-offs（在 slice 注释里写明）：
+- Re-edit（commit 后再改）会 under-count
+- 启动前预存 dirty 不可见（assume 0）
+- 用户终端手动 commit 不在 meta.commits → over-count
+
+### 教训补充
+
+1. **regex catastrophic backtracking 是必须 stress-test 的隐形坑**：单元测试覆盖正例不够，必须有"似曾相识但不匹配"的反例 + 性能断言。Phase 1 ship 时如果加这条测试，能 CI 阶段拦下，不用等真数据撞才暴露。
+
+2. **Rules of Hooks 在条件性 early return 后面写 hook 是经典违例**，但只在动态切换 props 时才暴露。React DevTools strict mode 也未必能在测试时复现，得真用户操作。新建组件时先把所有 hook 写在最顶层，再加 early return。
+
+3. **解析用户输入 / 模型输出 时要警惕"自我引用"污染**：解析 git commit 命令的 regex 撞上自己 commit message 里描述同样语法的字面量，是经典"内容跟元数据耦合"问题。修法：用 boundary 关键字（如 `commit`）切片，明确 "flag 上下文 vs message body"。
+
+4. **flicker 调试要做"层层剥洋葱"**：用户每次报"还有 flicker"我都得换一个嫌疑修。Conversation 那段 7 commit 的修法序列是真实记录——每修一层暴露下一层，最终 root cause 是"placeholder 高度估算先用静态算法（错），再用 measurement（对），最后还要按需 release（避免新 side effect）"。直接跳到正解很难，得穿过中间状态。
+
+5. **"过设计"也是一种 bug**：原打算给 git feature 加"primary repo 检测"算法（per-record cwd 频次 + tool_use file_path heuristic 联合）。后来发现 user 设计只要每 commit 各自记 (repo, sha) 就够，不需要识别"主 repo"——简化设计反而更准确（多 repo 场景也自然支持）。先听用户怎么用，再设计数据模型。
+
+---
+
 ## 2026-05-06 深夜 — Drill panel 大改造 + 全局搜索 + 一系列 chain/数据语义修正
 
 承 B msg_id merge ship 之后，集中把 drill panel 的可读性、链断点/ChatNode 之间的语义、卡片角标的精度做一轮深打磨。20+ commit、652 tests pass。
