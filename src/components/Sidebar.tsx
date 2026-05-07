@@ -52,6 +52,7 @@ export function Sidebar() {
   const expanded = useStore((s) => s.expandedCwds);
   const sessionsByCwd = useStore((s) => s.sessionsByCwd);
   const refresh = useStore((s) => s.refreshWorkspaces);
+  const loadSessions = useStore((s) => s.loadSessions);
   const toggleExpanded = useStore((s) => s.toggleExpanded);
   const setActive = useStore((s) => s.setActiveSession);
   const activeId = useStore((s) => s.activeSessionId);
@@ -75,6 +76,23 @@ export function Sidebar() {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Filter mode searches across `sessionsByCwd`, but that map is lazy-
+  // loaded on workspace expand. Right after a fresh page load every
+  // workspace is collapsed → typing a session id finds nothing because
+  // no workspace has its sessions in the map yet. Mitigate by eager-
+  // loading any unloaded workspace's sessions whenever filter input is
+  // non-empty. The fetch is fire-and-forget; once results land the
+  // existing useMemo recomputes and the matching session shows up.
+  useEffect(() => {
+    if (searchMode !== "filter") return;
+    if (!searchInput.trim()) return;
+    for (const ws of workspaces) {
+      if (!sessionsByCwd.has(ws.cwd)) {
+        void loadSessions(ws.cwd);
+      }
+    }
+  }, [searchMode, searchInput, workspaces, sessionsByCwd, loadSessions]);
 
   function handleModeChange(mode: SearchMode) {
     if (mode === searchMode) return;
