@@ -5,7 +5,7 @@
 // 中: 顶栏。左侧是 Loomscope 标志 + 当前 session 元信息；右侧是
 // liveness 指示器 + loading/error chip + 语言切换。
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { copyToClipboardWithFallback } from "@/lib/clipboard";
@@ -22,6 +22,16 @@ export function Header() {
   const cf = session?.chatFlow ?? null;
   const liveStatus = useStore((s) => s.liveStatus);
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Other parts of the tree (notably HookOnboardingModal) ask Header
+  // to open Settings via a window event — avoids prop-drilling state
+  // through App.tsx for what's effectively a global UI command.
+  useEffect(() => {
+    const handler = () => setSettingsOpen(true);
+    window.addEventListener("loomscope:open-settings", handler);
+    return () =>
+      window.removeEventListener("loomscope:open-settings", handler);
+  }, []);
 
   return (
     <header

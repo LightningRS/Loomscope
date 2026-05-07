@@ -84,20 +84,20 @@ describe("SettingsModal", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("Hooks tab: 'Add all' button enabled when missing>0, fires patch + refreshes", async () => {
+  it("Hooks tab: 'Select all' button enabled when missing>0, fires patch + refreshes", async () => {
     render(<SettingsModal open={true} onClose={() => undefined} />);
-    const addBtn = (await screen.findByTestId(
-      "settings-hooks-add-all",
+    const selectAllBtn = (await screen.findByTestId(
+      "settings-hooks-select-all",
     )) as HTMLButtonElement;
-    expect(addBtn.disabled).toBe(false);
-    fireEvent.click(addBtn);
+    expect(selectAllBtn.disabled).toBe(false);
+    fireEvent.click(selectAllBtn);
     // Mock /patch returns all-configured, so the count should flip 4/4.
     await waitFor(() => {
       expect(screen.getByText(/4 \/ 4/)).toBeTruthy();
     });
   });
 
-  it("Hooks tab: 'Remove all' button disabled when no hooks configured", async () => {
+  it("Hooks tab: 'Select none' button disabled when no hooks configured", async () => {
     vi.spyOn(global, "fetch").mockImplementation(async (url) => {
       const u = String(url);
       if (u.includes("/status")) {
@@ -113,10 +113,40 @@ describe("SettingsModal", () => {
       return new Response("nope", { status: 404 });
     });
     render(<SettingsModal open={true} onClose={() => undefined} />);
-    const removeBtn = (await screen.findByTestId(
-      "settings-hooks-remove-all",
+    const selectNoneBtn = (await screen.findByTestId(
+      "settings-hooks-select-none",
     )) as HTMLButtonElement;
-    expect(removeBtn.disabled).toBe(true);
+    expect(selectNoneBtn.disabled).toBe(true);
+  });
+
+  it("Hooks tab: per-event row checkbox toggles via /patch with single-event body", async () => {
+    let lastPatchBody: { mode: string; events?: string[] } | null = null;
+    vi.spyOn(global, "fetch").mockImplementation(async (url, init) => {
+      const u = String(url);
+      if (u.includes("/status")) {
+        return new Response(JSON.stringify(mockStatus), { status: 200 });
+      }
+      if (u.includes("/patch")) {
+        lastPatchBody = JSON.parse(
+          (init as RequestInit).body as string,
+        ) as typeof lastPatchBody;
+        return new Response(JSON.stringify(mockStatus), { status: 200 });
+      }
+      return new Response("nope", { status: 404 });
+    });
+    render(<SettingsModal open={true} onClose={() => undefined} />);
+    // Wait for the rows to render.
+    const cb = (await screen.findByTestId(
+      "settings-hooks-toggle-SessionStart",
+    )) as HTMLInputElement;
+    expect(cb.checked).toBe(false); // SessionStart starts in `missing`
+    fireEvent.click(cb);
+    await waitFor(() => {
+      expect(lastPatchBody).toEqual({
+        mode: "add",
+        events: ["SessionStart"],
+      });
+    });
   });
 
   it("Hooks tab: copy-secret button is wired (testid present + secret text rendered)", async () => {

@@ -246,6 +246,26 @@ describe("addLoomscopeHooks", () => {
     expect(parsed.hooks.PostToolUse.some((e) => e.matcher === "")).toBe(true);
   });
 
+  it("scoped add: only touches the events listed in `events`, leaves others alone", async () => {
+    // Start with no settings file. Add only PreToolUse.
+    const after = await addLoomscopeHooks(PORT, ["PreToolUse"]);
+    expect(after.configured).toEqual(["PreToolUse"]);
+    const otherEvents = HOOK_EVENTS_LIST.filter((e) => e !== "PreToolUse");
+    for (const e of otherEvents) {
+      expect(after.missing).toContain(e);
+    }
+    const onDisk = JSON.parse(await fs.readFile(settingsFile, "utf8")) as {
+      hooks: Record<string, unknown[]>;
+    };
+    expect(Object.keys(onDisk.hooks)).toEqual(["PreToolUse"]);
+  });
+
+  it("scoped add: empty events array → defaults to all (back-compat with legacy 'add all' button)", async () => {
+    const after = await addLoomscopeHooks(PORT, []);
+    expect(after.missing).toEqual([]);
+    expect(after.configured.length).toBe(HOOK_EVENTS_LIST.length);
+  });
+
   it("refuses to write when existing file is malformed JSON", async () => {
     await fs.writeFile(settingsFile, "{not-valid-json");
     const status = await addLoomscopeHooks(PORT);
@@ -318,6 +338,17 @@ describe("removeLoomscopeHooks", () => {
     // The atomic rewrite re-formats with 2-space indent, so byte-
     // equality isn't guaranteed; structural match is.
     expect(JSON.parse(after)).toEqual(JSON.parse(before));
+  });
+
+  it("scoped remove: only strips listed events, others stay configured", async () => {
+    // Start with all 11 configured.
+    await addLoomscopeHooks(PORT);
+    // Remove just PreToolUse + SessionEnd.
+    const after = await removeLoomscopeHooks(PORT, ["PreToolUse", "SessionEnd"]);
+    expect(after.configured).not.toContain("PreToolUse");
+    expect(after.configured).not.toContain("SessionEnd");
+    expect(after.configured).toContain("PostToolUse");
+    expect(after.configured.length).toBe(HOOK_EVENTS_LIST.length - 2);
   });
 
   it("no-op + non-throwing when settings.json doesn't exist", async () => {

@@ -106,13 +106,33 @@ const STATUS_URL = "/api/cc-hook-onboarding/status";
 const PATCH_URL = "/api/cc-hook-onboarding/patch";
 const ROTATE_URL = "/api/cc-hook-onboarding/rotate-secret";
 
+// All 11 CC hook events Loomscope wires up. Order is the same as the
+// server-side `HOOK_EVENTS` constant so the per-row check list is
+// stable. Description keys live under `settings.hooks.events.*` in
+// the i18n bundles and explain "this hook fires when …" in 1 line.
+const HOOK_EVENT_NAMES = [
+  "PreToolUse",
+  "PostToolUse",
+  "SubagentStart",
+  "SubagentStop",
+  "PreCompact",
+  "PostCompact",
+  "TaskCompleted",
+  "SessionStart",
+  "SessionEnd",
+  "PermissionRequest",
+  "PermissionDenied",
+] as const;
+
 function HooksPanel() {
   const { t } = useTranslation();
   const [status, setStatus] = useState<HookStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [working, setWorking] = useState<"add" | "remove" | "rotate" | null>(
-    null,
-  );
+  const [working, setWorking] = useState<
+    "add" | "remove" | "rotate" | "select-all" | "select-none" | null
+  >(null);
+  // Set of events currently being toggled by the user (per-row spinner).
+  const [pendingEvents, setPendingEvents] = useState<Set<string>>(new Set());
   const [showSnippet, setShowSnippet] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "secret" | "json">(
     "idle",
@@ -138,20 +158,28 @@ function HooksPanel() {
     void refresh();
   }, [refresh]);
 
-  const patch = async (mode: "add" | "remove") => {
-    setWorking(mode);
+  // Bulk patch: omitting `events` = act on all 11 (legacy 全选 / 全不选
+  // buttons). With `events`, only those event keys are touched.
+  const patch = async (
+    mode: "add" | "remove",
+    events?: string[],
+    workingTag: typeof working = mode,
+  ) => {
+    setWorking(workingTag);
     setError(null);
     try {
+      const body: { mode: "add" | "remove"; events?: string[] } = { mode };
+      if (events && events.length > 0) body.events = events;
       const res = await fetch(PATCH_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as {
+        const errBody = (await res.json().catch(() => ({}))) as {
           error?: string;
         };
-        setError(body.error ?? `HTTP ${res.status}`);
+        setError(errBody.error ?? `HTTP ${res.status}`);
         return;
       }
       const fresh = (await res.json()) as HookStatus;
@@ -162,6 +190,23 @@ function HooksPanel() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setWorking(null);
+    }
+  };
+
+  const toggleEvent = async (event: string, nextChecked: boolean) => {
+    setPendingEvents((s) => {
+      const next = new Set(s);
+      next.add(event);
+      return next;
+    });
+    try {
+      await patch(nextChecked ? "add" : "remove", [event], null);
+    } finally {
+      setPendingEvents((s) => {
+        const next = new Set(s);
+        next.delete(event);
+        return next;
+      });
     }
   };
 
@@ -234,46 +279,94 @@ function HooksPanel() {
 
       <section className="space-y-2">
         <h3 className="text-[13px] font-semibold text-gray-800">
-          {t("settings.hooks.section_actions")}
+          {t("settings.hooks.section_events")}
         </h3>
         <p className="text-gray-500">
-          {t("settings.hooks.actions_description")}
+          {t("settings.hooks.events_description")}
         </p>
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={() => void patch("add")}
+            onClick={() => void patch("add", undefined, "select-all")}
             disabled={
-              working !== null || allConfigured || status.malformed === true
+              working !== null ||
+              pendingEvents.size > 0 ||
+              allConfigured ||
+              status.malformed === true
             }
-            data-testid="settings-hooks-add-all"
+            data-testid="settings-hooks-select-all"
             className="rounded bg-blue-500 px-3 py-1.5 text-[12px] text-white hover:bg-blue-600 disabled:bg-blue-300"
           >
-            {working === "add"
-              ? t("settings.hooks.btn_adding")
-              : t("settings.hooks.btn_add_all")}
+            {working === "select-all"
+              ? t("settings.hooks.btn_select_all_working")
+              : t("settings.hooks.btn_select_all")}
           </button>
           <button
             type="button"
-            onClick={() => void patch("remove")}
-            disabled={working !== null || noneConfigured}
-            data-testid="settings-hooks-remove-all"
+            onClick={() => void patch("remove", undefined, "select-none")}
+            disabled={
+              working !== null || pendingEvents.size > 0 || noneConfigured
+            }
+            data-testid="settings-hooks-select-none"
             className="rounded border border-rose-300 bg-white px-3 py-1.5 text-[12px] text-rose-700 hover:bg-rose-50 disabled:border-gray-300 disabled:text-gray-400"
           >
-            {working === "remove"
-              ? t("settings.hooks.btn_removing")
-              : t("settings.hooks.btn_remove_all")}
+            {working === "select-none"
+              ? t("settings.hooks.btn_select_none_working")
+              : t("settings.hooks.btn_select_none")}
           </button>
           <button
             type="button"
             onClick={() => void refresh()}
-            disabled={working !== null}
+            disabled={working !== null || pendingEvents.size > 0}
             data-testid="settings-hooks-refresh"
             className="rounded border border-gray-300 bg-white px-3 py-1.5 text-[12px] text-gray-700 hover:bg-gray-50"
           >
             {t("settings.hooks.btn_refresh")}
           </button>
         </div>
+
+        <ul
+          data-testid="settings-hooks-event-list"
+          className="divide-y divide-gray-100 rounded border border-gray-200 bg-white"
+        >
+          {HOOK_EVENT_NAMES.map((event) => {
+            const checked = status.configured.includes(event);
+            const isPending = pendingEvents.has(event);
+            const disabled =
+              working !== null || isPending || status.malformed === true;
+            return (
+              <li
+                key={event}
+                data-testid={`settings-hooks-row-${event}`}
+                data-checked={checked ? "true" : "false"}
+                className="flex items-start gap-2 px-2 py-1.5"
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={disabled}
+                  onChange={(e) => void toggleEvent(event, e.target.checked)}
+                  data-testid={`settings-hooks-toggle-${event}`}
+                  className="mt-0.5 cursor-pointer disabled:cursor-default"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[12px] text-gray-800">
+                      {event}
+                    </span>
+                    {isPending && (
+                      <span className="text-[10px] text-gray-400">…</span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-gray-500">
+                    {t(`settings.hooks.events.${event}`)}
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+
         {error && (
           <div className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-rose-800">
             ✗ {error}

@@ -83,18 +83,28 @@ export function ccHookOnboardingRouter(opts: CcHookOnboardingRouteOptions) {
     }
   });
 
-  // POST /api/cc-hook-onboarding/patch — body: { mode: "add" | "remove" }
-  // Writes settings.json. Refuses if existing file is malformed.
+  // POST /api/cc-hook-onboarding/patch
+  //   body: { mode: "add" | "remove", events?: string[] }
+  // events omitted / empty array = act on all 11 events (legacy
+  // "add all"/"remove all" buttons). events present = act on those
+  // events only (per-hook checkbox toggles). Refuses if existing
+  // file is malformed.
   app.post(
     "/patch",
-    zValidator("json", z.object({ mode: z.enum(["add", "remove"]) })),
+    zValidator(
+      "json",
+      z.object({
+        mode: z.enum(["add", "remove"]),
+        events: z.array(z.string()).optional(),
+      }),
+    ),
     async (c) => {
-      const { mode } = c.req.valid("json");
+      const { mode, events } = c.req.valid("json");
       try {
         const status =
           mode === "add"
-            ? await addLoomscopeHooks(opts.port)
-            : await removeLoomscopeHooks(opts.port);
+            ? await addLoomscopeHooks(opts.port, events)
+            : await removeLoomscopeHooks(opts.port, events);
         if (status.malformed) {
           return c.json(
             {

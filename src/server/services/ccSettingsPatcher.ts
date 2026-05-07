@@ -164,8 +164,18 @@ export async function getHookStatus(loomscopePort: number): Promise<HookStatus> 
  * Refuses to write if existing file is malformed JSON; caller must
  * surface that error to the user instead of silently overwriting.
  */
+/**
+ * Add Loomscope hook entries for the given events. When `events` is
+ * undefined or empty, defaults to ALL events (the v0.10 behavior).
+ * Otherwise only the specified events are touched — other event keys
+ * in settings.json are left exactly as-is (no add, no remove). This
+ * is what the per-hook checkbox UI calls with `events: [oneEvent]`
+ * to toggle a single hook on; the legacy "add all" path passes
+ * undefined for back-compat.
+ */
 export async function addLoomscopeHooks(
   loomscopePort: number,
+  events?: readonly string[],
 ): Promise<HookStatus> {
   const p = settingsPath();
   const { parsed, raw } = await safeReadOrEmpty(p);
@@ -184,7 +194,11 @@ export async function addLoomscopeHooks(
     string,
     unknown[]
   >;
-  for (const event of HOOK_EVENTS_LIST) {
+  const targetEvents =
+    events && events.length > 0
+      ? HOOK_EVENTS_LIST.filter((e) => events.includes(e))
+      : HOOK_EVENTS_LIST;
+  for (const event of targetEvents) {
     const existing: unknown[] = Array.isArray(hooks[event])
       ? (hooks[event] as unknown[])
       : [];
@@ -214,8 +228,15 @@ export async function addLoomscopeHooks(
  *
  * Idempotent — no-op when nothing of ours is present.
  */
+/**
+ * Strip Loomscope hook entries for the given events. Mirrors
+ * `addLoomscopeHooks`'s scoping: undefined/empty `events` = remove
+ * across all events (v0.10 behavior). Otherwise only the given
+ * events are touched.
+ */
 export async function removeLoomscopeHooks(
   loomscopePort: number,
+  events?: readonly string[],
 ): Promise<HookStatus> {
   const p = settingsPath();
   const { parsed, raw } = await safeReadOrEmpty(p);
@@ -235,7 +256,11 @@ export async function removeLoomscopeHooks(
   }
   const settings: CcSettings = parsed;
   const hooks = (settings.hooks ?? {}) as Record<string, unknown[]>;
-  for (const event of HOOK_EVENTS_LIST) {
+  const targetEvents =
+    events && events.length > 0
+      ? HOOK_EVENTS_LIST.filter((e) => events.includes(e))
+      : HOOK_EVENTS_LIST;
+  for (const event of targetEvents) {
     const filtered = Array.isArray(hooks[event])
       ? (hooks[event] as unknown[]).filter(
           (e) => !entryHasOurAction(e, loomscopePort),

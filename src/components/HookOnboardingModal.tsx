@@ -1,29 +1,19 @@
-// EN (v∞.0 PR 3): one-time onboarding modal that appears the first
-// time we detect missing Loomscope hook entries in
-// ~/.claude/settings.json. Two paths:
+// First-launch banner that appears when ~/.claude/settings.json is
+// missing Loomscope hook entries. v0.11 simplified: this modal no
+// longer patches anything itself — it only redirects the user to
+// Settings → Hooks tab via a window event, where they can pick exactly
+// which hooks to enable (per-event checkboxes), copy the manual JSON,
+// or rotate the secret. Single source of truth for hook config = the
+// Settings panel.
 //
-//   1. 一键自动添加 — POST /api/cc-hook-onboarding/patch with mode:
-//      "add". Backend's atomic patcher does the merge; we re-fetch
-//      status to update the UI. Refuses on malformed settings.json
-//      (caller-visible error).
-//   2. 复制配置自己加 — render the JSON snippet + shell-rc line so
-//      the user pastes manually. Either path needs the LOOMSCOPE_SECRET
-//      shell export so CC can substitute it at hook fire time.
-//
-// Dismiss button writes a localStorage flag so we don't pester the
-// user every reload. Settings panel item (PR 3 follow-up, deferred)
-// will let the user re-open this modal manually if they change
-// their mind.
-//
-// 中: Loomscope hook 缺失检测的 onboarding modal。两条路径：自动写
-// 入 settings.json（atomic patcher）vs 复制 JSON 自己改。Dismiss 写
-// localStorage 标记不每次启动都弹。
+// Dismiss button still writes a localStorage flag so we don't pester
+// the user on every reload; clearing localStorage re-arms the banner.
 
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 const DISMISS_STORAGE_KEY = "loomscope:hook-onboarding-dismissed";
 const STATUS_URL = "/api/cc-hook-onboarding/status";
-const PATCH_URL = "/api/cc-hook-onboarding/patch";
 
 interface HookStatus {
   settingsPath: string;
@@ -36,12 +26,9 @@ interface HookStatus {
 }
 
 export function HookOnboardingModal() {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<HookStatus | null>(null);
   const [open, setOpen] = useState(false);
-  const [working, setWorking] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [copyState, setCopyState] = useState<"idle" | "secret" | "json">("idle");
 
   // First-launch check. Skip when user dismissed in a prior session.
   useEffect(() => {
@@ -82,51 +69,12 @@ export function HookOnboardingModal() {
     setOpen(false);
   };
 
-  const autoAdd = async () => {
-    setWorking(true);
-    setErrorMsg(null);
-    try {
-      const res = await fetch(PATCH_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ mode: "add" }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as {
-          error?: string;
-          status?: HookStatus;
-        };
-        setErrorMsg(body.error ?? `HTTP ${res.status}`);
-        if (body.status) setStatus({ ...status!, ...body.status });
-        return;
-      }
-      const fresh = (await res.json()) as HookStatus;
-      setStatus({ ...status!, ...fresh });
-      // PR 4: tell the Header chip to re-fetch + reflect the new
-      // configured count without waiting for its 30 s poll.
-      window.dispatchEvent(new CustomEvent("loomscope:hook-status-refresh"));
-      // If everything is in place now, close the modal — but keep
-      // dismissed=false in case the user clears localStorage.
-      if (fresh.missing.length === 0 && !fresh.malformed) {
-        setTimeout(() => setOpen(false), 800);
-      }
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : String(err));
-    } finally {
-      setWorking(false);
-    }
-  };
-
-  const copyToClipboard = async (text: string, kind: "secret" | "json") => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopyState(kind);
-      setTimeout(() => setCopyState("idle"), 1200);
-    } catch {
-      // Clipboard permission denied — user can still select-and-copy.
-    }
+  const openSettings = () => {
+    window.dispatchEvent(new CustomEvent("loomscope:open-settings"));
+    // Don't write the dismissed flag — the user is acting, not
+    // brushing it off; if they close Settings without configuring,
+    // the next reload will surface this banner again as a reminder.
+    setOpen(false);
   };
 
   const progress = useMemo(() => {
@@ -144,107 +92,48 @@ export function HookOnboardingModal() {
       onClick={() => dismiss(false)}
     >
       <div
-        className="w-full max-w-2xl rounded-lg bg-white shadow-xl"
+        className="w-full max-w-xl rounded-lg bg-white shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="border-b border-gray-200 px-5 py-3">
           <div className="text-[14px] font-semibold text-gray-800">
-            ⚙ Loomscope 需要订阅 Claude Code 事件
+            ⚙ {t("hook_onboarding.title")}
           </div>
           <div className="mt-1 text-[12px] text-gray-500">
-            已配置: <span className="font-mono">{progress}</span>
+            {t("hook_onboarding.progress_label")}{" "}
+            <span className="font-mono">{progress}</span>
             {" · "}
-            settings.json: <span className="font-mono">{status.settingsPath}</span>
+            settings.json:{" "}
+            <span className="font-mono">{status.settingsPath}</span>
           </div>
         </div>
 
         <div className="px-5 py-4 space-y-3 text-[12px] text-gray-700">
           {status.malformed ? (
             <div className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-rose-800">
-              ❌ 现有 settings.json 是无效 JSON，Loomscope 拒绝写入。请先手动修复
-              文件，再回来点"一键自动添加"。
+              ❌ {t("hook_onboarding.malformed")}
             </div>
           ) : (
-            <>
-              <p>
-                Loomscope 用 CC 的 settings.json hooks 接收
-                <span className="font-mono"> PermissionRequest</span> 等 11 个事件。
-                Hook 触发时 CC 会向 <code>/api/cc-hook</code> POST 一次，
-                Loomscope 没启动时 CC 静默失败、不影响正常工作。
-              </p>
-              <p>
-                额外需要在 shell rc 里 export <code>LOOMSCOPE_SECRET</code> —
-                CC 用 <code>allowedEnvVars</code> 白名单从环境变量取这个 secret 注入
-                hook header 防伪造。
-              </p>
-              <div className="rounded bg-gray-50 px-2 py-1.5 font-mono text-[11px] flex items-center gap-2 break-all">
-                <span className="flex-1 select-all">{status.shellRcSnippet}</span>
-                <button
-                  type="button"
-                  onClick={() => copyToClipboard(status.shellRcSnippet, "secret")}
-                  className="rounded border border-gray-300 px-1.5 py-0.5 text-[11px] hover:bg-gray-100"
-                  data-testid="copy-shell-rc"
-                >
-                  {copyState === "secret" ? "✓" : "📋"}
-                </button>
-              </div>
-            </>
-          )}
-
-          {showAdvanced && (
-            <div className="rounded border border-gray-200 bg-gray-50 p-2">
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-medium text-[11px] text-gray-700">
-                  settings.json hooks 段（拷贝合并到 ~/.claude/settings.json）
-                </span>
-                <button
-                  type="button"
-                  onClick={() => copyToClipboard(status.pasteableJson, "json")}
-                  className="rounded border border-gray-300 px-1.5 py-0.5 text-[11px] hover:bg-gray-100"
-                  data-testid="copy-json"
-                >
-                  {copyState === "json" ? "✓ 已复制" : "📋 复制"}
-                </button>
-              </div>
-              <pre className="max-h-60 overflow-auto rounded bg-white p-2 text-[10px] font-mono whitespace-pre">
-                {status.pasteableJson}
-              </pre>
-            </div>
-          )}
-
-          {errorMsg && (
-            <div className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-rose-800">
-              ✗ 自动添加失败: {errorMsg}
-            </div>
+            <p>{t("hook_onboarding.body")}</p>
           )}
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t border-gray-200 px-5 py-3">
           <button
             type="button"
-            onClick={() => setShowAdvanced((v) => !v)}
-            className="text-[12px] text-gray-500 hover:text-gray-800"
-            data-testid="toggle-advanced"
-          >
-            {showAdvanced ? "收起手动配置" : "展开手动配置"}
-          </button>
-          <div className="flex-1" />
-          <button
-            type="button"
             onClick={() => dismiss(true)}
             className="rounded border border-gray-300 px-3 py-1.5 text-[12px] hover:bg-gray-100"
             data-testid="dismiss-onboarding"
           >
-            暂不开启
+            {t("hook_onboarding.btn_dismiss")}
           </button>
           <button
             type="button"
-            onClick={autoAdd}
-            disabled={working || status.malformed}
-            className="rounded bg-blue-500 px-3 py-1.5 text-[12px] text-white hover:bg-blue-600 disabled:bg-blue-300"
-            data-testid="auto-add-hooks"
+            onClick={openSettings}
+            className="rounded bg-blue-500 px-3 py-1.5 text-[12px] text-white hover:bg-blue-600"
+            data-testid="open-settings-from-onboarding"
           >
-            {working ? "添加中…" : "一键自动添加"}
+            {t("hook_onboarding.btn_open_settings")}
           </button>
         </div>
       </div>
