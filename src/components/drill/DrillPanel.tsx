@@ -272,16 +272,16 @@ function TabStrip({
       className="flex items-center border-b border-gray-200 bg-white"
     >
       <TabButton
-        active={activeTab === "detail"}
-        onClick={() => onSelect("detail")}
-        testId="drill-panel-tab-detail"
-        label={t("drill_panel.tab_detail")}
-      />
-      <TabButton
         active={activeTab === "conversation"}
         onClick={() => onSelect("conversation")}
         testId="drill-panel-tab-conversation"
         label={t("drill_panel.tab_conversation")}
+      />
+      <TabButton
+        active={activeTab === "detail"}
+        onClick={() => onSelect("detail")}
+        testId="drill-panel-tab-detail"
+        label={t("drill_panel.tab_detail")}
       />
       <TabButton
         active={activeTab === "effective_context"}
