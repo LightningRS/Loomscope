@@ -284,16 +284,16 @@ function TabStrip({
         label={t("drill_panel.tab_detail")}
       />
       <TabButton
-        active={activeTab === "effective_context"}
-        onClick={() => onSelect("effective_context")}
-        testId="drill-panel-tab-effective-context"
-        label={t("drill_panel.tab_effective_context")}
-      />
-      <TabButton
         active={activeTab === "git"}
         onClick={() => onSelect("git")}
         testId="drill-panel-tab-git"
         label={t("drill_panel.tab_git")}
+      />
+      <TabButton
+        active={activeTab === "effective_context"}
+        onClick={() => onSelect("effective_context")}
+        testId="drill-panel-tab-effective-context"
+        label={t("drill_panel.tab_effective_context")}
       />
       {viewMode === "workflow" && drilledChatNode && (
         // Mode-following breadcrumb: keep parent ChatNode visible
