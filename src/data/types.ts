@@ -311,7 +311,37 @@ export interface ChatNodeMeta {
   // lookup (see parse/jsonl.ts file-history-snapshot binding).
   fileHistorySnapshots?: FileHistorySnapshot[];
   permissionModeChanges?: Array<{ uuid: string; permissionMode: string }>;
+  // v0.11: git commits made during this ChatNode's runtime, detected
+  // by parsing Bash tool_use commands (`git commit ...`) and their
+  // outputs (the `[branch sha] subject` line CC's stdout returns).
+  // The `repo` is the git repo toplevel (resolved from the command's
+  // `-C` flag, `cd` chain, or the record's cwd at fire time). Sha
+  // stored as the short or full hash CC reported. Diffs aren't
+  // captured here — fetched on demand via /api/git/diff with the
+  // (repo, sha, file) tuple. Empty/absent = no commits in this
+  // ChatNode.
+  commits?: GitCommitRef[];
   errors?: NodeError[];
+}
+
+// Lightweight reference to a git commit detected inside a ChatNode.
+// Doesn't carry diff content — that's fetched on demand by GitDiffPanel
+// via `git -C <repo> show <sha>`. The `files` field can be empty here
+// (parser doesn't always know which files changed without running
+// git itself); the diff endpoint fills that in.
+export interface GitCommitRef {
+  /** Absolute path to the git repo toplevel where the commit landed. */
+  repo: string;
+  /** Commit SHA as CC's stdout reported it (short or long). */
+  sha: string;
+  /** Subject line (first line of commit message) when extractable. */
+  subject?: string;
+  /** Wall-clock timestamp from the parent record when the commit fired. */
+  timestamp?: string;
+  /** Files changed by the commit, populated by the diff endpoint on
+   * first fetch. Persisted here so subsequent renders skip the round
+   * trip. */
+  files?: string[];
 }
 
 // CC slash-command invocation (e.g. /model, /compact, /cost) does NOT go

@@ -66,7 +66,9 @@ import type { ChatFlow } from "@/data/types";
 // 排序。v4 = workflow.nodes 现在包含所有 attachment kinds（之前
 // 只白名单了 6 类，task_reminder / deferred_tools_delta 等 chain
 // participant 被丢掉，导致前端 chain walk 在它们处 dead-end）。
-const SCHEMA_VERSION = 4;
+// v5 = ChatNodeMeta.commits 新增（per-ChatNode git commit refs from
+// detectGitCommits — Bash tool_use → `[branch sha] subject` parse）。
+const SCHEMA_VERSION = 5;
 
 interface DiskCacheEnvelope {
   schemaVersion: number;

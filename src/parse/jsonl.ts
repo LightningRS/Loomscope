@@ -37,6 +37,7 @@ import {
 } from "@/parse/raw-record";
 import { computeWorkflowSummary } from "@/parse/workflow-summary";
 import { buildWorkflow } from "@/parse/workflow-builder";
+import { detectGitCommits } from "@/parse/gitCommits";
 
 // Records flagged with these are dropped from the canvas data model entirely.
 const SKIP_TYPES = new Set([
@@ -864,6 +865,27 @@ function buildChatNode(
     trigger = "scheduled";
   }
 
+  // v0.11: build tool_use uuid → cwd map for git commit detection.
+  // Each tool_use block inherits the assistant record's `cwd` (CC
+  // records cwd per-record). detectGitCommits uses this when neither
+  // `-C` flag nor `cd path &&` chain in the command pinned a repo.
+  const cwdByToolUseUuid = new Map<string, string>();
+  for (const r of bucket.records) {
+    if (r.type !== "assistant") continue;
+    const cwd = (r as { cwd?: unknown }).cwd;
+    if (typeof cwd !== "string" || !cwd) continue;
+    const blocks = (r.message as { content?: unknown } | undefined)?.content;
+    if (!Array.isArray(blocks)) continue;
+    for (const b of blocks) {
+      if (!b || typeof b !== "object") continue;
+      const blk = b as { type?: unknown; id?: unknown };
+      if (blk.type === "tool_use" && typeof blk.id === "string") {
+        cwdByToolUseUuid.set(blk.id, cwd);
+      }
+    }
+  }
+  const commits = detectGitCommits({ workflow, cwdByToolUseUuid });
+
   const meta: ChatNodeMeta = {
     awaySummary: awaySummaryAttached,
     scheduledFireUuid,
@@ -872,6 +894,7 @@ function buildChatNode(
         ? fileHistorySnapshots
         : undefined,
     permissionModeChanges: permissionModeChanges.length ? permissionModeChanges : undefined,
+    commits: commits.length ? commits : undefined,
   };
 
   const compactWorkNode = workflow.nodes.find((n) => n.kind === "compact");
