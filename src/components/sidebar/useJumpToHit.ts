@@ -26,7 +26,18 @@ import { useStore } from "@/store/index";
 export type JumpHit =
   | { type: "session"; sessionId: string }
   | { type: "chatnode"; sessionId: string; chatNodeId: string }
-  | { type: "worknode"; sessionId: string; workNodeId: string };
+  | {
+      type: "worknode";
+      sessionId: string;
+      workNodeId: string;
+      // Backend resolves owner ChatNode (= record's promptId, or
+      // disk-cache-parse fallback for assistant/attachment records
+      // that don't carry promptId on disk). When present, we use it
+      // directly to drill — much more reliable than scanning the
+      // loaded chatFlow.chatNodes (which is lite-payload by default
+      // and lacks workflow.nodes).
+      parentChatNodeId?: string;
+    };
 
 export function useJumpToHit() {
   const setActiveSession = useStore((s) => s.setActiveSession);
@@ -76,20 +87,23 @@ export function useJumpToHit() {
         return;
       }
 
-      // worknode: find owner ChatNode and drill.
-      const chatFlow = useStore
-        .getState()
-        .sessions.get(hit.sessionId)?.chatFlow;
-      const owner = chatFlow?.chatNodes.find((cn) =>
-        cn.workflow.nodes.some((n) => n.id === hit.workNodeId),
-      );
-      if (!owner) {
-        // Unloaded sub-agent or detached WorkNode — fall back to
-        // ChatFlow view; user can manually drill.
-        return;
+      // worknode: trust backend's parentChatNodeId when provided;
+      // fall back to scanning the loaded chatFlow if not (only
+      // possible if the record carried promptId AND the lite payload
+      // happens to have workflow.nodes — rare, but harmless to try).
+      let ownerId = hit.parentChatNodeId ?? "";
+      if (!ownerId) {
+        const chatFlow = useStore
+          .getState()
+          .sessions.get(hit.sessionId)?.chatFlow;
+        const owner = chatFlow?.chatNodes.find((cn) =>
+          cn.workflow.nodes.some((n) => n.id === hit.workNodeId),
+        );
+        if (!owner) return; // can't resolve, give up silently
+        ownerId = owner.id;
       }
-      setSelected(hit.sessionId, owner.id);
-      enterWorkflow(hit.sessionId, owner.id);
+      setSelected(hit.sessionId, ownerId);
+      enterWorkflow(hit.sessionId, ownerId);
       setWorkflowSelected(hit.sessionId, hit.workNodeId);
       // WorkFlow canvas mounts on viewMode flip; give it a couple
       // RAFs + a small timeout so the React Flow Provider + dagre

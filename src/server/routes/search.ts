@@ -33,19 +33,26 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 
+import { parseJsonlFile } from "@/parse/jsonl";
+import type { ChatFlow } from "@/data/types";
+
 export interface SearchRouteOptions {
   rootDir: string;
 }
 
 const MAX_HITS = 10;
-// Minimum hex prefix length to trigger search. Shorter inputs are
-// rejected because (a) every uuid contains all 16 hex digits in
-// random order so a 1-3 char hex prefix would explode the result
-// set, and (b) the front-end already routes shorter inputs to the
-// 📁 filter mode for live sidebar narrowing.
+// Minimum prefix length to trigger search. Shorter inputs are
+// rejected because they would explode the result set, and the
+// front-end already routes shorter inputs to the 📁 filter mode for
+// live sidebar narrowing.
+//
+// We deliberately do NOT enforce a hex-only character class — id
+// shapes vary across Anthropic / CC: hex uuids (2362ff7c-…), tool_use
+// ids (toolu_…), message ids (msg_…), file-history-snapshot
+// messageIds, etc. Any input that yields zero grep hits is reported
+// as "no match" rather than "invalid"; that's friendlier than
+// rejecting before search.
 const MIN_PREFIX_LEN = 8;
-
-const HEX_PREFIX_RE = /^[0-9a-f]{8,}(-[0-9a-f]+)*$/i;
 
 export type SearchHit =
   | {
@@ -64,13 +71,22 @@ export type SearchHit =
   | {
       type: "worknode";
       sessionId: string;
-      // workNode lives inside a ChatNode workflow; we surface the
-      // parent ChatNode id so the front-end can drill in. We don't
-      // compute it on the server — the front-end can resolve it on
-      // demand from the loaded ChatFlow if needed.
       workNodeId: string;
+      // ChatNode that owns this WorkNode (= the record's promptId,
+      // which Loomscope uses as ChatNode.id). Returned by the server
+      // so the front-end doesn't need to scan workflow.nodes — that
+      // matters because the lite ChatFlow payload strips workflow.nodes
+      // until they're lazy-loaded per ChatNode, so an in-memory scan
+      // would silently fail right after a jump-to fresh session.
+      parentChatNodeId: string;
       cwd: string;
-      kindHint: "assistant" | "user" | "attachment" | "system" | "unknown";
+      kindHint:
+        | "assistant"
+        | "user"
+        | "attachment"
+        | "system"
+        | "tool_use"
+        | "unknown";
       preview: string; // first 60 char of message text / attachment kind
     };
 
@@ -87,19 +103,18 @@ export function searchRouter(opts: SearchRouteOptions) {
     ),
     async (c) => {
       const { q } = c.req.valid("query");
-      const trimmed = q.trim().toLowerCase();
+      // Preserve case — Anthropic tool_use ids (toolu_…) are
+      // mixed-case base62 strings; lowercasing them breaks the
+      // grep -F match against on-disk content. Hex uuids are
+      // already all-lowercase in CC's jsonl, so case-preserving
+      // is also fine for those.
+      const trimmed = q.trim();
       if (trimmed.length < MIN_PREFIX_LEN) {
         return c.json({
           hits: [],
           truncated: false,
           tooShort: true,
         });
-      }
-      // Reject inputs containing non-hex (besides dashes). A user that
-      // wants to filter by free text should be using the 📁 mode, not
-      // the 🎯 mode. We do this server-side too as a defence in depth.
-      if (!HEX_PREFIX_RE.test(trimmed)) {
-        return c.json({ hits: [], truncated: false, invalid: true });
       }
       const hits: SearchHit[] = [];
       let truncated = false;
@@ -183,6 +198,42 @@ export function searchRouter(opts: SearchRouteOptions) {
           seen.add(key);
           return true;
         });
+        // Resolve missing parentChatNodeId for worknode hits via a
+        // disk-cache-warmed parse pass. Issues are batched by file
+        // so the same session is parsed once even when multiple
+        // worknodes from it need resolving.
+        const missingParents = deduped.filter(
+          (h): h is Extract<SearchHit, { type: "worknode" }> =>
+            h.type === "worknode" && !h.parentChatNodeId,
+        );
+        if (missingParents.length > 0) {
+          // Reuse the candidateFiles list from Step 1 — it already
+          // enumerates every project jsonl with its full path.
+          const sidToFile = new Map(
+            candidateFiles.map((f) => [
+              path.basename(f.path, ".jsonl"),
+              f.path,
+            ]),
+          );
+          // Group worknodes by session for one parse per file.
+          const bySession = new Map<
+            string,
+            Array<Extract<SearchHit, { type: "worknode" }>>
+          >();
+          for (const h of missingParents) {
+            const arr = bySession.get(h.sessionId) ?? [];
+            arr.push(h);
+            bySession.set(h.sessionId, arr);
+          }
+          for (const [sid, group] of bySession) {
+            const file = sidToFile.get(sid);
+            if (!file) continue;
+            for (const h of group) {
+              const owner = await resolveParentChatNodeId(file, h.workNodeId);
+              if (owner) h.parentChatNodeId = owner;
+            }
+          }
+        }
         return c.json({ hits: deduped, truncated });
       } catch (err) {
         return c.json(
@@ -233,6 +284,17 @@ async function grepContent(
   prefix: string,
   limit: number,
 ): Promise<ContentGrepResult> {
+  // Four field names where an id-shape value can appear and is
+  // worth jumping to:
+  //   - "uuid":      record top-level uuid (most common)
+  //   - "promptId":  ChatNode id (= promptId)
+  //   - "id":        Anthropic tool_use block id (toolu_…) or message
+  //                  id (msg_…). tool_use ids ARE Loomscope's
+  //                  ToolCallNode.id; message ids don't directly
+  //                  match a node, but parseHitLine ignores those.
+  //   - "tool_use_id": tool_result block field linking back to the
+  //                  spawning tool_use. Lets users find a tool_call
+  //                  via either side of the link.
   const args = [
     "-F",
     "-H",
@@ -240,6 +302,10 @@ async function grepContent(
     `"uuid":"${prefix}`,
     "-e",
     `"promptId":"${prefix}`,
+    "-e",
+    `"id":"${prefix}`,
+    "-e",
+    `"tool_use_id":"${prefix}`,
     ...files.map((f) => f.path),
   ];
   return new Promise<ContentGrepResult>((resolve) => {
@@ -287,7 +353,7 @@ interface RawLineRecord {
   type?: string;
   promptId?: string;
   parentUuid?: string | null;
-  message?: { content?: unknown };
+  message?: { id?: string; content?: unknown };
   attachment?: { type?: string };
 }
 
@@ -303,8 +369,8 @@ function parseHitLine(
   } catch {
     return null;
   }
-  const uuid = (r.uuid ?? "").toLowerCase();
-  const promptId = (r.promptId ?? "").toLowerCase();
+  const uuid = r.uuid ?? "";
+  const promptId = r.promptId ?? "";
   const type = r.type ?? "";
 
   // Priority 1: ChatNode hit. The grep matched on `"promptId":` and
@@ -329,8 +395,12 @@ function parseHitLine(
     };
   }
 
-  // Priority 2: WorkNode hit. The grep matched on `"uuid":` and the
-  // uuid starts with the prefix.
+  // Priority 2: WorkNode hit via record uuid. parentChatNodeId is
+  // taken from the record's promptId field when present (user
+  // records carry it directly); for assistant / attachment records
+  // the field is absent and we leave it empty here — the caller
+  // (`uuid` route) does a second pass via parseJsonlFile to resolve
+  // the owner ChatNode by scanning workflow.nodes membership.
   if (uuid.startsWith(expectedPrefix)) {
     const kindHint =
       type === "assistant"
@@ -346,12 +416,96 @@ function parseHitLine(
       type: "worknode",
       sessionId,
       workNodeId: r.uuid ?? "",
+      parentChatNodeId: r.promptId ?? "",
       cwd,
       kindHint,
       preview: extractGenericPreview(r),
     };
   }
+
+  // Priority 3: WorkNode hit via inner tool_use / tool_result block.
+  // CC's assistant records carry tool_use blocks shaped
+  //   {"type":"tool_use","id":"toolu_…","name":"Bash","input":{…}}
+  // and user records carry tool_result blocks shaped
+  //   {"type":"tool_result","tool_use_id":"toolu_…","content":…}
+  // Loomscope models the spawning tool_use's id as the ToolCallNode.id;
+  // a search match on either side of the link routes to the same
+  // ToolCallNode, so we surface the tool_use id as workNodeId.
+  const content = r.message?.content;
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (typeof block !== "object" || block === null) continue;
+      const b = block as {
+        type?: string;
+        id?: string;
+        tool_use_id?: string;
+        name?: string;
+        input?: unknown;
+      };
+      if (b.type === "tool_use" && typeof b.id === "string") {
+        const blockId = b.id;
+        if (blockId.startsWith(expectedPrefix)) {
+          return {
+            type: "worknode",
+            sessionId,
+            workNodeId: b.id,
+            // assistant records (which carry tool_use blocks) don't
+            // have promptId on disk; resolved in second pass.
+            parentChatNodeId: r.promptId ?? "",
+            cwd,
+            kindHint: "tool_use",
+            preview:
+              typeof b.name === "string"
+                ? `tool_use: ${b.name}`
+                : "tool_use",
+          };
+        }
+      }
+      if (b.type === "tool_result" && typeof b.tool_use_id === "string") {
+        const linkedId = b.tool_use_id;
+        if (linkedId.startsWith(expectedPrefix)) {
+          // Hit on the result side; return the spawning tool_use as
+          // the worknode target so the jump lands on the ToolCallNode
+          // (same id as the source tool_use).
+          return {
+            type: "worknode",
+            sessionId,
+            workNodeId: b.tool_use_id,
+            // tool_result lives in a user record which DOES carry
+            // promptId — but be defensive in case CC ever changes.
+            parentChatNodeId: r.promptId ?? "",
+            cwd,
+            kindHint: "tool_use",
+            preview: "tool_result",
+          };
+        }
+      }
+    }
+  }
   return null;
+}
+
+// Second-pass parent ChatNode resolution: many worknode hits come
+// from assistant/attachment records that lack promptId on disk. We
+// disk-cache-parse the hit's session jsonl and scan
+// chatFlow.chatNodes to find which one owns the workNodeId. Cache
+// hits are ~10ms; cold parse on a 250 MB session is ~5 s but warms
+// the cache for next time.
+async function resolveParentChatNodeId(
+  sessionFilePath: string,
+  workNodeId: string,
+): Promise<string | null> {
+  let cf: ChatFlow;
+  try {
+    const result = await parseJsonlFile(sessionFilePath);
+    cf = result.chatFlow;
+  } catch {
+    return null;
+  }
+  const owner = cf.chatNodes.find((cn) =>
+    cn.workflow.nodes.some((n) => n.id === workNodeId),
+  );
+  return owner?.id ?? null;
 }
 
 function extractUserPreview(content: unknown): string {

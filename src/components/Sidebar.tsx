@@ -30,6 +30,7 @@ interface SearchHit {
   sessionId: string;
   chatNodeId?: string;
   workNodeId?: string;
+  parentChatNodeId?: string;
   cwd: string;
   preview?: string;
   kindHint?: string;
@@ -39,7 +40,7 @@ interface SearchHit {
 interface JumpState {
   status: "idle" | "loading" | "done";
   hits: SearchHit[];
-  error?: "too_short" | "invalid" | "fetch_failed" | "none";
+  error?: "too_short" | "fetch_failed" | "none";
   truncated?: boolean;
 }
 
@@ -112,14 +113,9 @@ export function Sidebar() {
         hits?: SearchHit[];
         truncated?: boolean;
         tooShort?: boolean;
-        invalid?: boolean;
       };
       if (j.tooShort) {
         setJumpState({ status: "done", hits: [], error: "too_short" });
-        return;
-      }
-      if (j.invalid) {
-        setJumpState({ status: "done", hits: [], error: "invalid" });
         return;
       }
       const hits = j.hits ?? [];
@@ -471,11 +467,6 @@ function CandidatePanel({
           {t("sidebar_search.too_short")}
         </div>
       )}
-      {jumpState.status === "done" && jumpState.error === "invalid" && (
-        <div className="text-[11px] text-amber-700 italic px-1">
-          {t("sidebar_search.invalid_input")}
-        </div>
-      )}
       {jumpState.status === "done" && jumpState.error === "none" && (
         <div className="text-[11px] text-gray-500 italic px-1">
           {t("sidebar_search.no_results")}
@@ -558,6 +549,7 @@ function toJumpHit(h: SearchHit): JumpHit {
     type: "worknode",
     sessionId: h.sessionId,
     workNodeId: h.workNodeId ?? "",
+    parentChatNodeId: h.parentChatNodeId,
   };
 }
 

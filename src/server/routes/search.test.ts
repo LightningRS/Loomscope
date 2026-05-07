@@ -24,6 +24,8 @@ const SESSION_ID = "abcdef00-1111-2222-3333-444444444444";
 const CHATNODE_ID = "01234567-1111-2222-3333-444444444444";
 const ROOT_USER_UUID = "11111111-aaaa-bbbb-cccc-dddddddddddd";
 const ASSISTANT_UUID = "22222222-aaaa-bbbb-cccc-dddddddddddd";
+const TOOL_USE_ID = "toolu_01V1fLQA8TEH78ynQtTNjBjb";
+const TOOL_RESULT_USER_UUID = "33333333-aaaa-bbbb-cccc-dddddddddddd";
 
 beforeEach(async () => {
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "loomscope-search-"));
@@ -46,7 +48,28 @@ beforeEach(async () => {
       message: {
         id: "msg_test",
         role: "assistant",
-        content: [{ type: "text", text: "an answer" }],
+        content: [
+          { type: "text", text: "an answer" },
+          {
+            type: "tool_use",
+            id: TOOL_USE_ID,
+            name: "Bash",
+            input: { command: "ls" },
+          },
+        ],
+      },
+    },
+    {
+      type: "user",
+      uuid: TOOL_RESULT_USER_UUID,
+      promptId: CHATNODE_ID,
+      parentUuid: ASSISTANT_UUID,
+      toolUseResult: { stdout: "ok" },
+      message: {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: TOOL_USE_ID, content: "ok" },
+        ],
       },
     },
   ];
@@ -81,10 +104,13 @@ describe("/api/search/uuid", () => {
     expect(body.hits).toEqual([]);
   });
 
-  it("rejects non-hex input with invalid flag", async () => {
+  it("non-hex input is allowed (no invalid flag) — falls back to 0 hits if nothing matches", async () => {
+    // Per latest design: jump mode trusts user intent; only length
+    // gating remains. Inputs like "Loomscope" simply yield 0 hits
+    // when nothing matches, no upfront rejection.
     const { status, body } = await search("notHexInputAtAll");
     expect(status).toBe(200);
-    expect(body.invalid).toBe(true);
+    expect(body.invalid).toBeUndefined();
     expect(body.hits).toEqual([]);
   });
 
@@ -137,5 +163,31 @@ describe("/api/search/uuid", () => {
     const { body } = await search("ffffffff-ffff-ffff-ffff-ffffffffffff");
     expect(body.hits).toEqual([]);
     expect(body.truncated).toBe(false);
+  });
+
+  it("matches Anthropic tool_use id (toolu_…) → worknode hit with parentChatNodeId resolved", async () => {
+    const { body } = await search(TOOL_USE_ID);
+    const hits = body.hits as Array<Record<string, unknown>>;
+    const workHit = hits.find(
+      (h) => h.type === "worknode" && h.workNodeId === TOOL_USE_ID,
+    );
+    expect(workHit).toBeTruthy();
+    expect(workHit?.kindHint).toBe("tool_use");
+    // Parent ChatNode id is resolved via the second-pass parse (the
+    // assistant record carrying the tool_use block lacks promptId on
+    // disk, so the cheap inline path doesn't fill it).
+    expect(workHit?.parentChatNodeId).toBe(CHATNODE_ID);
+    expect(workHit?.preview).toContain("Bash");
+  });
+
+  it("matches assistant record uuid → worknode with parentChatNodeId resolved (assistant has no promptId on disk)", async () => {
+    const { body } = await search(ASSISTANT_UUID.slice(0, 8));
+    const hits = body.hits as Array<Record<string, unknown>>;
+    const workHit = hits.find(
+      (h) => h.type === "worknode" && h.workNodeId === ASSISTANT_UUID,
+    );
+    expect(workHit).toBeTruthy();
+    // Backend should have resolved parentChatNodeId via second-pass parse.
+    expect(workHit?.parentChatNodeId).toBe(CHATNODE_ID);
   });
 });
