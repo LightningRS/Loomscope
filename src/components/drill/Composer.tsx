@@ -67,9 +67,17 @@ interface Props {
   disabled?: boolean;
   // Placeholder override for callers that want a custom hint.
   placeholder?: string;
+  // Notification of height changes during drag. Parent uses this to
+  // bump the conversation scroll container's scrollTop in lockstep
+  // so the bottom-relative view stays put regardless of whether the
+  // user was scrolled-to-bottom or somewhere mid-conversation.
+  // Without this, dragging composer up while mid-conversation leaves
+  // visible content frozen and the bottom row gets covered by the
+  // growing composer.
+  onResize?: (deltaPx: number) => void;
 }
 
-export function Composer({ disabled = true, placeholder }: Props) {
+export function Composer({ disabled = true, placeholder, onResize }: Props) {
   const { t } = useTranslation();
   const [height, setHeight] = useState<number>(() => loadHeight());
   const [text, setText] = useState("");
@@ -123,9 +131,26 @@ export function Composer({ disabled = true, placeholder }: Props) {
     (e: RPointerEvent<HTMLDivElement>) => {
       if (!dragRef.current) return;
       const delta = dragRef.current.startY - e.clientY;
-      setHeight(clamp(dragRef.current.startH + delta, MIN_HEIGHT, MAX_HEIGHT));
+      const next = clamp(
+        dragRef.current.startH + delta,
+        MIN_HEIGHT,
+        MAX_HEIGHT,
+      );
+      // Functional setState so we read the freshest committed height
+      // (ref-tracked startH is the drag-anchor height; height state
+      // changes mid-drag if user lifts past clamp boundaries).
+      setHeight((cur) => {
+        const heightDelta = next - cur;
+        if (heightDelta !== 0 && onResize) {
+          // composer +Δ means viewport -Δ → scrollTop must move by
+          // +Δ to keep the same bottom edge visible. Same sign holds
+          // when composer shrinks (Δ < 0 → scrollTop decreases).
+          onResize(heightDelta);
+        }
+        return next;
+      });
     },
-    [],
+    [onResize],
   );
 
   const onPointerUp = useCallback((e: RPointerEvent<HTMLDivElement>) => {

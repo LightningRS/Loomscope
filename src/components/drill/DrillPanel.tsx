@@ -87,6 +87,20 @@ export function DrillPanel({ sessionId, chatFlow, viewMode, drilledChatNode }: P
   const tab = useStore((s) => s.drillPanelTab);
   const setTab = useStore((s) => s.setDrillPanelTab);
 
+  // Reference to the tab-body scroll container. Composer's resize
+  // handler bumps scrollTop synchronously with each height delta so
+  // the conversation's bottom-relative view stays put — without this,
+  // dragging composer up while NOT scrolled-to-bottom leaves content
+  // visually frozen and the bottom edge gets covered by the growing
+  // composer (inconsistent with the at-bottom case where stick-to-
+  // bottom logic already pushes content up).
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const adjustScrollForComposer = useCallback((deltaPx: number) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop += deltaPx;
+  }, []);
+
   // v0.10 polish: auto-pick the contextually appropriate tab when
   // viewMode changes. ChatFlow / sub-ChatFlow → Conversation (the
   // user is browsing dialogue). WorkFlow → Detail (the user has
@@ -154,6 +168,7 @@ export function DrillPanel({ sessionId, chatFlow, viewMode, drilledChatNode }: P
           would start clipping code blocks instead of letting them
           scroll within. */}
       <div
+        ref={scrollRef}
         className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-3 [overflow-anchor:auto]"
       >
         {/* Suspense fallback covers the first-render fetch of the
@@ -233,7 +248,7 @@ export function DrillPanel({ sessionId, chatFlow, viewMode, drilledChatNode }: P
           lazy Composer chunk until the user actually needs it. */}
       {tab === "conversation" && (
         <Suspense fallback={null}>
-          <Composer />
+          <Composer onResize={adjustScrollForComposer} />
         </Suspense>
       )}
     </aside>
