@@ -70,6 +70,12 @@
     "tab_effective_context": "实际上下文",
     "tab_git": "变更"
   },
+  "composer": {
+    "placeholder_input": "输入消息…（Cmd/Ctrl+Enter 发送）",
+    "placeholder_notice": "v∞.1 写功能未接通，输入框先做 UI 占位",
+    "send": "发送",
+    "send_tooltip": "Cmd/Ctrl+Enter"
+  },
   "effective_context": {
     "placeholder_no_node": "选个 ChatNode 看它实际收到的上下文（auto-compact 截断后）",
     "intro_with_cutoff": "下方是当前节点 LLM 实际看到的上下文。最近一次 compact / 内含压缩节点之上的内容已被截掉。",

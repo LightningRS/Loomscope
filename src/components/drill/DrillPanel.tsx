@@ -49,6 +49,11 @@ const EffectiveContextView = lazy(() =>
     default: m.EffectiveContextView,
   })),
 );
+const Composer = lazy(() =>
+  import("@/components/drill/Composer").then((m) => ({
+    default: m.Composer,
+  })),
+);
 import { useStore } from "@/store/index";
 import type { ChatFlow, ChatNode, WorkNode } from "@/data/types";
 import type { DrillPanelTab } from "@/store/types";
@@ -220,6 +225,17 @@ export function DrillPanel({ sessionId, chatFlow, viewMode, drilledChatNode }: P
           </div>
         </Suspense>
       </div>
+      {/* v∞.1 prep: Composer at the bottom of the Conversation tab.
+          Sibling of the scroll container (not inside it) so it sticks
+          to the panel bottom while messages scroll behind it. Only
+          mounted when conversation is active to (a) not steal vertical
+          space from Detail / Git / Effective Context, (b) defer the
+          lazy Composer chunk until the user actually needs it. */}
+      {tab === "conversation" && (
+        <Suspense fallback={null}>
+          <Composer />
+        </Suspense>
+      )}
     </aside>
   );
 }

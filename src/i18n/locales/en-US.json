@@ -70,6 +70,12 @@
     "tab_effective_context": "Effective context",
     "tab_git": "Git"
   },
+  "composer": {
+    "placeholder_input": "Type a message… (Cmd/Ctrl+Enter to send)",
+    "placeholder_notice": "v∞.1 write path not yet wired — composer is a UI placeholder",
+    "send": "Send",
+    "send_tooltip": "Cmd/Ctrl+Enter"
+  },
   "effective_context": {
     "placeholder_no_node": "Pick a ChatNode to see the inbound context it actually receives (after auto-compact truncation)",
     "intro_with_cutoff": "Below is the context this node's LLM call actually sees. Content above the latest compact / hybrid node has been truncated.",
