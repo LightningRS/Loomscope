@@ -73,8 +73,16 @@
   "composer": {
     "placeholder_input": "输入消息…（Cmd/Ctrl+Enter 发送）",
     "placeholder_notice": "v∞.1 写功能未接通，输入框先做 UI 占位",
-    "send": "发送",
-    "send_tooltip": "Cmd/Ctrl+Enter"
+    "send_tooltip": "Cmd/Ctrl+Enter 发送",
+    "attach_tooltip": "附件（v∞.2 才会接通）",
+    "settings_tooltip": "切换模型 / effort / fast mode",
+    "menu_model": "模型",
+    "menu_effort": "Effort",
+    "menu_fast_mode": "Fast mode",
+    "menu_fast_mode_hint": "Opus + 优先路由",
+    "fast_chip": "fast",
+    "fast_chip_tooltip": "Fast mode 已启用",
+    "effort_chip_tooltip": "Reasoning effort: {{level}}"
   },
   "effective_context": {
     "placeholder_no_node": "选个 ChatNode 看它实际收到的上下文（auto-compact 截断后）",

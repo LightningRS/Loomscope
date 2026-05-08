@@ -73,8 +73,16 @@
   "composer": {
     "placeholder_input": "Type a message… (Cmd/Ctrl+Enter to send)",
     "placeholder_notice": "v∞.1 write path not yet wired — composer is a UI placeholder",
-    "send": "Send",
-    "send_tooltip": "Cmd/Ctrl+Enter"
+    "send_tooltip": "Send (Cmd/Ctrl+Enter)",
+    "attach_tooltip": "Attach (wires up in v∞.2)",
+    "settings_tooltip": "Model / effort / fast mode",
+    "menu_model": "Model",
+    "menu_effort": "Effort",
+    "menu_fast_mode": "Fast mode",
+    "menu_fast_mode_hint": "Opus + priority routing",
+    "fast_chip": "fast",
+    "fast_chip_tooltip": "Fast mode enabled",
+    "effort_chip_tooltip": "Reasoning effort: {{level}}"
   },
   "effective_context": {
     "placeholder_no_node": "Pick a ChatNode to see the inbound context it actually receives (after auto-compact truncation)",
