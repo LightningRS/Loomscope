@@ -48,6 +48,10 @@ const SKIP_TYPES = new Set([
   // v0.8: hoisted to chatFlow.customTitle in the first-pass scan above;
   // skip the bucketing step so it doesn't end up as an orphan.
   "custom-title",
+  // v∞.1 (SDK probe): SDK-spawned sessions emit `ai-title` records
+  // with auto-generated titles. Hoisted to customTitle in the same
+  // first-pass scan when no explicit title exists.
+  "ai-title",
 ]);
 
 interface IndexedRecord {
@@ -393,6 +397,15 @@ export function buildChatFlow(
       // The field name is `customTitle` per design-data-model.md "Fork
       // 机制" §1 step 4. First-write wins; we don't crash on duplicates.
       const title = (r as { customTitle?: unknown }).customTitle;
+      if (typeof title === "string" && title.length > 0) customTitle = title;
+    }
+    if (r.type === "ai-title" && customTitle === undefined) {
+      // SDK-spawned (and CC's auto-naming) sessions emit `ai-title`
+      // records with field `aiTitle` — auto-generated session title
+      // distilled by CC after the first turn. We hoist it as
+      // customTitle when no user-set title exists; fork-set
+      // `custom-title` still wins because it's explicit.
+      const title = (r as { aiTitle?: unknown }).aiTitle;
       if (typeof title === "string" && title.length > 0) customTitle = title;
     }
     if (r.type === "assistant") {
