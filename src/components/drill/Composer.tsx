@@ -88,6 +88,13 @@ export function Composer({ disabled = true, placeholder, onResize }: Props) {
   const dragRef = useRef<{ startY: number; startH: number } | null>(null);
   const handleRef = useRef<HTMLDivElement | null>(null);
   const menuWrapRef = useRef<HTMLDivElement | null>(null);
+  // Mirror of the height state usable from event handlers without
+  // routing through setState updaters. React.StrictMode dev mode runs
+  // updater functions twice to detect impurity — putting the
+  // `onResize` side effect inside `setHeight((cur) => ...)` triggered
+  // exactly that double-fire and the parent scrolled 2Δ instead of Δ.
+  // Keep updaters pure; track the latest committed height in this ref.
+  const heightRef = useRef<number>(height);
 
   // Persist height + settings to localStorage so refresh preserves UX.
   useEffect(() => {
@@ -136,19 +143,14 @@ export function Composer({ disabled = true, placeholder, onResize }: Props) {
         MIN_HEIGHT,
         MAX_HEIGHT,
       );
-      // Functional setState so we read the freshest committed height
-      // (ref-tracked startH is the drag-anchor height; height state
-      // changes mid-drag if user lifts past clamp boundaries).
-      setHeight((cur) => {
-        const heightDelta = next - cur;
-        if (heightDelta !== 0 && onResize) {
-          // composer +Δ means viewport -Δ → scrollTop must move by
-          // +Δ to keep the same bottom edge visible. Same sign holds
-          // when composer shrinks (Δ < 0 → scrollTop decreases).
-          onResize(heightDelta);
-        }
-        return next;
-      });
+      const heightDelta = next - heightRef.current;
+      if (heightDelta === 0) return;
+      heightRef.current = next;
+      // composer +Δ means viewport -Δ → scrollTop must move by +Δ
+      // to keep the same bottom edge visible. Same sign holds when
+      // composer shrinks (Δ < 0 → scrollTop decreases).
+      onResize?.(heightDelta);
+      setHeight(next);
     },
     [onResize],
   );
