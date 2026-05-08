@@ -71,9 +71,9 @@
     "tab_git": "Git"
   },
   "composer": {
-    "placeholder_input": "Type a message… (Cmd/Ctrl+Enter to send)",
+    "placeholder_input": "Type a message… (Enter to send, Shift+Enter for newline)",
     "placeholder_notice": "v∞.1 write path not yet wired — composer is a UI placeholder",
-    "send_tooltip": "Send (Cmd/Ctrl+Enter)",
+    "send_tooltip": "Send (Enter — Shift+Enter for newline)",
     "attach_tooltip": "Attach (wires up in v∞.2)",
     "settings_tooltip": "Model / effort / fast mode",
     "menu_model": "Model",

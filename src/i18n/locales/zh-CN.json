@@ -71,9 +71,9 @@
     "tab_git": "变更"
   },
   "composer": {
-    "placeholder_input": "输入消息…（Cmd/Ctrl+Enter 发送）",
+    "placeholder_input": "输入消息…（Enter 发送，Shift+Enter 换行）",
     "placeholder_notice": "v∞.1 写功能未接通，输入框先做 UI 占位",
-    "send_tooltip": "Cmd/Ctrl+Enter 发送",
+    "send_tooltip": "Enter 发送（Shift+Enter 换行）",
     "attach_tooltip": "附件（v∞.2 才会接通）",
     "settings_tooltip": "切换模型 / effort / fast mode",
     "menu_model": "模型",

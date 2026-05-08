@@ -1,5 +1,9 @@
 // v∞.1 prep — composer input box at the bottom of the Conversation tab.
 //
+// Send keybindings: plain Enter submits, Shift+Enter inserts a
+// newline. Matches claude.ai / Slack / Discord conventions. IME
+// composition guarded so CJK candidate-commit Enters don't send.
+//
 // Style mirrors claude.ai's web composer: rounded card with subtle
 // border + shadow, transparent textarea filling the body, bottom row
 // with a "+" attachment placeholder (left), model chip + send arrow
@@ -178,8 +182,20 @@ export function Composer({ disabled = true, placeholder, onResize }: Props) {
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // Cmd/Ctrl+Enter submits; plain Enter inserts newline.
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+    // Plain Enter submits; Shift+Enter inserts a newline. Matches
+    // claude.ai / Slack / Discord chat conventions. IME composition
+    // is in progress when keyCode === 229 — don't send mid-composition
+    // (Chinese / Japanese users typing pinyin etc. press Enter to
+    // commit a candidate, not the message).
+    if (
+      e.key === "Enter" &&
+      !e.shiftKey &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      e.keyCode !== 229 &&
+      !e.nativeEvent.isComposing
+    ) {
       e.preventDefault();
       onSend();
     }
